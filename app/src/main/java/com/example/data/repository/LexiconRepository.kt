@@ -24,9 +24,11 @@ import com.example.domain.model.SynonymGroup
 import com.example.domain.model.WordEntry
 import com.example.domain.model.WordFamilyItem
 import com.example.domain.model.WordNetSynset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.encodeToString
@@ -149,10 +151,15 @@ class LexiconRepository(
                         )
                     )
                     if (networkMonitor.isOnline()) {
-                        val related = runCatching {
-                            datamuseApi.getRelatedWords(primaryWord, max = 6)
-                        }.getOrDefault(emptyList())
-                        related.forEach { dto ->
+                        val related = try {
+                            datamuseApi.getRelatedWords(primaryWord, max = 5)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+                        for (dto in related) {
+                            currentCoroutineContext().ensureActive()
                             val w = dto.word?.trim().orEmpty()
                             if (w.isNotBlank() && !w.equals(primaryWord, ignoreCase = true) && !w.contains(" ")) {
                                 val ar = mlKitService.translateEnToAr(w).getOrNull().orEmpty()
@@ -184,7 +191,7 @@ class LexiconRepository(
             )
         }
 
-        if (!networkMonitor.isOnline() || trimmed.contains(" ")) {
+        if (normalized.length < 2 || !networkMonitor.isOnline() || trimmed.contains(" ")) {
             if (cached.isNotEmpty()) return cached
             val fallbackAr = mlKitService.translateEnToAr(trimmed).getOrNull().orEmpty()
             return if (fallbackAr.isNotBlank()) {
@@ -199,9 +206,13 @@ class LexiconRepository(
             }
         }
 
-        val apiSuggestions = runCatching {
+        val apiSuggestions = try {
             datamuseApi.getPrefixSuggestions("$normalized*", max = 8)
-        }.getOrDefault(emptyList())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
 
         val candidates = apiSuggestions
             .mapNotNull { dto ->
@@ -210,27 +221,29 @@ class LexiconRepository(
                 word to mapDatamusePos(dto.tags)
             }
             .filter { (w, _) -> cached.none { it.englishWord.equals(w, ignoreCase = true) } }
-            .take(6)
+            .take(5)
 
-        val translatedCandidates = coroutineScope {
-            candidates.map { (word, posAr) ->
-                async {
-                    val cachedRow = dao.getCachedWord(word.lowercase(Locale.US))
-                    val arabic = cachedRow?.arabicSummary
-                        ?: mlKitService.translateEnToAr(word).getOrNull().orEmpty()
+        val translatedCandidates = buildList {
+            for ((word, posAr) in candidates) {
+                currentCoroutineContext().ensureActive()
+                val cachedRow = dao.getCachedWord(word.lowercase(Locale.US))
+                val arabic = cachedRow?.arabicSummary
+                    ?: mlKitService.translateEnToAr(word).getOrNull().orEmpty()
+                add(
                     SearchSuggestion(
                         englishWord = word,
                         arabicMeaning = arabic.ifBlank { "اضغط لعرض المعاني" },
                         partOfSpeechArabic = posAr,
                         isFromCache = cachedRow != null
                     )
-                }
-            }.awaitAll()
+                )
+            }
         }
 
         val exactCachedOrDirect = if (cached.none { it.englishWord.equals(normalized, ignoreCase = true) } &&
             translatedCandidates.none { it.englishWord.equals(normalized, ignoreCase = true) }
         ) {
+            currentCoroutineContext().ensureActive()
             val directAr = mlKitService.translateEnToAr(normalized).getOrNull().orEmpty()
             listOf(
                 SearchSuggestion(

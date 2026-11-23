@@ -8,10 +8,15 @@ import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -42,21 +47,35 @@ class MlKitTranslationService {
         Translation.getClient(options)
     }
 
+    private val translatorMutex = Mutex()
+
+    @Volatile
+    private var enToArReady = false
+
+    @Volatile
+    private var arToEnReady = false
+
     private val _modelStatus = MutableStateFlow(OfflineModelStatus())
     val modelStatus: StateFlow<OfflineModelStatus> = _modelStatus.asStateFlow()
 
     suspend fun refreshModelStatus() {
-        runCatching {
+        try {
             val manager = RemoteModelManager.getInstance()
             val arModel = TranslateRemoteModel.Builder(TranslateLanguage.ARABIC).build()
             val enModel = TranslateRemoteModel.Builder(TranslateLanguage.ENGLISH).build()
             val arReady = manager.isModelDownloaded(arModel).awaitTask()
             val enReady = manager.isModelDownloaded(enModel).awaitTask()
+            if (arReady && enReady) {
+                enToArReady = true
+                arToEnReady = true
+            }
             _modelStatus.value = _modelStatus.value.copy(
                 isArabicDownloaded = arReady,
                 isEnglishDownloaded = enReady
             )
-        }.onFailure { e ->
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Log.w(TAG, "Failed to check ML Kit model status", e)
         }
     }
@@ -67,10 +86,14 @@ class MlKitTranslationService {
             statusMessage = "جاري تجهيز حزمة الترجمة بدون إنترنت..."
         )
         return try {
-            val conditions = DownloadConditions.Builder().build()
-            withTimeout(60_000L) {
-                enToArTranslator.downloadModelIfNeeded(conditions).awaitTask()
-                arToEnTranslator.downloadModelIfNeeded(conditions).awaitTask()
+            translatorMutex.withLock {
+                val conditions = DownloadConditions.Builder().build()
+                withTimeout(60_000L) {
+                    enToArTranslator.downloadModelIfNeeded(conditions).awaitTask()
+                    enToArReady = true
+                    arToEnTranslator.downloadModelIfNeeded(conditions).awaitTask()
+                    arToEnReady = true
+                }
             }
             refreshModelStatus()
             _modelStatus.value = _modelStatus.value.copy(
@@ -78,6 +101,9 @@ class MlKitTranslationService {
                 statusMessage = "الترجمة الفورية بدون إنترنت جاهزة"
             )
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            _modelStatus.value = _modelStatus.value.copy(isDownloading = false)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed downloading ML Kit models", e)
             _modelStatus.value = _modelStatus.value.copy(
@@ -90,14 +116,20 @@ class MlKitTranslationService {
 
     suspend fun deleteOfflineModels(): Result<Unit> {
         return try {
-            val manager = RemoteModelManager.getInstance()
-            val arModel = TranslateRemoteModel.Builder(TranslateLanguage.ARABIC).build()
-            manager.deleteDownloadedModel(arModel).awaitTask()
+            translatorMutex.withLock {
+                val manager = RemoteModelManager.getInstance()
+                val arModel = TranslateRemoteModel.Builder(TranslateLanguage.ARABIC).build()
+                manager.deleteDownloadedModel(arModel).awaitTask()
+                enToArReady = false
+                arToEnReady = false
+            }
             refreshModelStatus()
             _modelStatus.value = _modelStatus.value.copy(
                 statusMessage = "تم حذف الحزمة العربية من الجهاز"
             )
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed deleting ML Kit model", e)
             Result.failure(e)
@@ -106,23 +138,41 @@ class MlKitTranslationService {
 
     suspend fun translateEnToAr(text: String): Result<String> {
         if (text.isBlank()) return Result.success("")
-        return translateWith(enToArTranslator, text)
+        return translateWith(enToArTranslator, text, isEnToAr = true)
     }
 
     suspend fun translateArToEn(text: String): Result<String> {
         if (text.isBlank()) return Result.success("")
-        return translateWith(arToEnTranslator, text)
+        return translateWith(arToEnTranslator, text, isEnToAr = false)
     }
 
-    private suspend fun translateWith(translator: Translator, text: String): Result<String> {
+    private suspend fun translateWith(
+        translator: Translator,
+        text: String,
+        isEnToAr: Boolean
+    ): Result<String> {
         return try {
-            val conditions = DownloadConditions.Builder().build()
-            withTimeout(45_000L) {
-                translator.downloadModelIfNeeded(conditions).awaitTask()
-                val translated = translator.translate(text).awaitTask()
-                refreshModelStatus()
+            currentCoroutineContext().ensureActive()
+            translatorMutex.withLock {
+                currentCoroutineContext().ensureActive()
+                val alreadyReady = if (isEnToAr) enToArReady else arToEnReady
+                if (!alreadyReady) {
+                    val conditions = DownloadConditions.Builder().build()
+                    withTimeout(45_000L) {
+                        translator.downloadModelIfNeeded(conditions).awaitTask()
+                    }
+                    if (isEnToAr) enToArReady = true else arToEnReady = true
+                    refreshModelStatus()
+                }
+                currentCoroutineContext().ensureActive()
+                val translated = withTimeout(15_000L) {
+                    translator.translate(text).awaitTask()
+                }
                 Result.success(translated.trim())
             }
+        } catch (e: CancellationException) {
+            // Propagate coroutine cancellation cleanly without logging as an error
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "ML Kit translation error for '$text'", e)
             Result.failure(e)

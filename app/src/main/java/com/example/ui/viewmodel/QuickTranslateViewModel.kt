@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.repository.LexiconRepository
 import com.example.domain.model.LanguageDirection
 import com.example.domain.model.SearchSuggestion
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,7 +52,7 @@ class QuickTranslateViewModel(
 
     init {
         viewModelScope.launch {
-            combine(_query.debounce(280L), _direction) { q, dir -> q to dir }
+            combine(_query.debounce(350L), _direction) { q, dir -> q to dir }
                 .collectLatest { (q, dir) ->
                     performLiveLookup(q, dir)
                 }
@@ -80,6 +81,7 @@ class QuickTranslateViewModel(
         if (trimmed.isEmpty()) {
             _suggestions.value = emptyList()
             _sentenceTranslation.value = null
+            _errorMessage.value = null
             _isLoading.value = false
             return
         }
@@ -87,29 +89,34 @@ class QuickTranslateViewModel(
         _isLoading.value = true
         _errorMessage.value = null
 
-        val effectiveDir = if (trimmed.any { it in '\u0600'..'\u06FF' }) {
-            LanguageDirection.AR_TO_EN
-        } else {
-            dir
-        }
-
-        val wordCount = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }.size
-        val isSentence = wordCount >= 2 || trimmed.length > 24
-
-        if (isSentence) {
-            val translated = repository.translateSentence(trimmed, effectiveDir)
-            _sentenceTranslation.value = translated.getOrNull()
-            if (translated.isFailure) {
-                _errorMessage.value = "تعذر تحميل الترجمة الفورية. تحقق من الشبكة أو قم بتحميل الحزمة المحلية من قسم أكثر."
+        try {
+            val effectiveDir = if (trimmed.any { it in '\u0600'..'\u06FF' }) {
+                LanguageDirection.AR_TO_EN
+            } else {
+                dir
             }
-        } else {
-            _sentenceTranslation.value = null
-        }
 
-        val list = runCatching { repository.getLiveSuggestions(trimmed, effectiveDir) }
-            .getOrDefault(emptyList())
-        _suggestions.value = list
-        _isLoading.value = false
+            val wordCount = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }.size
+            val isSentence = wordCount >= 2 || trimmed.length > 24
+
+            if (isSentence) {
+                val translated = repository.translateSentence(trimmed, effectiveDir)
+                _sentenceTranslation.value = translated.getOrNull()
+                if (translated.isFailure) {
+                    _errorMessage.value = "تعذر تحميل الترجمة الفورية. تحقق من الشبكة أو قم بتحميل الحزمة المحلية من قسم أكثر."
+                }
+            } else {
+                _sentenceTranslation.value = null
+            }
+
+            _suggestions.value = repository.getLiveSuggestions(trimmed, effectiveDir)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _errorMessage.value = "حدث خطأ أثناء جلب الاقتراحات"
+        } finally {
+            _isLoading.value = false
+        }
     }
 
     class Factory(
