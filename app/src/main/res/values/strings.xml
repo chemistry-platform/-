@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">معجم المخزنجي</string>
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_discover">اكتشف</string>
+    <string name="nav_favorites">المفضلة</string>
+    <string name="nav_more">أكثر</string>
+    <string name="search_placeholder_home">ادخل النص</string>
+    <string name="search_placeholder_translate">أدخل الكلمات أو الجمل</string>
+    <string name="lang_arabic">العربية</string>
+    <string name="lang_english">الإنجليزية</string>
+    <string name="tile_camera">كاميرا</string>
+    <string name="tile_conversation">محادثة</string>
+    <string name="tile_grammar">قواعد</string>
+    <string name="coming_soon">قريباً</string>
+    <string name="recent_searches">آخر ما بحثت عنه</string>
+    <string name="tab_summary">الموجزة</string>
+    <string name="tab_dictionary">قاموس</string>
+    <string name="tab_wordnet">وردنيت</string>
+    <string name="synonyms_title">المترادفات</string>
+    <string name="antonyms_title">المتضادات</string>
+    <string name="meanings_contexts_title">المعاني والسياقات</string>
+    <string name="phrases_title">العبارات</string>
+    <string name="similar_words_title">الكلمات المتشابهة</string>
+    <string name="more_button">المزيد</string>
+    <string name="no_internet_title">لا يوجد اتصال بالإنترنت</string>
+    <string name="empty_favorites">لا توجد كلمات في المفضلة بعد</string>
+    <string name="empty_recent">ابحث عن كلمة أو جملة للبدء</string>
+    <string name="cd_swap_languages">تبديل اللغتين</string>
+    <string name="cd_voice_input">إدخال صوتي</string>
+    <string name="cd_clear_search">مسح البحث</string>
+    <string name="cd_favorite">إضافة للمفضلة</string>
+    <string name="cd_speak_us">نطق أمريكي</string>
+    <string name="cd_speak_uk">نطق بريطاني</string>
+    <string name="cd_back">رجوع</string>
+</resources>
