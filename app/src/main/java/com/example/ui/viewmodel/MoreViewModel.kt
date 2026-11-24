@@ -3,6 +3,8 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.core.AppUpdateManager
+import com.example.core.UpdateUiState
 import com.example.data.remote.OfflineModelStatus
 import com.example.data.repository.LexiconRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,7 +15,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class MoreViewModel(
-    private val repository: LexiconRepository
+    private val repository: LexiconRepository,
+    private val updateManager: AppUpdateManager
 ) : ViewModel() {
 
     val cachedWordCount: StateFlow<Int> = repository.cachedCount
@@ -32,6 +35,8 @@ class MoreViewModel(
             initialValue = true
         )
 
+    val updateUiState: StateFlow<UpdateUiState> = updateManager.uiState
+
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
@@ -39,6 +44,10 @@ class MoreViewModel(
         viewModelScope.launch {
             repository.refreshMlKitStatus()
         }
+    }
+
+    fun checkForUpdateNow() {
+        updateManager.checkForUpdate(force = true)
     }
 
     fun downloadOfflineModels() {
@@ -77,10 +86,13 @@ class MoreViewModel(
         _actionMessage.value = null
     }
 
-    class Factory(private val repository: LexiconRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: LexiconRepository,
+        private val updateManager: AppUpdateManager
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return MoreViewModel(repository) as T
+            return MoreViewModel(repository, updateManager) as T
         }
     }
 }

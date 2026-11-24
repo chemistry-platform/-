@@ -2,12 +2,14 @@ package com.example.di
 
 import android.content.Context
 import com.example.BuildConfig
+import com.example.core.AppUpdateManager
 import com.example.core.AudioPlayerManager
 import com.example.core.NetworkMonitor
 import com.example.data.local.AppDatabase
 import com.example.data.remote.DatamuseApi
 import com.example.data.remote.FreeDictionaryApi
 import com.example.data.remote.GeminiLexiconService
+import com.example.data.remote.GitHubReleaseApi
 import com.example.data.remote.MlKitTranslationService
 import com.example.data.repository.LexiconRepository
 import com.squareup.moshi.Moshi
@@ -42,6 +44,15 @@ class AppContainer(context: Context) {
             .build()
     }
 
+    private val downloadOkHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+    }
+
     private val dictionaryApi: FreeDictionaryApi by lazy {
         Retrofit.Builder()
             .baseUrl("https://api.dictionaryapi.dev/")
@@ -58,6 +69,15 @@ class AppContainer(context: Context) {
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(DatamuseApi::class.java)
+    }
+
+    private val gitHubReleaseApi: GitHubReleaseApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://api.github.com/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(GitHubReleaseApi::class.java)
     }
 
     private val database: AppDatabase by lazy {
@@ -78,6 +98,15 @@ class AppContainer(context: Context) {
 
     val audioPlayerManager: AudioPlayerManager by lazy {
         AudioPlayerManager(appContext)
+    }
+
+    val appUpdateManager: AppUpdateManager by lazy {
+        AppUpdateManager(
+            context = appContext,
+            gitHubApi = gitHubReleaseApi,
+            okHttpClient = downloadOkHttpClient,
+            networkMonitor = networkMonitor
+        )
     }
 
     val repository: LexiconRepository by lazy {

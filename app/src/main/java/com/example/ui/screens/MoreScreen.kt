@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,6 +23,7 @@ import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.UpdateUiState
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.DividerBorder
@@ -61,6 +62,7 @@ fun MoreScreen(
     val mlKitStatus by viewModel.mlKitStatus.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+    val updateUiState by viewModel.updateUiState.collectAsStateWithLifecycle()
 
     Box(
         modifier = modifier
@@ -84,7 +86,7 @@ fun MoreScreen(
                         color = TextPrimary
                     )
                     Text(
-                        text = "إدارة الترجمة بدون إنترنت والذاكرة المحلية",
+                        text = "إدارة الترجمة بدون إنترنت والذاكرة المحلية والتحديثات",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextMuted
                     )
@@ -105,6 +107,70 @@ fun MoreScreen(
                             color = LinkBlue,
                             modifier = Modifier.padding(12.dp)
                         )
+                    }
+                }
+            }
+
+            // App Self-Update Card
+            item {
+                val isChecking = updateUiState is UpdateUiState.Checking
+                val updateStatusText = (updateUiState as? UpdateUiState.Message)?.text
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = SurfaceCard,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, DividerBorder)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SystemUpdate,
+                                contentDescription = null,
+                                tint = AccentRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "تحديثات التطبيق",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = TextPrimary
+                            )
+                        }
+                        if (!updateStatusText.isNullOrBlank()) {
+                            Text(
+                                text = updateStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (updateStatusText == "التطبيق محدّث") SuccessGreen else TextMuted,
+                                modifier = Modifier.testTag("update_status_message")
+                            )
+                        }
+                        Button(
+                            onClick = { viewModel.checkForUpdateNow() },
+                            enabled = !isChecking,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("check_update_button")
+                        ) {
+                            if (isChecking) {
+                                CircularProgressIndicator(
+                                    color = TextPrimary,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text(
+                                text = if (isChecking) "جاري التحقق..." else "تحقق من التحديث",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = TextPrimary
+                            )
+                        }
                     }
                 }
             }

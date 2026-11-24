@@ -17,8 +17,11 @@ android {
     applicationId = "com.aistudio.almakhzanji.krmxvp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+    versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
+
+    val githubRepo = System.getenv("GITHUB_REPO") ?: "unknown/unknown"
+    buildConfigField("String", "GITHUB_REPO", "\"$githubRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

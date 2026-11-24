@@ -4,14 +4,25 @@ import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -20,10 +31,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.example.core.UpdateUiState
 import com.example.core.configureAppCheck
 import com.example.di.AppContainer
 import com.example.domain.model.LanguageDirection
 import com.example.ui.components.AlMakhzanjiBottomBar
+import com.example.ui.components.AppUpdateDialogs
 import com.example.ui.components.BottomNavTab
 import com.example.ui.navigation.DiscoverRoute
 import com.example.ui.navigation.FavoritesRoute
@@ -58,6 +71,7 @@ class MainActivity : ComponentActivity() {
         configureAppCheck(this, intent)
 
         appContainer = AppContainer(this)
+        appContainer.appUpdateManager.checkForUpdate(force = false)
 
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
@@ -84,6 +98,29 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val updateManager = appContainer.appUpdateManager
+    val updateUiState by updateManager.uiState.collectAsStateWithLifecycle()
+
+    val unknownSourcesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        updateManager.onHostResumed()
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                updateManager.onHostResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val currentBottomTab = when {
         currentDestination?.hasRoute<HomeRoute>() == true -> BottomNavTab.HOME
@@ -93,9 +130,18 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
         else -> null
     }
 
+    LaunchedEffect(updateUiState) {
+        val msg = (updateUiState as? UpdateUiState.Message)?.text
+        if (!msg.isNullOrBlank() && currentBottomTab != BottomNavTab.MORE) {
+            snackbarHostState.showSnackbar(msg)
+            updateManager.dismissDialog()
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = CanvasBackground,
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             if (currentBottomTab != null) {
                 AlMakhzanjiBottomBar(
@@ -125,6 +171,9 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
             modifier = Modifier.padding(innerPadding)
         ) {
             composable<HomeRoute> {
+                LaunchedEffect(Unit) {
+                    updateManager.checkForUpdate(force = false)
+                }
                 val homeViewModel: HomeViewModel = viewModel(
                     factory = HomeViewModel.Factory(appContainer.repository)
                 )
@@ -166,7 +215,10 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
 
             composable<MoreRoute> {
                 val moreViewModel: MoreViewModel = viewModel(
-                    factory = MoreViewModel.Factory(appContainer.repository)
+                    factory = MoreViewModel.Factory(
+                        repository = appContainer.repository,
+                        updateManager = appContainer.appUpdateManager
+                    )
                 )
                 MoreScreen(viewModel = moreViewModel)
             }
@@ -235,4 +287,16 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
             }
         }
     }
+
+    AppUpdateDialogs(
+        state = updateUiState,
+        onAcceptUpdate = { updateManager.startUpdateDownload() },
+        onDismiss = { updateManager.dismissDialog() },
+        onCancelDownload = { updateManager.cancelDownload() },
+        onOpenInstallPermissionSettings = {
+            runCatching {
+                unknownSourcesLauncher.launch(updateManager.buildManageUnknownSourcesIntent())
+            }
+        }
+    )
 }
