@@ -8,8 +8,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -32,7 +34,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.core.UpdateUiState
-import com.example.core.configureAppCheck
 import com.example.di.AppContainer
 import com.example.domain.model.LanguageDirection
 import com.example.ui.components.AlMakhzanjiBottomBar
@@ -41,23 +42,29 @@ import com.example.ui.components.BottomNavTab
 import com.example.ui.navigation.DiscoverRoute
 import com.example.ui.navigation.FavoritesRoute
 import com.example.ui.navigation.HomeRoute
+import com.example.ui.navigation.LanguagesRoute
 import com.example.ui.navigation.MoreRoute
-import com.example.ui.navigation.PhrasesListRoute
 import com.example.ui.navigation.QuickTranslateRoute
+import com.example.ui.navigation.SourcesCreditsRoute
+import com.example.ui.navigation.TranslationRoute
 import com.example.ui.navigation.WordDetailRoute
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.LanguagesScreen
 import com.example.ui.screens.MoreScreen
-import com.example.ui.screens.PhrasesListScreen
 import com.example.ui.screens.QuickTranslateScreen
+import com.example.ui.screens.SourcesCreditsScreen
+import com.example.ui.screens.TranslationScreen
 import com.example.ui.screens.WordDetailScreen
 import com.example.ui.theme.AlMakhzanjiTheme
-import com.example.ui.theme.CanvasBackground
+import com.example.ui.theme.ThemeMode
 import com.example.ui.viewmodel.FavoritesViewModel
 import com.example.ui.viewmodel.HomeViewModel
+import com.example.ui.viewmodel.LanguagesViewModel
 import com.example.ui.viewmodel.MoreViewModel
 import com.example.ui.viewmodel.QuickTranslateViewModel
+import com.example.ui.viewmodel.TranslationViewModel
 import com.example.ui.viewmodel.WordDetailViewModel
 
 class MainActivity : ComponentActivity() {
@@ -67,19 +74,34 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // STEP 1: Configure App Check with launch intent before any UI or Firebase operations
-        configureAppCheck(this, intent)
-
         appContainer = AppContainer(this)
         appContainer.appUpdateManager.checkForUpdate(force = false)
 
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
-        )
+        enableEdgeToEdge()
 
         setContent {
-            AlMakhzanjiTheme {
+            val themeMode by appContainer.themePreferences.themeMode.collectAsStateWithLifecycle()
+            val isDark = when (themeMode) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            LaunchedEffect(isDark) {
+                enableEdgeToEdge(
+                    statusBarStyle = if (isDark) {
+                        SystemBarStyle.dark(Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                    },
+                    navigationBarStyle = if (isDark) {
+                        SystemBarStyle.dark(Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                    }
+                )
+            }
+
+            AlMakhzanjiTheme(themeMode = themeMode) {
                 AlMakhzanjiApp(appContainer = appContainer)
             }
         }
@@ -140,7 +162,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = CanvasBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             if (currentBottomTab != null) {
@@ -187,6 +209,12 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                             )
                         )
                     },
+                    onOpenTranslation = {
+                        navController.navigate(TranslationRoute)
+                    },
+                    onOpenLanguages = {
+                        navController.navigate(LanguagesRoute)
+                    },
                     onOpenWord = { word ->
                         navController.navigate(WordDetailRoute(query = word))
                     }
@@ -217,10 +245,20 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                 val moreViewModel: MoreViewModel = viewModel(
                     factory = MoreViewModel.Factory(
                         repository = appContainer.repository,
-                        updateManager = appContainer.appUpdateManager
+                        updateManager = appContainer.appUpdateManager,
+                        offlinePackManager = appContainer.offlinePackManager,
+                        themePreferences = appContainer.themePreferences
                     )
                 )
-                MoreScreen(viewModel = moreViewModel)
+                MoreScreen(
+                    viewModel = moreViewModel,
+                    onOpenLanguages = { navController.navigate(LanguagesRoute) },
+                    onOpenTranslation = { navController.navigate(TranslationRoute) },
+                    onOpenSourcesCredits = { navController.navigate(SourcesCreditsRoute) },
+                    onOpenWord = { word ->
+                        navController.navigate(WordDetailRoute(query = word))
+                    }
+                )
             }
 
             composable<QuickTranslateRoute> { entry ->
@@ -247,42 +285,59 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                 )
             }
 
+            composable<TranslationRoute> {
+                val translationViewModel: TranslationViewModel = viewModel(
+                    factory = TranslationViewModel.Factory(appContainer.translationManager)
+                )
+                TranslationScreen(
+                    viewModel = translationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenLanguages = { navController.navigate(LanguagesRoute) }
+                )
+            }
+
+            composable<LanguagesRoute> {
+                val languagesViewModel: LanguagesViewModel = viewModel(
+                    factory = LanguagesViewModel.Factory(appContainer.translationManager)
+                )
+                LanguagesScreen(
+                    viewModel = languagesViewModel,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable<SourcesCreditsRoute> {
+                SourcesCreditsScreen(
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
             composable<WordDetailRoute> { entry ->
                 val args = entry.toRoute<WordDetailRoute>()
                 val wordViewModel: WordDetailViewModel = viewModel(
-                    key = "word_${args.query}",
+                    key = "word_${args.query}_${args.fallbackBaseWord.orEmpty()}",
                     factory = WordDetailViewModel.Factory(
                         repository = appContainer.repository,
-                        initialQuery = args.query
+                        translationManager = appContainer.translationManager,
+                        initialQuery = args.query,
+                        fallbackBaseWord = args.fallbackBaseWord,
+                        highlightChip = args.highlightChip
                     )
                 )
                 WordDetailScreen(
                     viewModel = wordViewModel,
                     audioManager = appContainer.audioPlayerManager,
                     onBack = { navController.popBackStack() },
-                    onOpenWord = { word ->
-                        navController.navigate(WordDetailRoute(query = word))
+                    onOpenWord = { query, fallbackBase, highlightChip ->
+                        navController.navigate(
+                            WordDetailRoute(
+                                query = query,
+                                fallbackBaseWord = fallbackBase,
+                                highlightChip = highlightChip
+                            )
+                        )
                     },
-                    onOpenPhrases = { word ->
-                        navController.navigate(PhrasesListRoute(word = word))
-                    }
-                )
-            }
-
-            composable<PhrasesListRoute> { entry ->
-                val args = entry.toRoute<PhrasesListRoute>()
-                val wordViewModel: WordDetailViewModel = viewModel(
-                    key = "phrases_${args.word}",
-                    factory = WordDetailViewModel.Factory(
-                        repository = appContainer.repository,
-                        initialQuery = args.word
-                    )
-                )
-                PhrasesListScreen(
-                    word = args.word,
-                    viewModel = wordViewModel,
-                    audioManager = appContainer.audioPlayerManager,
-                    onBack = { navController.popBackStack() }
+                    onOpenLanguages = { navController.navigate(LanguagesRoute) }
                 )
             }
         }

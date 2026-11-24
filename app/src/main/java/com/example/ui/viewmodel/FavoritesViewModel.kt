@@ -23,7 +23,7 @@ class FavoritesViewModel(
 
     fun removeFavorite(word: String) {
         viewModelScope.launch {
-            repository.toggleFavoriteByWord(word)
+            repository.removeFavorite(word)
         }
     }
 

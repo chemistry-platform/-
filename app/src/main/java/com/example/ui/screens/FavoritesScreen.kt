@@ -8,19 +8,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -42,13 +38,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.ui.components.AppIcons
 import com.example.ui.components.PosChip
-import com.example.ui.theme.AccentRed
-import com.example.ui.theme.CanvasBackground
-import com.example.ui.theme.DividerBorder
-import com.example.ui.theme.SurfaceCard
-import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
 import com.example.ui.viewmodel.FavoritesViewModel
 
 @Composable
@@ -57,12 +48,13 @@ fun FavoritesScreen(
     onOpenWord: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(CanvasBackground)
+            .background(colors.background)
             .statusBarsPadding(),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -78,12 +70,12 @@ fun FavoritesScreen(
                     Text(
                         text = stringResource(R.string.nav_favorites),
                         style = MaterialTheme.typography.headlineLarge,
-                        color = TextPrimary
+                        color = colors.onBackground
                     )
                     Text(
                         text = "الكلمات المحفوظة للمراجعة السريعة بدون إنترنت",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextMuted
+                        color = colors.onSurfaceVariant
                     )
                 }
             }
@@ -92,9 +84,9 @@ fun FavoritesScreen(
                 item {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        color = SurfaceCard,
+                        color = colors.surface,
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, DividerBorder)
+                        border = BorderStroke(1.dp, colors.outline)
                     ) {
                         Column(
                             modifier = Modifier
@@ -104,20 +96,20 @@ fun FavoritesScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.BookmarkBorder,
+                                imageVector = AppIcons.BookmarkBorder,
                                 contentDescription = null,
-                                tint = TextMuted,
+                                tint = colors.onSurfaceVariant,
                                 modifier = Modifier.size(40.dp)
                             )
                             Text(
                                 text = stringResource(R.string.empty_favorites),
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = TextPrimary
+                                color = colors.onSurface
                             )
                             Text(
                                 text = "اضغط على أيقونة النجمة بجانب أي كلمة لحفظها هنا.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextMuted
+                                color = colors.onSurfaceVariant
                             )
                         }
                     }
@@ -126,9 +118,9 @@ fun FavoritesScreen(
                 item {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        color = SurfaceCard,
+                        color = colors.surface,
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, DividerBorder)
+                        border = BorderStroke(1.dp, colors.outline)
                     ) {
                         Column {
                             favorites.forEachIndexed { index, fav ->
@@ -153,7 +145,7 @@ fun FavoritesScreen(
                                                 Text(
                                                     text = fav.word,
                                                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                                    color = TextPrimary
+                                                    color = colors.onSurface
                                                 )
                                             }
                                             if (fav.usIpa.isNotBlank()) {
@@ -161,22 +153,24 @@ fun FavoritesScreen(
                                                     Text(
                                                         text = fav.usIpa,
                                                         style = MaterialTheme.typography.bodySmall,
-                                                        color = TextMuted
+                                                        color = colors.onSurfaceVariant
                                                     )
                                                 }
                                             }
-                                            if (fav.partOfSpeechArabic.isNotBlank()) {
-                                                PosChip(text = fav.partOfSpeechArabic)
+                                            if (fav.partOfSpeech.isNotBlank()) {
+                                                PosChip(text = fav.partOfSpeech)
                                             }
                                         }
-                                        if (fav.arabicSummary.isNotBlank()) {
-                                            Text(
-                                                text = fav.arabicSummary,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = TextMuted,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
+                                        if (fav.summaryText.isNotBlank()) {
+                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                Text(
+                                                    text = fav.summaryText,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = colors.onSurfaceVariant,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
                                         }
                                     }
 
@@ -189,12 +183,12 @@ fun FavoritesScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.Star,
                                             contentDescription = "إزالة من المفضلة",
-                                            tint = AccentRed
+                                            tint = colors.primary
                                         )
                                     }
                                 }
                                 if (index < favorites.lastIndex) {
-                                    HorizontalDivider(color = DividerBorder, thickness = 1.dp)
+                                    HorizontalDivider(color = colors.outline, thickness = 1.dp)
                                 }
                             }
                         }

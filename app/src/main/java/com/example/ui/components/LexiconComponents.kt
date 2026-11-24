@@ -1,15 +1,7 @@
 package com.example.ui.components
 
-import android.app.Activity
-import android.content.Intent
-import android.speech.RecognizerIntent
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,21 +15,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.rounded.Bookmark
-import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.SwapHoriz
-import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,11 +33,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -68,55 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.domain.model.LanguageDirection
-import com.example.ui.theme.AccentRed
-import com.example.ui.theme.AccentRedContainer
-import com.example.ui.theme.CanvasBackground
-import com.example.ui.theme.DividerBorder
-import com.example.ui.theme.LinkBlue
-import com.example.ui.theme.RegisterGold
-import com.example.ui.theme.RegisterGoldContainer
-import com.example.ui.theme.SurfaceCard
-import com.example.ui.theme.SurfaceElevated
-import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
-import java.util.Locale
-
-@Composable
-fun rememberVoiceInputLauncher(
-    onResult: (String) -> Unit
-): (LanguageDirection) -> Unit {
-    val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { activityResult ->
-        if (activityResult.resultCode == Activity.RESULT_OK) {
-            val matches = activityResult.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            val spoken = matches?.firstOrNull()?.trim().orEmpty()
-            if (spoken.isNotEmpty()) {
-                onResult(spoken)
-            }
-        }
-    }
-
-    return { direction ->
-        val langTag = if (direction == LanguageDirection.AR_TO_EN) "ar-SA" else "en-US"
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "تحدث الآن...")
-        }
-        runCatching {
-            launcher.launch(intent)
-        }.onFailure {
-            Toast.makeText(
-                context,
-                "ميزة الإدخال الصوتي غير مدعومة على هذا الجهاز",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-}
 
 @Composable
 fun LanguageSwapBar(
@@ -124,6 +57,7 @@ fun LanguageSwapBar(
     onSwap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
     val sourceLabel = if (direction == LanguageDirection.EN_TO_AR) {
         stringResource(R.string.lang_english)
     } else {
@@ -145,7 +79,7 @@ fun LanguageSwapBar(
         Text(
             text = sourceLabel,
             style = MaterialTheme.typography.labelLarge,
-            color = TextPrimary,
+            color = colors.onSurface,
             modifier = Modifier.weight(1f),
             textAlign = TextAlign.Center
         )
@@ -159,9 +93,9 @@ fun LanguageSwapBar(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Rounded.SwapHoriz,
+                imageVector = AppIcons.SwapHoriz,
                 contentDescription = stringResource(R.string.cd_swap_languages),
-                tint = LinkBlue,
+                tint = colors.secondary,
                 modifier = Modifier.size(22.dp)
             )
         }
@@ -169,31 +103,39 @@ fun LanguageSwapBar(
         Text(
             text = targetLabel,
             style = MaterialTheme.typography.labelLarge,
-            color = TextPrimary,
+            color = colors.onSurface,
             modifier = Modifier.weight(1f),
             textAlign = TextAlign.Center
         )
     }
 }
 
+/**
+ * Section 3: Standalone human-audio speaker pill button (US / UK).
+ * Disabled gracefully if no real recording URL exists.
+ */
 @Composable
 fun PronunciationPillButton(
     regionLabel: String,
     ipa: String,
+    hasAudio: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val displayIpa = ipa.ifBlank { "/.../" }.let {
-        if (it.startsWith("/")) it else "/$it/"
+    val colors = MaterialTheme.colorScheme
+    val displayIpa = ipa.ifBlank { "" }.let {
+        if (it.isNotEmpty() && !it.startsWith("/")) "/$it/" else it
     }
     Surface(
         modifier = modifier
             .height(44.dp)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
-        color = SurfaceElevated,
+            .then(
+                if (hasAudio) Modifier.clickable(onClick = onClick) else Modifier
+            ),
+        color = colors.surfaceVariant,
         shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, DividerBorder)
+        border = BorderStroke(1.dp, colors.outline)
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Row(
@@ -202,97 +144,115 @@ fun PronunciationPillButton(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
-                    contentDescription = "$regionLabel pronunciation",
-                    tint = AccentRed,
+                    imageVector = AppIcons.VolumeUp,
+                    contentDescription = if (regionLabel == "US") {
+                        stringResource(R.string.cd_speak_us)
+                    } else {
+                        stringResource(R.string.cd_speak_uk)
+                    },
+                    tint = if (hasAudio) colors.primary else colors.onSurfaceVariant.copy(alpha = 0.4f),
                     modifier = Modifier.size(18.dp)
                 )
                 Text(
                     text = regionLabel,
                     style = MaterialTheme.typography.labelMedium,
-                    color = TextPrimary
+                    color = if (hasAudio) colors.onSurface else colors.onSurfaceVariant.copy(alpha = 0.5f)
                 )
-                Text(
-                    text = displayIpa,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (displayIpa.isNotEmpty()) {
+                    Text(
+                        text = displayIpa,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Section 3: Standalone US / UK buttons next to words in search results & confusable cards.
+ * Only renders buttons for accents that have real human recordings.
+ * Ripple is scoped strictly to each button (never the enclosing card/row).
+ */
+@Composable
+fun CompactWordAudioButtons(
+    hasUsAudio: Boolean,
+    hasUkAudio: Boolean,
+    onPlayUs: () -> Unit,
+    onPlayUk: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (!hasUsAudio && !hasUkAudio) return
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (hasUsAudio) {
+                MiniSpeakerButton(label = "US", onClick = onPlayUs, testTag = "audio_btn_us")
+            }
+            if (hasUkAudio) {
+                MiniSpeakerButton(label = "UK", onClick = onPlayUk, testTag = "audio_btn_uk")
             }
         }
     }
 }
 
 @Composable
-fun UkUsMiniButtons(
-    onPlayUk: () -> Unit,
-    onPlayUs: () -> Unit,
-    modifier: Modifier = Modifier
+private fun MiniSpeakerButton(
+    label: String,
+    onClick: () -> Unit,
+    testTag: String
 ) {
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        Row(
-            modifier = modifier,
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .size(width = 44.dp, height = 44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        color = colors.surfaceVariant,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            MiniVoiceButton(
-                label = "UK",
-                onClick = onPlayUk,
-                testTag = "play_uk_sentence"
+            Icon(
+                imageVector = AppIcons.VolumeUp,
+                contentDescription = label,
+                tint = colors.primary,
+                modifier = Modifier.size(16.dp)
             )
-            MiniVoiceButton(
-                label = "US",
-                onClick = onPlayUs,
-                testTag = "play_us_sentence"
+            Text(
+                text = label,
+                fontSize = 9.sp,
+                lineHeight = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.onSurfaceVariant
             )
         }
     }
 }
 
 @Composable
-private fun MiniVoiceButton(
-    label: String,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    Column(
-        modifier = Modifier
-            .size(width = 44.dp, height = 44.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .testTag(testTag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
-            contentDescription = label,
-            tint = AccentRed,
-            modifier = Modifier.size(17.dp)
-        )
-        Text(
-            text = label,
-            fontSize = 9.sp,
-            lineHeight = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = TextMuted
-        )
-    }
-}
-
-@Composable
 fun RegisterBadge(text: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
     Surface(
         modifier = modifier,
-        color = RegisterGoldContainer,
+        color = colors.tertiaryContainer,
         shape = RoundedCornerShape(999.dp),
-        border = BorderStroke(1.dp, RegisterGold.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, colors.tertiary.copy(alpha = 0.35f))
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = RegisterGold,
+            color = colors.tertiary,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
         )
     }
@@ -300,15 +260,17 @@ fun RegisterBadge(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun PosChip(text: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
     Surface(
         modifier = modifier,
-        color = DividerBorder,
-        shape = RoundedCornerShape(999.dp)
+        color = colors.surfaceVariant,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, colors.outline)
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = TextPrimary,
+            color = colors.onSurface,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
         )
     }
@@ -318,16 +280,18 @@ fun PosChip(text: String, modifier: Modifier = Modifier) {
 fun InteractiveWordChip(
     word: String,
     onClick: () -> Unit,
+    highlighted: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
     Surface(
         modifier = modifier
             .height(36.dp)
             .clip(RoundedCornerShape(999.dp))
             .clickable(onClick = onClick),
-        color = SurfaceElevated,
+        color = if (highlighted) colors.primaryContainer else colors.surfaceVariant,
         shape = RoundedCornerShape(999.dp),
-        border = BorderStroke(1.dp, DividerBorder)
+        border = BorderStroke(1.dp, if (highlighted) colors.primary else colors.outline)
     ) {
         Box(
             modifier = Modifier.padding(horizontal = 12.dp),
@@ -335,8 +299,10 @@ fun InteractiveWordChip(
         ) {
             Text(
                 text = word,
-                style = MaterialTheme.typography.bodySmall,
-                color = LinkBlue,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Medium
+                ),
+                color = if (highlighted) colors.primary else colors.secondary,
                 maxLines = 1
             )
         }
@@ -349,6 +315,7 @@ fun HighlightedEnglishText(
     targetWord: String,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
     val annotated = buildAnnotatedString {
         if (targetWord.isBlank()) {
             append(sentence)
@@ -361,8 +328,8 @@ fun HighlightedEnglishText(
                 }
                 withStyle(
                     SpanStyle(
-                        color = AccentRed,
-                        fontWeight = FontWeight.SemiBold
+                        color = colors.primary,
+                        fontWeight = FontWeight.Bold
                     )
                 ) {
                     append(match.value)
@@ -379,7 +346,7 @@ fun HighlightedEnglishText(
         Text(
             text = annotated,
             style = MaterialTheme.typography.bodyMedium,
-            color = TextPrimary,
+            color = colors.onSurface,
             modifier = modifier.fillMaxWidth()
         )
     }
@@ -387,11 +354,12 @@ fun HighlightedEnglishText(
 
 @Composable
 fun NoInternetBanner(modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = AccentRedContainer,
+        color = colors.errorContainer,
         shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.4f))
+        border = BorderStroke(1.dp, colors.error.copy(alpha = 0.4f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -399,22 +367,23 @@ fun NoInternetBanner(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(
-                imageVector = Icons.Rounded.WifiOff,
+                imageVector = AppIcons.WifiOff,
                 contentDescription = stringResource(R.string.no_internet_title),
-                tint = AccentRed,
+                tint = colors.error,
                 modifier = Modifier.size(18.dp)
             )
             Text(
                 text = "وضع عدم الاتصال: يتم عرض الكلمات المحفوظة والترجمة المحلية فقط",
                 style = MaterialTheme.typography.bodySmall,
-                color = TextPrimary
+                color = colors.onErrorContainer
             )
         }
     }
 }
 
 @Composable
-fun LoadingCard(message: String = "جاري البحث والترجمة...", modifier: Modifier = Modifier) {
+fun LoadingCard(message: String = "جاري التحميل...", modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -423,14 +392,14 @@ fun LoadingCard(message: String = "جاري البحث والترجمة...", mod
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         CircularProgressIndicator(
-            color = AccentRed,
+            color = colors.primary,
             strokeWidth = 2.5.dp,
             modifier = Modifier.size(32.dp)
         )
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
-            color = TextMuted
+            color = colors.onSurfaceVariant
         )
     }
 }
@@ -447,10 +416,11 @@ fun AlMakhzanjiBottomBar(
     currentTab: BottomNavTab,
     onSelectTab: (BottomNavTab) -> Unit
 ) {
-    Column(modifier = Modifier.background(SurfaceCard)) {
-        HorizontalDivider(color = DividerBorder, thickness = 1.dp)
+    val colors = MaterialTheme.colorScheme
+    Column(modifier = Modifier.background(colors.surface)) {
+        HorizontalDivider(color = colors.outline, thickness = 1.dp)
         NavigationBar(
-            containerColor = SurfaceCard,
+            containerColor = colors.surface,
             tonalElevation = 0.dp,
             modifier = Modifier.navigationBarsPadding()
         ) {
@@ -458,8 +428,8 @@ fun AlMakhzanjiBottomBar(
                 val selected = tab == currentTab
                 val icon = when (tab) {
                     BottomNavTab.HOME -> if (selected) Icons.Rounded.Home else Icons.Outlined.Home
-                    BottomNavTab.DISCOVER -> if (selected) Icons.Rounded.Explore else Icons.Outlined.Explore
-                    BottomNavTab.FAVORITES -> if (selected) Icons.Rounded.Bookmark else Icons.Outlined.BookmarkBorder
+                    BottomNavTab.DISCOVER -> AppIcons.Explore
+                    BottomNavTab.FAVORITES -> if (selected) AppIcons.Bookmark else AppIcons.BookmarkBorder
                     BottomNavTab.MORE -> if (selected) Icons.Rounded.Menu else Icons.Outlined.Menu
                 }
                 NavigationBarItem(
@@ -481,11 +451,11 @@ fun AlMakhzanjiBottomBar(
                         )
                     },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentRed,
-                        selectedTextColor = AccentRed,
-                        unselectedIconColor = TextMuted,
-                        unselectedTextColor = TextMuted,
-                        indicatorColor = AccentRedContainer
+                        selectedIconColor = colors.primary,
+                        selectedTextColor = colors.primary,
+                        unselectedIconColor = colors.onSurfaceVariant,
+                        unselectedTextColor = colors.onSurfaceVariant,
+                        indicatorColor = colors.primaryContainer
                     )
                 )
             }
@@ -498,6 +468,7 @@ fun AlMakhzanjiBottomBar(
 fun ChipWrapRow(
     items: List<String>,
     onChipClick: (String) -> Unit,
+    highlightedChip: String? = null,
     modifier: Modifier = Modifier
 ) {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -509,6 +480,7 @@ fun ChipWrapRow(
             items.forEach { item ->
                 InteractiveWordChip(
                     word = item,
+                    highlighted = highlightedChip != null && item.equals(highlightedChip, ignoreCase = true),
                     onClick = { onChipClick(item) }
                 )
             }

@@ -21,11 +21,17 @@ data class QuickTranslateRoute(
 )
 
 @Serializable
-data class WordDetailRoute(
-    val query: String
-)
+object TranslationRoute
 
 @Serializable
-data class PhrasesListRoute(
-    val word: String
+object LanguagesRoute
+
+@Serializable
+object SourcesCreditsRoute
+
+@Serializable
+data class WordDetailRoute(
+    val query: String,
+    val fallbackBaseWord: String? = null,
+    val highlightChip: String? = null
 )

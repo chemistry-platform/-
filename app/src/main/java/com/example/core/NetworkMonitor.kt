@@ -20,6 +20,16 @@ class NetworkMonitor(context: Context) {
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
+    fun isOnCellularWithoutWifi(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        val hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val hasWifiOrEthernet = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        val hasCellular = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        return hasInternet && hasCellular && !hasWifiOrEthernet
+    }
+
     val isOnlineFlow: Flow<Boolean> = callbackFlow {
         trySend(isOnline())
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -41,7 +51,7 @@ class NetworkMonitor(context: Context) {
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-        connectivityManager.registerNetworkCallback(request, callback)
+        runCatching { connectivityManager.registerNetworkCallback(request, callback) }
         awaitClose {
             runCatching { connectivityManager.unregisterNetworkCallback(callback) }
         }

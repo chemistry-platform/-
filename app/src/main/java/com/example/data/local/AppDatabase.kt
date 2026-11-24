@@ -7,11 +7,13 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [
-        CachedWordEntity::class,
+        ApiCacheEntity::class,
+        WordIndexEntity::class,
+        OfflinePackWordEntity::class,
         SearchHistoryEntity::class,
         FavoriteWordEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -27,7 +29,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "al_makhzanji_lexicon.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration(true)
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }

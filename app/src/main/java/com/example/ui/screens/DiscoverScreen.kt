@@ -18,9 +18,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,16 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.ui.components.AppIcons
 import com.example.ui.components.InteractiveWordChip
-import com.example.ui.components.RegisterBadge
-import com.example.ui.theme.AccentRed
-import com.example.ui.theme.CanvasBackground
-import com.example.ui.theme.DividerBorder
-import com.example.ui.theme.LinkBlue
-import com.example.ui.theme.RegisterGold
-import com.example.ui.theme.SurfaceCard
-import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
 
 private data class DiscoverWord(
     val word: String,
@@ -72,10 +61,11 @@ fun DiscoverScreen(
     onOpenWord: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(CanvasBackground)
+            .background(colors.background)
             .statusBarsPadding(),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -91,12 +81,12 @@ fun DiscoverScreen(
                     Text(
                         text = stringResource(R.string.nav_discover),
                         style = MaterialTheme.typography.headlineLarge,
-                        color = TextPrimary
+                        color = colors.onBackground
                     )
                     Text(
                         text = "كلمات مختارة لتوسيع حصيلتك اللغوية وسياقاتها",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextMuted
+                        color = colors.onSurfaceVariant
                     )
                 }
             }
@@ -106,9 +96,9 @@ fun DiscoverScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onOpenWord("run") },
-                    color = SurfaceCard,
+                    color = colors.surface,
                     shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, LinkBlue.copy(alpha = 0.5f))
+                    border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.5f))
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -119,28 +109,28 @@ fun DiscoverScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Lightbulb,
+                                imageVector = AppIcons.Lightbulb,
                                 contentDescription = null,
-                                tint = RegisterGold,
+                                tint = colors.tertiary,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
                                 text = "كلمة اليوم متعددة السياقات",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = RegisterGold
+                                color = colors.tertiary
                             )
                         }
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
                                 text = "run",
                                 style = MaterialTheme.typography.displayLarge,
-                                color = TextPrimary
+                                color = colors.onSurface
                             )
                         }
                         Text(
                             text = "يجري؛ يدير؛ يشتغل؛ يسيل؛ يترشح — اضغط لاستعراض كافة المعاني والأمثلة الصوتية.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextMuted
+                            color = colors.onSurfaceVariant
                         )
                     }
                 }
@@ -150,16 +140,16 @@ fun DiscoverScreen(
                 Text(
                     text = "مفردات مقترحة",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = AccentRed
+                    color = colors.primary
                 )
             }
 
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    color = SurfaceCard,
+                    color = colors.surface,
                     shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, DividerBorder)
+                    border = BorderStroke(1.dp, colors.outline)
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
@@ -177,14 +167,14 @@ fun DiscoverScreen(
                                 Text(
                                     text = item.hintArabic,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TextMuted,
+                                    color = colors.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
                                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                     Text(
                                         text = item.word,
                                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                                        color = LinkBlue
+                                        color = colors.secondary
                                     )
                                 }
                             }
@@ -197,9 +187,9 @@ fun DiscoverScreen(
                 item {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        color = SurfaceCard,
+                        color = colors.surface,
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, DividerBorder)
+                        border = BorderStroke(1.dp, colors.outline)
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp),
@@ -208,7 +198,7 @@ fun DiscoverScreen(
                             Text(
                                 text = title,
                                 style = MaterialTheme.typography.headlineSmall,
-                                color = TextPrimary
+                                color = colors.onSurface
                             )
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 FlowRow(
@@ -224,39 +214,6 @@ fun DiscoverScreen(
                                 }
                             }
                         }
-                    }
-                }
-            }
-
-            item {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = SurfaceCard,
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, DividerBorder)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                tint = RegisterGold,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "بطاقات المراجعة والاختبارات اليومية",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextPrimary
-                            )
-                        }
-                        RegisterBadge(text = stringResource(R.string.coming_soon))
                     }
                 }
             }

@@ -28,8 +28,8 @@ import java.io.FileOutputStream
 private const val TAG = "AppUpdateManager"
 private const val PREFS_NAME = "app_updater_prefs"
 private const val KEY_LAST_CHECK_MS = "last_check_timestamp_ms"
-private const val CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L
 private const val TARGET_ASSET_NAME = "app-release.apk"
+private val APP_RELEASE_TAG_REGEX = Regex("^v(\\d+)\\.(\\d+)\\.(\\d+)$")
 
 sealed interface UpdateUiState {
     data object Idle : UpdateUiState
@@ -66,14 +66,6 @@ class AppUpdateManager(
             return
         }
 
-        if (!force) {
-            val lastCheck = prefs.getLong(KEY_LAST_CHECK_MS, 0L)
-            val elapsed = System.currentTimeMillis() - lastCheck
-            if (lastCheck > 0L && elapsed < CHECK_INTERVAL_MS) {
-                return
-            }
-        }
-
         val repoParts = BuildConfig.GITHUB_REPO.split("/")
         if (repoParts.size != 2 ||
             repoParts[0].isBlank() ||
@@ -98,8 +90,8 @@ class AppUpdateManager(
                 _uiState.value = UpdateUiState.Checking
             }
             try {
-                val release = withContext(Dispatchers.IO) {
-                    gitHubApi.getLatestRelease(
+                val releases = withContext(Dispatchers.IO) {
+                    gitHubApi.getReleases(
                         owner = repoParts[0].trim(),
                         repo = repoParts[1].trim()
                     )
@@ -107,17 +99,23 @@ class AppUpdateManager(
 
                 prefs.edit().putLong(KEY_LAST_CHECK_MS, System.currentTimeMillis()).apply()
 
-                val releaseCode = parseReleaseNumber(release.tagName)
-                val apkAsset = release.assets.orEmpty().firstOrNull { asset ->
-                    asset.name.equals(TARGET_ASSET_NAME, ignoreCase = true) &&
-                        !asset.browserDownloadUrl.isNullOrBlank()
-                }
+                val bestMatch = releases
+                    .asSequence()
+                    .filter { it.draft != true && it.prerelease != true }
+                    .mapNotNull { release ->
+                        val parsed = parseAppReleaseTag(release.tagName) ?: return@mapNotNull null
+                        val apkUrl = release.assets.orEmpty().firstOrNull { asset ->
+                            asset.name.equals(TARGET_ASSET_NAME, ignoreCase = true) &&
+                                !asset.browserDownloadUrl.isNullOrBlank()
+                        }?.browserDownloadUrl ?: return@mapNotNull null
+                        Triple(parsed, release, apkUrl)
+                    }
+                    .maxWithOrNull { a, b -> compareVersions(a.first, b.first) }
 
-                if (releaseCode != null &&
-                    releaseCode > BuildConfig.VERSION_CODE &&
-                    apkAsset?.browserDownloadUrl != null
+                if (bestMatch != null &&
+                    isNewerThanInstalled(bestMatch.first)
                 ) {
-                    _uiState.value = UpdateUiState.UpdateAvailable(apkAsset.browserDownloadUrl)
+                    _uiState.value = UpdateUiState.UpdateAvailable(bestMatch.third)
                 } else {
                     _uiState.value = if (force) {
                         UpdateUiState.Message("التطبيق محدّث")
@@ -284,10 +282,37 @@ class AppUpdateManager(
         }
     }
 
-    private fun parseReleaseNumber(tagName: String?): Int? {
-        val raw = tagName?.trim().orEmpty()
-        if (raw.isEmpty() || !raw.contains('.')) return null
-        val tail = raw.substringAfterLast('.')
-        return tail.takeWhile { it.isDigit() }.toIntOrNull()
+    private data class SemVer(val major: Int, val minor: Int, val patch: Int)
+
+    private fun parseAppReleaseTag(tagName: String?): SemVer? {
+        val raw = tagName?.trim() ?: return null
+        if (raw.equals("dictionary-pack", ignoreCase = true)) return null
+        val match = APP_RELEASE_TAG_REGEX.matchEntire(raw) ?: return null
+        val major = match.groupValues[1].toIntOrNull() ?: return null
+        val minor = match.groupValues[2].toIntOrNull() ?: return null
+        val patch = match.groupValues[3].toIntOrNull() ?: return null
+        return SemVer(major, minor, patch)
+    }
+
+    private fun compareVersions(a: SemVer, b: SemVer): Int {
+        if (a.major != b.major) return a.major.compareTo(b.major)
+        if (a.minor != b.minor) return a.minor.compareTo(b.minor)
+        return a.patch.compareTo(b.patch)
+    }
+
+    private fun isNewerThanInstalled(remote: SemVer): Boolean {
+        // CI builds use versionCode = run_number and versionName = 1.0.<run_number>
+        // Compare against VERSION_CODE when major.minor matches 1.0, and also compare parsed versionName.
+        val installedMatch = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)").find(BuildConfig.VERSION_NAME)
+        val installed = if (installedMatch != null) {
+            SemVer(
+                installedMatch.groupValues[1].toIntOrNull() ?: 1,
+                installedMatch.groupValues[2].toIntOrNull() ?: 0,
+                installedMatch.groupValues[3].toIntOrNull() ?: BuildConfig.VERSION_CODE
+            )
+        } else {
+            SemVer(1, 0, BuildConfig.VERSION_CODE)
+        }
+        return compareVersions(remote, installed) > 0 || remote.patch > BuildConfig.VERSION_CODE
     }
 }

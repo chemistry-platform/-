@@ -1,6 +1,6 @@
 {
   "name": "معجم المخزنجي",
-  "description": "معجم ومترجم احترافي ثنائي اللغة (عربي-إنجليزي) بواجهة داكنة متكاملة من اليمين لليسار مع نطق صوتي وأمثلة ذكية.",
+  "description": "معجم ومترجم إنجليزي-عربي شامل وسريع يعتمد على المصادر المفتوحة ويعمل دون اتصال.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

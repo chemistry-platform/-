@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,18 +18,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,17 +40,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,24 +58,16 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.Accent
 import com.example.core.AudioPlayerManager
-import com.example.domain.model.LanguageDirection
+import com.example.data.local.SearchHistoryEntity
 import com.example.domain.model.SearchSuggestion
+import com.example.ui.components.AppIcons
+import com.example.ui.components.CompactWordAudioButtons
 import com.example.ui.components.LanguageSwapBar
 import com.example.ui.components.NoInternetBanner
 import com.example.ui.components.PosChip
-import com.example.ui.components.UkUsMiniButtons
-import com.example.ui.components.rememberVoiceInputLauncher
-import com.example.ui.theme.AccentRed
-import com.example.ui.theme.CanvasBackground
-import com.example.ui.theme.DividerBorder
-import com.example.ui.theme.LinkBlue
-import com.example.ui.theme.SurfaceCard
-import com.example.ui.theme.SurfaceElevated
-import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
 import com.example.ui.viewmodel.QuickTranslateViewModel
-import java.util.Locale
 
 @Composable
 fun QuickTranslateScreen(
@@ -90,20 +77,17 @@ fun QuickTranslateScreen(
     onOpenWord: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
     val query by viewModel.query.collectAsStateWithLifecycle()
     val direction by viewModel.direction.collectAsStateWithLifecycle()
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
-    val sentenceTranslation by viewModel.sentenceTranslation.collectAsStateWithLifecycle()
+    val recentHistory by viewModel.recentHistory.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
-    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
 
+    var isFieldFocused by remember { mutableStateOf(false) }
+    var showClearConfirm by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
-    val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
-    val launchVoice = rememberVoiceInputLauncher { spoken ->
-        viewModel.onQueryChange(spoken)
-    }
 
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
@@ -112,7 +96,7 @@ fun QuickTranslateScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(CanvasBackground)
+            .background(colors.background)
             .statusBarsPadding()
             .imePadding(),
         contentAlignment = Alignment.TopCenter
@@ -122,7 +106,6 @@ fun QuickTranslateScreen(
                 .fillMaxSize()
                 .widthIn(max = 600.dp)
         ) {
-            // Top bar with Back + Language Switcher
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -138,7 +121,7 @@ fun QuickTranslateScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = stringResource(R.string.cd_back),
-                        tint = TextPrimary
+                        tint = colors.onBackground
                     )
                 }
                 LanguageSwapBar(
@@ -148,7 +131,6 @@ fun QuickTranslateScreen(
                 )
             }
 
-            // Search / input field
             OutlinedTextField(
                 value = query,
                 onValueChange = { viewModel.onQueryChange(it) },
@@ -156,57 +138,45 @@ fun QuickTranslateScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .focusRequester(focusRequester)
+                    .onFocusChanged { isFieldFocused = it.isFocused }
                     .testTag("quick_translate_input"),
                 placeholder = {
                     Text(
                         text = stringResource(R.string.search_placeholder_translate),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextMuted
+                        color = colors.onSurfaceVariant
                     )
                 },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Rounded.Search,
                         contentDescription = null,
-                        tint = LinkBlue
+                        tint = colors.secondary
                     )
                 },
                 trailingIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (query.isNotEmpty()) {
-                            IconButton(
-                                onClick = { viewModel.onQueryChange("") },
-                                modifier = Modifier.size(44.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = stringResource(R.string.cd_clear_search),
-                                    tint = TextMuted
-                                )
-                            }
-                        }
+                    if (query.isNotEmpty()) {
                         IconButton(
-                            onClick = { launchVoice(direction) },
-                            modifier = Modifier.size(44.dp)
+                            onClick = { viewModel.onQueryChange("") },
+                            modifier = Modifier.size(48.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Mic,
-                                contentDescription = stringResource(R.string.cd_voice_input),
-                                tint = AccentRed
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = stringResource(R.string.cd_clear_search),
+                                tint = colors.onSurfaceVariant
                             )
                         }
                     }
                 },
-                singleLine = false,
-                maxLines = 3,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = SurfaceCard,
-                    unfocusedContainerColor = SurfaceCard,
-                    focusedBorderColor = LinkBlue,
-                    unfocusedBorderColor = DividerBorder,
-                    cursorColor = LinkBlue
+                    focusedContainerColor = colors.surface,
+                    unfocusedContainerColor = colors.surface,
+                    focusedBorderColor = colors.secondary,
+                    unfocusedBorderColor = colors.outline,
+                    cursorColor = colors.secondary
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
@@ -225,8 +195,8 @@ fun QuickTranslateScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                         .height(2.dp),
-                    color = AccentRed,
-                    trackColor = DividerBorder
+                    color = colors.primary,
+                    trackColor = colors.outline
                 )
             } else {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -238,61 +208,20 @@ fun QuickTranslateScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (!isOnline) {
-                    item {
-                        NoInternetBanner()
-                    }
+                    item { NoInternetBanner() }
                 }
 
-                // Dual Translation Card when translating phrases/sentences
-                if (!sentenceTranslation.isNullOrBlank()) {
-                    item {
-                        DualTranslationCard(
-                            sourceText = query.trim(),
-                            translatedText = sentenceTranslation.orEmpty(),
-                            isArabicResult = !sentenceTranslation.orEmpty().any { it in 'a'..'z' || it in 'A'..'Z' },
-                            onCopy = {
-                                clipboard.setText(AnnotatedString(sentenceTranslation.orEmpty()))
-                            },
-                            onShare = {
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    putExtra(Intent.EXTRA_TEXT, "${query.trim()}\n${sentenceTranslation.orEmpty()}")
-                                    type = "text/plain"
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, "مشاركة الترجمة"))
-                            },
-                            onPlayUk = {
-                                audioManager.speakSentence(query.trim(), Locale.UK, "qt_uk")
-                            },
-                            onPlayUs = {
-                                audioManager.speakSentence(query.trim(), Locale.US, "qt_us")
-                            },
-                            onPlayArabic = {
-                                audioManager.speakArabic(sentenceTranslation.orEmpty(), "qt_ar")
-                            }
-                        )
-                    }
-                }
-
-                if (!errorMessage.isNullOrBlank()) {
-                    item {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AccentRed
-                        )
-                    }
-                }
-
-                if (query.isNotBlank() && !isLoading) {
+                if (query.isNotBlank()) {
+                    // Direct lookup row
                     item {
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onOpenWord(query.trim()) }
                                 .testTag("direct_lookup_button"),
-                            color = SurfaceElevated,
+                            color = colors.surfaceVariant,
                             shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, DividerBorder)
+                            border = BorderStroke(1.dp, colors.outline)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -302,65 +231,96 @@ fun QuickTranslateScreen(
                                 Text(
                                     text = "فتح صفحة المعجم الكاملة لـ \"${query.trim()}\"",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = LinkBlue,
+                                    color = colors.secondary,
                                     modifier = Modifier.weight(1f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "عرض",
+                                    text = "بحث",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = AccentRed
+                                    color = colors.primary
                                 )
                             }
                         }
                     }
-                }
 
-                // Live suggestion rows: English word (bold) + Arabic meanings (muted), separated by thin dividers
-                if (suggestions.isNotEmpty()) {
-                    item {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SurfaceCard,
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, DividerBorder)
-                        ) {
-                            Column {
-                                suggestions.forEachIndexed { index, item ->
-                                    SuggestionResultRow(
-                                        suggestion = item,
-                                        onClick = { onOpenWord(item.englishWord) }
-                                    )
-                                    if (index < suggestions.lastIndex) {
-                                        HorizontalDivider(color = DividerBorder, thickness = 1.dp)
+                    // Live suggestions (Section 6)
+                    if (suggestions.isNotEmpty()) {
+                        item {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = colors.surface,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, colors.outline)
+                            ) {
+                                Column {
+                                    suggestions.forEachIndexed { index, item ->
+                                        SuggestionResultRow(
+                                            suggestion = item,
+                                            audioManager = audioManager,
+                                            onOpenWord = { onOpenWord(item.word) }
+                                        )
+                                        if (index < suggestions.lastIndex) {
+                                            HorizontalDivider(color = colors.outline, thickness = 1.dp)
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                } else if (query.isBlank()) {
+                } else if (isFieldFocused && recentHistory.isNotEmpty()) {
+                    // Section 7: History shown ONLY when search field is tapped/focused while empty
                     item {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = "اكتب كلمة إنجليزية أو عربية أو جملة كاملة للترجمة الفورية",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextMuted
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf("run", "resilient", "brightness", "ذهب").forEach { sample ->
-                                    TextButton(onClick = { viewModel.onQueryChange(sample) }) {
-                                        Text(
-                                            text = sample,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = LinkBlue
-                                        )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = AppIcons.History,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.recent_searches),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = colors.onBackground
+                                )
+                            }
+                            TextButton(
+                                onClick = { showClearConfirm = true },
+                                modifier = Modifier.testTag("clear_search_history_button")
+                            ) {
+                                Text(
+                                    text = "مسح السجل",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colors.primary
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = colors.surface,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, colors.outline)
+                        ) {
+                            Column {
+                                recentHistory.forEachIndexed { index, item ->
+                                    HistoryRow(
+                                        item = item,
+                                        onClick = { onOpenWord(item.resolvedEnglishWord) },
+                                        onDelete = { viewModel.deleteHistoryItem(item.queryKey) }
+                                    )
+                                    if (index < recentHistory.lastIndex) {
+                                        HorizontalDivider(color = colors.outline, thickness = 1.dp)
                                     }
                                 }
                             }
@@ -370,100 +330,46 @@ fun QuickTranslateScreen(
             }
         }
     }
-}
 
-@Composable
-private fun DualTranslationCard(
-    sourceText: String,
-    translatedText: String,
-    isArabicResult: Boolean,
-    onCopy: () -> Unit,
-    onShare: () -> Unit,
-    onPlayUk: () -> Unit,
-    onPlayUs: () -> Unit,
-    onPlayArabic: () -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = SurfaceCard,
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, DividerBorder)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = "الترجمة الفورية (بدون إنترنت عبر ML Kit)",
-                style = MaterialTheme.typography.labelMedium,
-                color = LinkBlue
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = sourceText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = TextMuted
-            )
-            HorizontalDivider(
-                color = DividerBorder,
-                thickness = 1.dp,
-                modifier = Modifier.padding(vertical = 10.dp)
-            )
-            Text(
-                text = translatedText,
-                style = MaterialTheme.typography.headlineMedium,
-                color = TextPrimary
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (isArabicResult) {
-                        UkUsMiniButtons(onPlayUk = onPlayUk, onPlayUs = onPlayUs)
-                    } else {
-                        IconButton(onClick = onPlayArabic, modifier = Modifier.size(44.dp)) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
-                                contentDescription = "استماع",
-                                tint = AccentRed
-                            )
-                        }
-                    }
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            containerColor = colors.surface,
+            title = { Text("مسح السجل", style = MaterialTheme.typography.headlineSmall) },
+            text = { Text("هل تريد مسح سجل البحث بالكامل؟", style = MaterialTheme.typography.bodyMedium) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearHistory()
+                    showClearConfirm = false
+                }) {
+                    Text("مسح", color = colors.primary)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onCopy, modifier = Modifier.size(44.dp)) {
-                        Icon(
-                            imageVector = Icons.Rounded.ContentCopy,
-                            contentDescription = "نسخ",
-                            tint = TextMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    IconButton(onClick = onShare, modifier = Modifier.size(44.dp)) {
-                        Icon(
-                            imageVector = Icons.Rounded.Share,
-                            contentDescription = "مشاركة",
-                            tint = TextMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text("إلغاء", color = colors.onSurfaceVariant)
                 }
             }
-        }
+        )
     }
 }
 
 @Composable
 private fun SuggestionResultRow(
     suggestion: SearchSuggestion,
-    onClick: () -> Unit
+    audioManager: AudioPlayerManager,
+    onOpenWord: () -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
+    val hasUs = audioManager.hasAudioOrCache(suggestion.word, Accent.US, suggestion.usAudioUrl)
+    val hasUk = audioManager.hasAudioOrCache(suggestion.word, Accent.UK, suggestion.ukAudioUrl)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
-            .testTag("suggestion_${suggestion.englishWord}"),
+            .clickable(onClick = onOpenWord)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .testTag("suggestion_${suggestion.word}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -473,24 +379,105 @@ private fun SuggestionResultRow(
         ) {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(
-                    text = suggestion.englishWord,
+                    text = suggestion.word,
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                    color = TextPrimary,
+                    color = colors.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Text(
-                text = suggestion.arabicMeaning,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            if (suggestion.summaryDefinition.isNotBlank()) {
+                Text(
+                    text = suggestion.summaryDefinition,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (suggestion.partOfSpeech.isNotBlank()) {
+                PosChip(text = suggestion.partOfSpeech)
+            }
+            CompactWordAudioButtons(
+                hasUsAudio = hasUs,
+                hasUkAudio = hasUk,
+                onPlayUs = {
+                    audioManager.playHumanPronunciation(
+                        word = suggestion.word,
+                        accent = Accent.US,
+                        audioUrl = suggestion.usAudioUrl,
+                        key = "sug_us_${suggestion.word}"
+                    )
+                },
+                onPlayUk = {
+                    audioManager.playHumanPronunciation(
+                        word = suggestion.word,
+                        accent = Accent.UK,
+                        audioUrl = suggestion.ukAudioUrl,
+                        key = "sug_uk_${suggestion.word}"
+                    )
+                }
             )
         }
-        if (suggestion.partOfSpeechArabic.isNotBlank()) {
-            Spacer(modifier = Modifier.size(8.dp))
-            PosChip(text = suggestion.partOfSpeechArabic)
+    }
+}
+
+@Composable
+private fun HistoryRow(
+    item: SearchHistoryEntity,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .testTag("history_item_${item.resolvedEnglishWord}"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = item.displayQuery,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (item.previewSummary.isNotBlank()) {
+                Text(
+                    text = item.previewSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        IconButton(
+            onClick = onDelete,
+            modifier = Modifier.size(48.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = "حذف من السجل",
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

@@ -12,29 +12,90 @@ data class DatamuseWordDto(
 )
 
 interface DatamuseApi {
+    @GET("sug")
+    suspend fun getAutocompleteSuggestions(
+        @Query("s") query: String,
+        @Query("max") max: Int = 10
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getSpellingMatches(
+        @Query("sp") pattern: String,
+        @Query("md") metadata: String = "p",
+        @Query("max") max: Int = 10
+    ): List<DatamuseWordDto>
+
     @GET("words")
     suspend fun getSynonyms(
         @Query("rel_syn") word: String,
-        @Query("max") max: Int = 20
+        @Query("max") max: Int = 30
     ): List<DatamuseWordDto>
 
     @GET("words")
     suspend fun getAntonyms(
         @Query("rel_ant") word: String,
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getMeansLike(
+        @Query("ml") word: String,
+        @Query("md") metadata: String = "p",
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getTriggeredWords(
+        @Query("rel_trg") word: String,
+        @Query("md") metadata: String = "p",
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getAdjectiveCollocations(
+        @Query("rel_jjb") nounWord: String,
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getNounCollocations(
+        @Query("rel_jja") adjWord: String,
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getFollowers(
+        @Query("rel_bga") word: String,
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getMoreGeneralTerms(
+        @Query("rel_spc") word: String,
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getMoreSpecificTerms(
+        @Query("rel_gen") word: String,
+        @Query("max") max: Int = 30
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getHomophones(
+        @Query("rel_hom") word: String,
         @Query("max") max: Int = 15
     ): List<DatamuseWordDto>
 
     @GET("words")
-    suspend fun getPrefixSuggestions(
-        @Query("sp") spellingPattern: String,
-        @Query("md") metadata: String = "p",
-        @Query("max") max: Int = 12
+    suspend fun getSoundsLike(
+        @Query("sl") word: String,
+        @Query("max") max: Int = 15
     ): List<DatamuseWordDto>
 
     @GET("words")
-    suspend fun getRelatedWords(
-        @Query("ml") meansLike: String,
-        @Query("md") metadata: String = "p",
-        @Query("max") max: Int = 16
+    suspend fun getSimilarSpelling(
+        @Query("sp") word: String,
+        @Query("max") max: Int = 15
     ): List<DatamuseWordDto>
 }

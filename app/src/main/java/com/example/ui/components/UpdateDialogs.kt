@@ -15,13 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.core.UpdateUiState
-import com.example.ui.theme.AccentRed
-import com.example.ui.theme.CanvasBackground
-import com.example.ui.theme.DividerBorder
-import com.example.ui.theme.LinkBlue
-import com.example.ui.theme.SurfaceCard
-import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
 
 @Composable
 fun AppUpdateDialogs(
@@ -31,30 +24,33 @@ fun AppUpdateDialogs(
     onCancelDownload: () -> Unit,
     onOpenInstallPermissionSettings: () -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
     when (state) {
         is UpdateUiState.UpdateAvailable -> {
             AlertDialog(
                 onDismissRequest = onDismiss,
-                containerColor = SurfaceCard,
-                textContentColor = TextPrimary,
+                containerColor = colors.surface,
+                textContentColor = colors.onSurface,
                 text = {
                     Text(
                         text = "تحديث التطبيق",
                         style = MaterialTheme.typography.headlineSmall,
-                        color = TextPrimary,
+                        color = colors.onSurface,
                         modifier = Modifier.testTag("update_dialog_text")
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = onAcceptUpdate,
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.primary,
+                            contentColor = colors.onPrimary
+                        ),
                         modifier = Modifier.testTag("update_confirm_button")
                     ) {
                         Text(
                             text = "تحديث",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = TextPrimary
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
                 },
@@ -66,7 +62,7 @@ fun AppUpdateDialogs(
                         Text(
                             text = "لاحقاً",
                             style = MaterialTheme.typography.labelLarge,
-                            color = TextMuted
+                            color = colors.onSurfaceVariant
                         )
                     }
                 }
@@ -76,14 +72,14 @@ fun AppUpdateDialogs(
         is UpdateUiState.Downloading -> {
             AlertDialog(
                 onDismissRequest = {},
-                containerColor = SurfaceCard,
-                titleContentColor = TextPrimary,
-                textContentColor = TextMuted,
+                containerColor = colors.surface,
+                titleContentColor = colors.onSurface,
+                textContentColor = colors.onSurfaceVariant,
                 title = {
                     Text(
                         text = "تحديث التطبيق",
                         style = MaterialTheme.typography.headlineSmall,
-                        color = TextPrimary
+                        color = colors.onSurface
                     )
                 },
                 text = {
@@ -94,20 +90,20 @@ fun AppUpdateDialogs(
                         if (state.indeterminate) {
                             LinearProgressIndicator(
                                 modifier = Modifier.fillMaxWidth(),
-                                color = LinkBlue,
-                                trackColor = DividerBorder
+                                color = colors.secondary,
+                                trackColor = colors.outline
                             )
                         } else {
                             LinearProgressIndicator(
                                 progress = { state.progress },
                                 modifier = Modifier.fillMaxWidth(),
-                                color = LinkBlue,
-                                trackColor = DividerBorder
+                                color = colors.secondary,
+                                trackColor = colors.outline
                             )
                             Text(
                                 text = "${(state.progress * 100).toInt()}%",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = TextMuted
+                                color = colors.onSurfaceVariant
                             )
                         }
                     }
@@ -121,7 +117,7 @@ fun AppUpdateDialogs(
                         Text(
                             text = "إلغاء",
                             style = MaterialTheme.typography.labelLarge,
-                            color = AccentRed
+                            color = colors.primary
                         )
                     }
                 }
@@ -131,33 +127,35 @@ fun AppUpdateDialogs(
         is UpdateUiState.NeedsInstallPermission -> {
             AlertDialog(
                 onDismissRequest = onDismiss,
-                containerColor = SurfaceCard,
-                titleContentColor = TextPrimary,
-                textContentColor = TextMuted,
+                containerColor = colors.surface,
+                titleContentColor = colors.onSurface,
+                textContentColor = colors.onSurfaceVariant,
                 title = {
                     Text(
                         text = "إذن التثبيت مطلوب",
                         style = MaterialTheme.typography.headlineSmall,
-                        color = TextPrimary
+                        color = colors.onSurface
                     )
                 },
                 text = {
                     Text(
                         text = "يرجى السماح لتطبيق معجم المخزنجي بتثبيت التحديثات من إعدادات الجهاز ثم العودة للمتابعة.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextMuted
+                        color = colors.onSurfaceVariant
                     )
                 },
                 confirmButton = {
                     Button(
                         onClick = onOpenInstallPermissionSettings,
-                        colors = ButtonDefaults.buttonColors(containerColor = LinkBlue),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.secondary,
+                            contentColor = colors.onSecondary
+                        ),
                         modifier = Modifier.testTag("open_install_permission_button")
                     ) {
                         Text(
                             text = "الإعدادات",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = CanvasBackground
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
                 },
@@ -166,7 +164,7 @@ fun AppUpdateDialogs(
                         Text(
                             text = "لاحقاً",
                             style = MaterialTheme.typography.labelLarge,
-                            color = TextMuted
+                            color = colors.onSurfaceVariant
                         )
                     }
                 }

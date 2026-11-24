@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.AppUpdateManager
+import com.example.core.OfflinePackManager
+import com.example.core.OfflinePackState
 import com.example.core.UpdateUiState
-import com.example.data.remote.OfflineModelStatus
+import com.example.data.local.SearchHistoryEntity
 import com.example.data.repository.LexiconRepository
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.ThemePreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +20,9 @@ import kotlinx.coroutines.launch
 
 class MoreViewModel(
     private val repository: LexiconRepository,
-    private val updateManager: AppUpdateManager
+    private val updateManager: AppUpdateManager,
+    private val offlinePackManager: OfflinePackManager,
+    private val themePreferences: ThemePreferences
 ) : ViewModel() {
 
     val cachedWordCount: StateFlow<Int> = repository.cachedCount
@@ -26,7 +32,12 @@ class MoreViewModel(
             initialValue = 0
         )
 
-    val mlKitStatus: StateFlow<OfflineModelStatus> = repository.mlKitModelStatus
+    val recentHistory: StateFlow<List<SearchHistoryEntity>> = repository.recentHistory
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000L),
+            initialValue = emptyList()
+        )
 
     val isOnline: StateFlow<Boolean> = repository.isOnlineFlow
         .stateIn(
@@ -36,42 +47,43 @@ class MoreViewModel(
         )
 
     val updateUiState: StateFlow<UpdateUiState> = updateManager.uiState
+    val offlinePackState: StateFlow<OfflinePackState> = offlinePackManager.state
+    val themeMode: StateFlow<ThemeMode> = themePreferences.themeMode
 
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
-    init {
-        viewModelScope.launch {
-            repository.refreshMlKitStatus()
-        }
+    fun setThemeMode(mode: ThemeMode) {
+        themePreferences.setThemeMode(mode)
     }
 
     fun checkForUpdateNow() {
         updateManager.checkForUpdate(force = true)
     }
 
-    fun downloadOfflineModels() {
-        viewModelScope.launch {
-            val result = repository.downloadOfflineModels()
-            _actionMessage.value = if (result.isSuccess) {
-                "تم تحميل حزمة الترجمة بدون إنترنت بنجاح"
-            } else {
-                "تعذر تحميل الحزمة. تأكد من اتصالك بالإنترنت"
-            }
-        }
+    fun startOfflinePackDownload() {
+        offlinePackManager.startDownload()
     }
 
-    fun deleteOfflineModels() {
-        viewModelScope.launch {
-            repository.deleteOfflineModels()
-            _actionMessage.value = "تم حذف حزمة اللغة العربية المحلية"
-        }
+    fun cancelOfflinePackDownload() {
+        offlinePackManager.cancelDownload()
+    }
+
+    fun deleteOfflinePack() {
+        offlinePackManager.deletePack()
+        _actionMessage.value = "تم حذف حزمة القاموس الأوفلاين"
     }
 
     fun clearCache() {
         viewModelScope.launch {
-            repository.clearCache()
-            _actionMessage.value = "تم مسح ذاكرة التخزين المؤقت للقاموس"
+            repository.clearApiCache()
+            _actionMessage.value = "تم مسح ذاكرة التخزين المؤقت"
+        }
+    }
+
+    fun deleteHistoryItem(queryKey: String) {
+        viewModelScope.launch {
+            repository.deleteHistoryItem(queryKey)
         }
     }
 
@@ -82,17 +94,15 @@ class MoreViewModel(
         }
     }
 
-    fun dismissMessage() {
-        _actionMessage.value = null
-    }
-
     class Factory(
         private val repository: LexiconRepository,
-        private val updateManager: AppUpdateManager
+        private val updateManager: AppUpdateManager,
+        private val offlinePackManager: OfflinePackManager,
+        private val themePreferences: ThemePreferences
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return MoreViewModel(repository, updateManager) as T
+            return MoreViewModel(repository, updateManager, offlinePackManager, themePreferences) as T
         }
     }
 }

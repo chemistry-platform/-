@@ -8,29 +8,66 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface LexiconDao {
-    @Query("SELECT * FROM cached_words WHERE word = :normalizedWord LIMIT 1")
-    suspend fun getCachedWord(normalizedWord: String): CachedWordEntity?
+    // --- API Cache keyed by (word, source) ---
+    @Query("SELECT * FROM api_cache WHERE cacheKey = :cacheKey LIMIT 1")
+    suspend fun getApiCache(cacheKey: String): ApiCacheEntity?
 
-    @Query("SELECT * FROM cached_words WHERE word LIKE :prefix || '%' ORDER BY updatedAt DESC LIMIT 10")
-    suspend fun searchCachedWordsByPrefix(prefix: String): List<CachedWordEntity>
-
-    @Query("SELECT * FROM cached_words WHERE arabicSummary LIKE '%' || :arabicQuery || '%' ORDER BY updatedAt DESC LIMIT 10")
-    suspend fun searchCachedWordsByArabic(arabicQuery: String): List<CachedWordEntity>
-
-    @Query("SELECT COUNT(*) FROM cached_words")
-    fun observeCachedCount(): Flow<Int>
+    @Query("SELECT * FROM api_cache WHERE word = :normalizedWord")
+    suspend fun getAllSourcesForWord(normalizedWord: String): List<ApiCacheEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertCachedWord(entity: CachedWordEntity)
+    suspend fun upsertApiCache(entity: ApiCacheEntity)
 
-    @Query("DELETE FROM cached_words")
-    suspend fun clearCachedWords()
+    @Query("DELETE FROM api_cache")
+    suspend fun clearApiCache()
 
-    @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT 25")
+    // --- Word Index for fast local prefix suggestions ---
+    @Query("SELECT * FROM word_index WHERE word LIKE :prefix || '%' ORDER BY updatedAt DESC LIMIT :limit")
+    suspend fun searchIndexByPrefix(prefix: String, limit: Int = 10): List<WordIndexEntity>
+
+    @Query("SELECT * FROM word_index WHERE word = :normalizedWord LIMIT 1")
+    suspend fun getWordIndex(normalizedWord: String): WordIndexEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertWordIndex(entity: WordIndexEntity)
+
+    @Query("SELECT COUNT(*) FROM word_index")
+    fun observeCachedCount(): Flow<Int>
+
+    @Query("DELETE FROM word_index")
+    suspend fun clearWordIndex()
+
+    // --- Offline Dictionary Pack ---
+    @Query("SELECT * FROM offline_pack_words WHERE word = :normalizedWord LIMIT 1")
+    suspend fun getOfflinePackWord(normalizedWord: String): OfflinePackWordEntity?
+
+    @Query("SELECT * FROM offline_pack_words WHERE word LIKE :prefix || '%' ORDER BY word ASC LIMIT :limit")
+    suspend fun searchOfflinePackByPrefix(prefix: String, limit: Int = 10): List<OfflinePackWordEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertOfflinePackBatch(words: List<OfflinePackWordEntity>)
+
+    @Query("SELECT COUNT(*) FROM offline_pack_words")
+    fun observeOfflinePackCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM offline_pack_words")
+    suspend fun getOfflinePackCount(): Int
+
+    @Query("DELETE FROM offline_pack_words")
+    suspend fun clearOfflinePack()
+
+    // --- Search History (max 50 unique, newest first) ---
+    @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT 50")
     fun observeRecentHistory(): Flow<List<SearchHistoryEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertHistory(entity: SearchHistoryEntity)
+
+    @Query(
+        "DELETE FROM search_history WHERE queryKey NOT IN " +
+            "(SELECT queryKey FROM search_history ORDER BY timestamp DESC LIMIT 50)"
+    )
+    suspend fun trimHistoryTo50()
 
     @Query("DELETE FROM search_history WHERE queryKey = :queryKey")
     suspend fun deleteHistoryItem(queryKey: String)
@@ -38,6 +75,7 @@ interface LexiconDao {
     @Query("DELETE FROM search_history")
     suspend fun clearHistory()
 
+    // --- Favorites ---
     @Query("SELECT * FROM favorite_words ORDER BY addedAt DESC")
     fun observeFavorites(): Flow<List<FavoriteWordEntity>>
 
