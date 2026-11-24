@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.core.ArabicTextUtils
 import com.example.data.local.SearchHistoryEntity
 import com.example.data.repository.LexiconRepository
+import com.example.domain.model.InstantTranslationResult
 import com.example.domain.model.LanguageDirection
 import com.example.domain.model.SearchSuggestion
 import kotlinx.coroutines.CancellationException
@@ -88,6 +89,45 @@ class QuickTranslateViewModel(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000L),
             initialValue = emptyList()
+        )
+
+    // BUG 6: 300ms debounced non-blocking live translation directly under search bar & audio row
+    val instantTranslation: StateFlow<InstantTranslationResult?> = _query
+        .debounce(300L)
+        .flatMapLatest { raw ->
+            flow {
+                val trimmed = raw.trim()
+                if (trimmed.isEmpty()) {
+                    emit(null)
+                } else {
+                    val isArabic = ArabicTextUtils.containsArabicLetters(trimmed)
+                    emit(
+                        InstantTranslationResult(
+                            query = trimmed,
+                            isArabicSource = isArabic,
+                            isLoading = true
+                        )
+                    )
+                    try {
+                        emit(repository.instantTranslateForSearch(trimmed))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emit(
+                            InstantTranslationResult(
+                                query = trimmed,
+                                isArabicSource = isArabic,
+                                isLoading = false
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000L),
+            initialValue = null
         )
 
     fun onQueryChange(newValue: String) {

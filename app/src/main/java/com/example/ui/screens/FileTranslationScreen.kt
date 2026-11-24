@@ -69,10 +69,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.ArabicTextUtils
+import com.example.core.AudioPlayerManager
 import com.example.core.InputDocumentType
 import com.example.core.LanguagePackInfo
 import com.example.core.TranslatedPageResult
 import com.example.ui.components.AppIcons
+import com.example.ui.components.AudioSpeedSelector
+import com.example.ui.components.LongTextAudioBar
 import com.example.ui.components.UsageLabelChip
 import com.example.ui.viewmodel.FileTranslationViewModel
 import java.util.Locale
@@ -80,6 +83,7 @@ import java.util.Locale
 @Composable
 fun FileTranslationScreen(
     viewModel: FileTranslationViewModel,
+    audioManager: AudioPlayerManager,
     onOpenLanguages: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -87,6 +91,9 @@ fun FileTranslationScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val languages by viewModel.languages.collectAsStateWithLifecycle()
+    val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
+    val ttsProgress by audioManager.ttsProgress.collectAsStateWithLifecycle()
+    val audioSpeed by audioManager.audioSpeed.collectAsStateWithLifecycle()
 
     var pickingForSource by remember { mutableStateOf<Boolean?>(null) }
 
@@ -497,7 +504,7 @@ fun FileTranslationScreen(
                 }
             }
 
-            // Translated page results (Section 16.5 & 18.2: stable key + contentType)
+            // Translated page results (Section 16.5 & 18.2 + BUG 7 long text audio)
             items(
                 items = uiState.pages,
                 key = { it.pageNumber },
@@ -506,7 +513,13 @@ fun FileTranslationScreen(
                 TranslatedPageCard(
                     page = page,
                     sourceIsArabic = ArabicTextUtils.containsArabicLetters(page.originalText),
-                    targetIsArabic = ArabicTextUtils.containsArabicLetters(page.translatedText)
+                    targetIsArabic = ArabicTextUtils.containsArabicLetters(page.translatedText),
+                    playingKey = playingKey,
+                    ttsProgress = ttsProgress,
+                    audioSpeed = audioSpeed,
+                    onSelectSpeed = { audioManager.setAudioSpeed(it) },
+                    onSpeakText = { text, key -> audioManager.playSentenceAudio(text, null, key) },
+                    onStopSpeech = { audioManager.stopPlayback() }
                 )
             }
         }
@@ -649,7 +662,13 @@ private fun FileInputTypeButton(
 private fun TranslatedPageCard(
     page: TranslatedPageResult,
     sourceIsArabic: Boolean,
-    targetIsArabic: Boolean
+    targetIsArabic: Boolean,
+    playingKey: String?,
+    ttsProgress: AudioPlayerManager.TtsProgress?,
+    audioSpeed: Float,
+    onSelectSpeed: (Float) -> Unit,
+    onSpeakText: (text: String, key: String) -> Unit,
+    onStopSpeech: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(
@@ -676,7 +695,14 @@ private fun TranslatedPageCard(
                     style = MaterialTheme.typography.headlineSmall,
                     color = colors.primary
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AudioSpeedSelector(
+                        currentSpeed = audioSpeed,
+                        onSelectSpeed = onSelectSpeed
+                    )
                     if (page.usedOcr) {
                         UsageLabelChip(text = "OCR")
                     }
@@ -703,12 +729,22 @@ private fun TranslatedPageCard(
                                 header = "النص الأصلي",
                                 text = page.originalText,
                                 isArabic = sourceIsArabic,
+                                audioKey = "file_orig_${page.pageNumber}",
+                                playingKey = playingKey,
+                                ttsProgress = ttsProgress,
+                                onSpeak = { onSpeakText(page.originalText, "file_orig_${page.pageNumber}") },
+                                onStop = onStopSpeech,
                                 modifier = Modifier.weight(1f)
                             )
                             PageTextColumn(
                                 header = "الترجمة",
                                 text = page.translatedText,
                                 isArabic = targetIsArabic,
+                                audioKey = "file_trans_${page.pageNumber}",
+                                playingKey = playingKey,
+                                ttsProgress = ttsProgress,
+                                onSpeak = { onSpeakText(page.translatedText, "file_trans_${page.pageNumber}") },
+                                onStop = onStopSpeech,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -722,6 +758,11 @@ private fun TranslatedPageCard(
                                     header = "النص الأصلي",
                                     text = page.originalText,
                                     isArabic = sourceIsArabic,
+                                    audioKey = "file_orig_${page.pageNumber}",
+                                    playingKey = playingKey,
+                                    ttsProgress = ttsProgress,
+                                    onSpeak = { onSpeakText(page.originalText, "file_orig_${page.pageNumber}") },
+                                    onStop = onStopSpeech,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -730,6 +771,11 @@ private fun TranslatedPageCard(
                                     header = "الترجمة",
                                     text = page.translatedText,
                                     isArabic = targetIsArabic,
+                                    audioKey = "file_trans_${page.pageNumber}",
+                                    playingKey = playingKey,
+                                    ttsProgress = ttsProgress,
+                                    onSpeak = { onSpeakText(page.translatedText, "file_trans_${page.pageNumber}") },
+                                    onStop = onStopSpeech,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -746,9 +792,15 @@ private fun PageTextColumn(
     header: String,
     text: String,
     isArabic: Boolean,
+    audioKey: String,
+    playingKey: String?,
+    ttsProgress: AudioPlayerManager.TtsProgress?,
+    onSpeak: () -> Unit,
+    onStop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val isThisPlaying = playingKey == audioKey
     Surface(
         modifier = modifier,
         color = colors.surfaceVariant,
@@ -756,13 +808,22 @@ private fun PageTextColumn(
     ) {
         Column(
             modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
                 text = header,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = colors.secondary
             )
+            if (text.isNotBlank()) {
+                LongTextAudioBar(
+                    title = if (isArabic) "استماع بالعربية" else "استماع للنص",
+                    isPlaying = isThisPlaying,
+                    ttsProgress = ttsProgress,
+                    onPlayClick = onSpeak,
+                    onStopClick = onStop
+                )
+            }
             CompositionLocalProvider(
                 LocalLayoutDirection provides if (isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
             ) {

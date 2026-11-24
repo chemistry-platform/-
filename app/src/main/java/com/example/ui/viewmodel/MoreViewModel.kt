@@ -3,10 +3,13 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.core.Accent
 import com.example.core.AppUpdateManager
+import com.example.core.AudioPlayerManager
 import com.example.core.OfflinePackManager
 import com.example.core.OfflinePackState
 import com.example.core.UpdateUiState
+import com.example.core.UserSettingsPreferences
 import com.example.data.local.SearchHistoryEntity
 import com.example.data.repository.LexiconRepository
 import com.example.ui.theme.ThemeMode
@@ -22,7 +25,9 @@ class MoreViewModel(
     private val repository: LexiconRepository,
     private val updateManager: AppUpdateManager,
     private val offlinePackManager: OfflinePackManager,
-    private val themePreferences: ThemePreferences
+    private val themePreferences: ThemePreferences,
+    private val settingsPreferences: UserSettingsPreferences,
+    private val audioPlayerManager: AudioPlayerManager
 ) : ViewModel() {
 
     val cachedWordCount: StateFlow<Int> = repository.cachedCount
@@ -50,11 +55,32 @@ class MoreViewModel(
     val offlinePackState: StateFlow<OfflinePackState> = offlinePackManager.state
     val themeMode: StateFlow<ThemeMode> = themePreferences.themeMode
 
+    val audioSpeed: StateFlow<Float> = settingsPreferences.audioSpeed
+    val sentenceAccent: StateFlow<Accent> = settingsPreferences.sentenceAccent
+    val showArabicTranslations: StateFlow<Boolean> = settingsPreferences.showArabicTranslations
+    val showMachineTranslationLabel: StateFlow<Boolean> = settingsPreferences.showMachineTranslationLabel
+
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
     fun setThemeMode(mode: ThemeMode) {
         themePreferences.setThemeMode(mode)
+    }
+
+    fun setAudioSpeed(speed: Float) {
+        audioPlayerManager.setAudioSpeed(speed)
+    }
+
+    fun setSentenceAccent(accent: Accent) {
+        settingsPreferences.setSentenceAccent(accent)
+    }
+
+    fun setShowArabicTranslations(show: Boolean) {
+        settingsPreferences.setShowArabicTranslations(show)
+    }
+
+    fun setShowMachineTranslationLabel(show: Boolean) {
+        settingsPreferences.setShowMachineTranslationLabel(show)
     }
 
     fun checkForUpdateNow() {
@@ -98,11 +124,20 @@ class MoreViewModel(
         private val repository: LexiconRepository,
         private val updateManager: AppUpdateManager,
         private val offlinePackManager: OfflinePackManager,
-        private val themePreferences: ThemePreferences
+        private val themePreferences: ThemePreferences,
+        private val settingsPreferences: UserSettingsPreferences,
+        private val audioPlayerManager: AudioPlayerManager
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return MoreViewModel(repository, updateManager, offlinePackManager, themePreferences) as T
+            return MoreViewModel(
+                repository = repository,
+                updateManager = updateManager,
+                offlinePackManager = offlinePackManager,
+                themePreferences = themePreferences,
+                settingsPreferences = settingsPreferences,
+                audioPlayerManager = audioPlayerManager
+            ) as T
         }
     }
 }

@@ -239,6 +239,21 @@ class TranslationViewModel(
 
     suspend fun loadSliceText(slice: ChunkSlice): String = translationManager.readSliceText(slice)
 
+    suspend fun readAllTranslatedText(): String {
+        val current = _uiState.value
+        if (current.shortOutput.isNotBlank()) return current.shortOutput
+        if (current.slices.isEmpty()) return ""
+        return buildString {
+            for (slice in current.slices) {
+                val txt = translationManager.readSliceText(slice)
+                if (txt.isNotBlank()) {
+                    if (isNotEmpty()) append('\n')
+                    append(txt.trimEnd())
+                }
+            }
+        }
+    }
+
     fun exportToTxtUri(uri: Uri) {
         viewModelScope.launch {
             val res = translationManager.exportStreamedTranslationToUri(uri)

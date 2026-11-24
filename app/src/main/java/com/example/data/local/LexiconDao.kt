@@ -32,6 +32,9 @@ interface LexiconDao {
     @Query("SELECT * FROM word_index WHERE word = :normalizedWord OR normalizedWord = :normalizedWord LIMIT 1")
     suspend fun getWordIndex(normalizedWord: String): WordIndexEntity?
 
+    @Query("SELECT * FROM word_index WHERE normalizedWord IN (:normalizedWords)")
+    suspend fun getWordIndexesByNormalized(normalizedWords: List<String>): List<WordIndexEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWordIndex(entity: WordIndexEntity)
 
@@ -58,6 +61,9 @@ interface LexiconDao {
     )
     suspend fun searchOfflinePackByPrefix(prefix: String, limit: Int = 10): List<OfflinePackWordEntity>
 
+    @Query("SELECT * FROM offline_pack_words WHERE hasAwlTag = 1 ORDER BY word ASC")
+    fun observeAwlOfflinePackWords(): Flow<List<OfflinePackWordEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertOfflinePackBatch(words: List<OfflinePackWordEntity>)
 
@@ -69,6 +75,16 @@ interface LexiconDao {
 
     @Query("DELETE FROM offline_pack_words")
     suspend fun clearOfflinePack()
+
+    // --- Room Sense/Example Translation Cache (Section 19.10) ---
+    @Query("SELECT * FROM translation_cache WHERE cacheKey IN (:keys)")
+    suspend fun getTranslationCacheBatch(keys: List<String>): List<TranslationCacheEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTranslationCacheBatch(items: List<TranslationCacheEntity>)
+
+    @Query("DELETE FROM translation_cache")
+    suspend fun clearTranslationCache()
 
     // --- Search History (max 50 unique, newest first) ---
     @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT 50")

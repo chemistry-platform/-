@@ -3,7 +3,7 @@
     <string name="nav_home">الرئيسية</string>
     <string name="nav_discover">اكتشف</string>
     <string name="nav_favorites">المفضلة</string>
-    <string name="nav_more">أكثر</string>
+    <string name="nav_more">المزيد</string>
     <string name="nav_files">ملفات</string>
     <string name="file_translation_title">ترجمة ملفات</string>
     <string name="direction_toggle_chip">عربي ⇄ إنجليزي</string>

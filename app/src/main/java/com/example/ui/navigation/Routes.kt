@@ -43,3 +43,11 @@ data class WordDetailRoute(
 data class SentenceLookupRoute(
     val query: String
 )
+
+@Serializable
+object ToeflIeltsRoute
+
+@Serializable
+data class ExamInfoRoute(
+    val examId: String
+)

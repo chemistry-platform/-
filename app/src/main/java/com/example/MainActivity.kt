@@ -40,6 +40,7 @@ import com.example.ui.components.AlMakhzanjiBottomBar
 import com.example.ui.components.AppUpdateDialogs
 import com.example.ui.components.BottomNavTab
 import com.example.ui.navigation.DiscoverRoute
+import com.example.ui.navigation.ExamInfoRoute
 import com.example.ui.navigation.FavoritesRoute
 import com.example.ui.navigation.FileTranslationRoute
 import com.example.ui.navigation.HomeRoute
@@ -48,9 +49,11 @@ import com.example.ui.navigation.MoreRoute
 import com.example.ui.navigation.QuickTranslateRoute
 import com.example.ui.navigation.SentenceLookupRoute
 import com.example.ui.navigation.SourcesCreditsRoute
+import com.example.ui.navigation.ToeflIeltsRoute
 import com.example.ui.navigation.TranslationRoute
 import com.example.ui.navigation.WordDetailRoute
 import com.example.ui.screens.DiscoverScreen
+import com.example.ui.screens.ExamInfoScreen
 import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.FileTranslationScreen
 import com.example.ui.screens.HomeScreen
@@ -59,6 +62,7 @@ import com.example.ui.screens.MoreScreen
 import com.example.ui.screens.QuickTranslateScreen
 import com.example.ui.screens.SentenceLookupScreen
 import com.example.ui.screens.SourcesCreditsScreen
+import com.example.ui.screens.ToeflIeltsScreen
 import com.example.ui.screens.TranslationScreen
 import com.example.ui.screens.WordDetailScreen
 import com.example.ui.theme.AlMakhzanjiTheme
@@ -70,6 +74,7 @@ import com.example.ui.viewmodel.LanguagesViewModel
 import com.example.ui.viewmodel.MoreViewModel
 import com.example.ui.viewmodel.QuickTranslateViewModel
 import com.example.ui.viewmodel.SentenceLookupViewModel
+import com.example.ui.viewmodel.ToeflIeltsViewModel
 import com.example.ui.viewmodel.TranslationViewModel
 import com.example.ui.viewmodel.WordDetailViewModel
 
@@ -140,6 +145,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 updateManager.onHostResumed()
+                appContainer.audioPlayerManager.refreshTtsVoiceAvailability()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -162,6 +168,14 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
         if (!msg.isNullOrBlank() && currentBottomTab != BottomNavTab.MORE) {
             snackbarHostState.showSnackbar(msg)
             updateManager.dismissDialog()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        appContainer.audioPlayerManager.audioMessage.collect { msg ->
+            if (msg.isNotBlank()) {
+                snackbarHostState.showSnackbar(msg)
+            }
         }
     }
 
@@ -247,6 +261,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                 )
                 FileTranslationScreen(
                     viewModel = fileTranslationViewModel,
+                    audioManager = appContainer.audioPlayerManager,
                     onOpenLanguages = { navController.navigate(LanguagesRoute) }
                 )
             }
@@ -269,7 +284,9 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                         repository = appContainer.repository,
                         updateManager = appContainer.appUpdateManager,
                         offlinePackManager = appContainer.offlinePackManager,
-                        themePreferences = appContainer.themePreferences
+                        themePreferences = appContainer.themePreferences,
+                        settingsPreferences = appContainer.userSettingsPreferences,
+                        audioPlayerManager = appContainer.audioPlayerManager
                     )
                 )
                 MoreScreen(
@@ -277,6 +294,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     onOpenLanguages = { navController.navigate(LanguagesRoute) },
                     onOpenTranslation = { navController.navigate(TranslationRoute) },
                     onOpenFileTranslation = { navController.navigate(FileTranslationRoute) },
+                    onOpenToeflIelts = { navController.navigate(ToeflIeltsRoute) },
                     onOpenSourcesCredits = { navController.navigate(SourcesCreditsRoute) },
                     onOpenWord = { word ->
                         navController.navigate(WordDetailRoute(query = word))
@@ -317,6 +335,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                 )
                 TranslationScreen(
                     viewModel = translationViewModel,
+                    audioManager = appContainer.audioPlayerManager,
                     onBack = { navController.popBackStack() },
                     onOpenLanguages = { navController.navigate(LanguagesRoute) }
                 )
@@ -338,6 +357,31 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                 )
             }
 
+            composable<ToeflIeltsRoute> {
+                val toeflIeltsViewModel: ToeflIeltsViewModel = viewModel(
+                    factory = ToeflIeltsViewModel.Factory(appContainer.repository)
+                )
+                ToeflIeltsScreen(
+                    viewModel = toeflIeltsViewModel,
+                    audioManager = appContainer.audioPlayerManager,
+                    onBack = { navController.popBackStack() },
+                    onOpenExamInfo = { examId ->
+                        navController.navigate(ExamInfoRoute(examId = examId))
+                    },
+                    onOpenWord = { word ->
+                        navController.navigate(WordDetailRoute(query = word))
+                    }
+                )
+            }
+
+            composable<ExamInfoRoute> { entry ->
+                val args = entry.toRoute<ExamInfoRoute>()
+                ExamInfoScreen(
+                    examId = args.examId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
             composable<WordDetailRoute> { entry ->
                 val args = entry.toRoute<WordDetailRoute>()
                 val wordViewModel: WordDetailViewModel = viewModel(
@@ -345,9 +389,10 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     factory = WordDetailViewModel.Factory(
                         repository = appContainer.repository,
                         translationManager = appContainer.translationManager,
+                        settingsPreferences = appContainer.userSettingsPreferences,
                         initialQuery = args.query,
                         fallbackBaseWord = args.fallbackBaseWord,
-                        highlightChip = args.highlightChip
+                        initialHighlightChip = args.highlightChip
                     )
                 )
                 WordDetailScreen(
@@ -376,11 +421,14 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     key = "sentence_${args.query}",
                     factory = SentenceLookupViewModel.Factory(
                         repository = appContainer.repository,
+                        translationManager = appContainer.translationManager,
+                        settingsPreferences = appContainer.userSettingsPreferences,
                         initialQuery = args.query
                     )
                 )
                 SentenceLookupScreen(
                     viewModel = sentenceViewModel,
+                    audioManager = appContainer.audioPlayerManager,
                     onBack = { navController.popBackStack() },
                     onOpenWord = { word ->
                         navController.navigate(WordDetailRoute(query = word))

@@ -34,6 +34,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,9 +54,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.Accent
 import com.example.core.OfflinePackState
 import com.example.core.UpdateUiState
 import com.example.ui.components.AppIcons
+import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.theme.ThemeMode
 import com.example.ui.viewmodel.MoreViewModel
 import java.util.Locale
@@ -65,6 +69,7 @@ fun MoreScreen(
     onOpenLanguages: () -> Unit,
     onOpenTranslation: () -> Unit,
     onOpenFileTranslation: () -> Unit,
+    onOpenToeflIelts: () -> Unit,
     onOpenSourcesCredits: () -> Unit,
     onOpenWord: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -75,6 +80,10 @@ fun MoreScreen(
     val updateUiState by viewModel.updateUiState.collectAsStateWithLifecycle()
     val offlinePackState by viewModel.offlinePackState.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val audioSpeed by viewModel.audioSpeed.collectAsStateWithLifecycle()
+    val sentenceAccent by viewModel.sentenceAccent.collectAsStateWithLifecycle()
+    val showArabicTranslations by viewModel.showArabicTranslations.collectAsStateWithLifecycle()
+    val showMachineTranslationLabel by viewModel.showMachineTranslationLabel.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
 
     var showClearHistoryDialog by remember { mutableStateOf(false) }
@@ -176,6 +185,161 @@ fun MoreScreen(
                                     modifier = Modifier.testTag("theme_${mode.key}")
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // Section 19.4, 19.5, 19.8, 19.9: Audio & Translation Settings
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = colors.surface,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, colors.outline)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.VolumeUp,
+                                contentDescription = null,
+                                tint = colors.secondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "إعدادات الصوت والترجمة",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = colors.onSurface
+                            )
+                        }
+
+                        // Audio speed (0.75x, 1x, 1.25x, 1.5x)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "سرعة النطق",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onSurface
+                            )
+                            AudioSpeedSelector(
+                                currentSpeed = audioSpeed,
+                                onSelectSpeed = { viewModel.setAudioSpeed(it) }
+                            )
+                        }
+
+                        HorizontalDivider(color = colors.outline)
+
+                        // Sentence TTS accent (US default / UK)
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "لهجة نطق الجمل",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onSurface
+                            )
+                            Text(
+                                text = "لنطق الجمل والأمثلة (الكلمات تحتفظ باللكنتين)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = sentenceAccent == Accent.US,
+                                    onClick = { viewModel.setSentenceAccent(Accent.US) },
+                                    label = {
+                                        Text(
+                                            text = "أمريكي (US)",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = colors.primaryContainer,
+                                        selectedLabelColor = colors.primary
+                                    ),
+                                    modifier = Modifier.testTag("accent_pref_us")
+                                )
+                                FilterChip(
+                                    selected = sentenceAccent == Accent.UK,
+                                    onClick = { viewModel.setSentenceAccent(Accent.UK) },
+                                    label = {
+                                        Text(
+                                            text = "بريطاني (UK)",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = colors.primaryContainer,
+                                        selectedLabelColor = colors.primary
+                                    ),
+                                    modifier = Modifier.testTag("accent_pref_uk")
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = colors.outline)
+
+                        // Show Arabic translations toggle (ON by default)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "عرض الترجمات العربية",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.onSurface
+                                )
+                                Text(
+                                    text = "إظهار المعنى العربي فوق كل تعريف وأسفل الأمثلة",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = showArabicTranslations,
+                                onCheckedChange = { viewModel.setShowArabicTranslations(it) },
+                                colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
+                                modifier = Modifier.testTag("setting_show_arabic_switch")
+                            )
+                        }
+
+                        HorizontalDivider(color = colors.outline)
+
+                        // Show "ترجمة آلية" label toggle (ON by default)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "إظهار وسم \"ترجمة آلية\"",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.onSurface
+                                )
+                                Text(
+                                    text = "تمييز الترجمات المولّدة آلياً بوسم صغير بجانبها",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = showMachineTranslationLabel,
+                                onCheckedChange = { viewModel.setShowMachineTranslationLabel(it) },
+                                colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
+                                modifier = Modifier.testTag("setting_show_machine_label_switch")
+                            )
                         }
                     }
                 }
@@ -287,6 +451,41 @@ fun MoreScreen(
                                     )
                                     Text(
                                         text = "معالجة صفحة بصفحة مع OCR وحفظ .txt تدريجي",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Text("فتح", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                        }
+                        HorizontalDivider(color = colors.outline)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onOpenToeflIelts)
+                                .padding(16.dp)
+                                .testTag("more_open_toefl_ielts"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = AppIcons.Lightbulb,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "التوفل والآيلتس",
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = colors.onSurface
+                                    )
+                                    Text(
+                                        text = "معلومات الاختبارين وقائمة الكلمات الأكاديمية",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )

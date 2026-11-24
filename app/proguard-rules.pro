@@ -57,10 +57,19 @@
 -keepclasseswithmembers class com.example.ui.navigation.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+-keep,includedescriptorclasses class com.example.data.repository.**$$serializer { *; }
+-keepclassmembers class com.example.data.repository.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.example.data.repository.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
 
-# App DTOs (Free Dictionary, Datamuse, GitHub Release, Tatoeba)
+# App DTOs & Audio/TTS
 -keep class com.example.data.remote.*Dto { *; }
 -keep class com.example.data.remote.*JsonAdapter { *; }
+-keep class com.example.core.AudioPlayerManager { *; }
+-keep class * extends android.speech.tts.UtteranceProgressListener { *; }
 
 # Room
 -keep class * extends androidx.room.RoomDatabase

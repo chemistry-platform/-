@@ -66,6 +66,7 @@ import com.example.domain.model.SearchSuggestion
 import com.example.ui.components.AppIcons
 import com.example.ui.components.CompactWordAudioButtons
 import com.example.ui.components.DirectionToggleChip
+import com.example.ui.components.InstantTranslationCard
 import com.example.ui.components.LanguageSwapBar
 import com.example.ui.components.NoInternetBanner
 import com.example.ui.components.PosChip
@@ -84,9 +85,11 @@ fun QuickTranslateScreen(
     val query by viewModel.query.collectAsStateWithLifecycle()
     val direction by viewModel.direction.collectAsStateWithLifecycle()
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+    val instantTranslation by viewModel.instantTranslation.collectAsStateWithLifecycle()
     val recentHistory by viewModel.recentHistory.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
+    val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
 
     var isFieldFocused by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -233,6 +236,26 @@ fun QuickTranslateScreen(
                 if (query.isNotBlank()) {
                     val trimmedQuery = query.trim()
                     val isSentence = ArabicTextUtils.isMultiWordQuery(trimmedQuery)
+
+                    // BUG 6: Live translation directly below search bar & speaker buttons row
+                    instantTranslation?.let { instant ->
+                        item(key = "instant_translation", contentType = "instant_translation") {
+                            InstantTranslationCard(
+                                result = instant,
+                                showMachineLabel = true,
+                                audioManager = audioManager,
+                                playingKey = playingKey,
+                                onOpenFull = {
+                                    if (ArabicTextUtils.isMultiWordQuery(instant.query)) {
+                                        onOpenSentence(instant.query)
+                                    } else {
+                                        onOpenWord(instant.query)
+                                    }
+                                }
+                            )
+                        }
+                    }
+
                     // Direct lookup row (multi-word -> SentenceLookupScreen, single word -> WordDetailScreen)
                     item(key = "direct_lookup", contentType = "direct_lookup") {
                         Surface(

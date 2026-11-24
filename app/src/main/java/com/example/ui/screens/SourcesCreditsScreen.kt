@@ -87,6 +87,12 @@ private val openSources = listOf(
         description = "الترجمة الآلية المحلية لأكثر من 59 لغة، والتعرف الضوئي على الحروف اللاتينية في الصور وملفات PDF المصوّرة دون اتصال.",
         licenseLabel = "تراخيص Google ML Kit",
         url = "https://developers.google.com/ml-kit/terms"
+    ),
+    CreditSource(
+        title = "Coxhead (2000) Academic Word List",
+        description = "قائمة الكلمات الأكاديمية (AWL) المستخدمة في تمييز المفردات الأكاديمية الشائعة ضمن حزم الأوفلاين. ليست قائمة رسمية من ETS أو IELTS.",
+        licenseLabel = "مصدر القائمة الأكاديمية",
+        url = "https://www.wgtn.ac.nz/lals/resources/academicwordlist"
     )
 )
 

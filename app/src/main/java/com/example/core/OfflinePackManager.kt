@@ -311,6 +311,7 @@ class OfflinePackManager(
         var lang = ""
         var phonetic = ""
         var summaryDef = ""
+        val tagsList = mutableListOf<String>()
 
         var currentName = initialFieldName
         while (currentName != null || reader.hasNext()) {
@@ -328,6 +329,14 @@ class OfflinePackManager(
                 "phonetic" -> {
                     phonetic = readStringOrNull(reader).orEmpty().trim()
                     if (phonetic.isNotEmpty()) root.put("phonetic", phonetic)
+                }
+                "tags" -> {
+                    val tagsArr = readStringArray(reader)
+                    root.put("tags", tagsArr)
+                    for (i in 0 until tagsArr.length()) {
+                        val tag = tagsArr.optString(i).trim()
+                        if (tag.isNotEmpty()) tagsList.add(tag)
+                    }
                 }
                 "senses" -> {
                     val arr = readSensesArray(reader)
@@ -360,12 +369,16 @@ class OfflinePackManager(
         } else {
             trimmedWord.lowercase(Locale.US)
         }
+        val distinctTags = tagsList.distinct()
+        val hasAwl = distinctTags.any { it.equals("AWL", ignoreCase = true) }
         return OfflinePackWordEntity(
             word = keyWord,
             normalizedWord = normalized,
             lang = resolvedLang,
             phonetic = phonetic,
             summaryDefinition = summaryDef.take(180),
+            tagsCsv = distinctTags.joinToString(","),
+            hasAwlTag = hasAwl,
             payloadJson = root.toString()
         )
     }
@@ -384,6 +397,10 @@ class OfflinePackManager(
                 when (reader.nextName()) {
                     "partOfSpeech" -> obj.put("partOfSpeech", readStringOrNull(reader).orEmpty())
                     "definition" -> obj.put("definition", readStringOrNull(reader).orEmpty())
+                    "definitionArabic" -> {
+                        val ar = readStringOrNull(reader).orEmpty().trim()
+                        if (ar.isNotEmpty()) obj.put("definitionArabic", ar)
+                    }
                     "examples" -> obj.put("examples", readStringArray(reader))
                     "synonyms" -> obj.put("synonyms", readStringArray(reader))
                     "antonyms" -> obj.put("antonyms", readStringArray(reader))

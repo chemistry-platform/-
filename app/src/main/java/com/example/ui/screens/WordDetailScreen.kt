@@ -1,9 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,6 +33,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -74,6 +72,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Accent
@@ -81,22 +83,29 @@ import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.ConfusableWordDetail
+import com.example.domain.model.PhraseDetailItem
 import com.example.domain.model.PosSenseGroup
 import com.example.domain.model.SenseItem
 import com.example.domain.model.WordEntry
 import com.example.ui.components.AppIcons
+import com.example.ui.components.ArabicTranslatedText
+import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.components.ChipWrapRow
 import com.example.ui.components.CompactWordAudioButtons
 import com.example.ui.components.DirectionToggleChip
 import com.example.ui.components.HighlightedEnglishText
+import com.example.ui.components.InstantTranslationCard
 import com.example.ui.components.InteractiveWordChip
 import com.example.ui.components.LoadingCard
+import com.example.ui.components.MissingArabicPackTopBanner
+import com.example.ui.components.MissingEnglishTtsVoiceBanner
+import com.example.ui.components.PhraseFallbackBottomSheet
 import com.example.ui.components.PosChip
 import com.example.ui.components.PronunciationPillButton
+import com.example.ui.components.SentenceSpeakerButton
 import com.example.ui.components.UsageLabelChip
 import com.example.ui.viewmodel.UsageFilterOption
 import com.example.ui.viewmodel.WordDetailViewModel
-import java.net.URLEncoder
 import java.util.Locale
 
 @Composable
@@ -111,6 +120,8 @@ fun WordDetailScreen(
 ) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isFavorite by viewModel.isFavorite.collectAsStateWithLifecycle()
     val currentQuery by viewModel.currentQuery.collectAsStateWithLifecycle()
@@ -119,10 +130,46 @@ fun WordDetailScreen(
     val highlightedChip by viewModel.highlightedChip.collectAsStateWithLifecycle()
     val confusableDetails by viewModel.confusableDetails.collectAsStateWithLifecycle()
     val isLoadingConfusables by viewModel.isLoadingConfusables.collectAsStateWithLifecycle()
-    val arabicTranslations by viewModel.arabicTranslations.collectAsStateWithLifecycle()
-    val missingLanguagePackBanner by viewModel.missingLanguagePackBanner.collectAsStateWithLifecycle()
+    val chipMeanings by viewModel.chipMeanings.collectAsStateWithLifecycle()
+    val phrasalDetails by viewModel.phrasalDetails.collectAsStateWithLifecycle()
+    val isLoadingPhrasals by viewModel.isLoadingPhrasals.collectAsStateWithLifecycle()
+    val phraseSheet by viewModel.phraseSheet.collectAsStateWithLifecycle()
+    val inlineTranslation by viewModel.inlineTranslation.collectAsStateWithLifecycle()
+    val showArabicTranslations by viewModel.showArabicTranslations.collectAsStateWithLifecycle()
+    val showMachineLabel by viewModel.showMachineTranslationLabel.collectAsStateWithLifecycle()
+    val audioSpeed by viewModel.audioSpeed.collectAsStateWithLifecycle()
+    val isDownloadingPack by viewModel.isDownloadingPack.collectAsStateWithLifecycle()
+    val showCellularConfirm by viewModel.showCellularConfirm.collectAsStateWithLifecycle()
+    val packDownloadMessage by viewModel.packDownloadMessage.collectAsStateWithLifecycle()
+    val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
+    val ttsMissingEnglishVoice by audioManager.ttsMissingEnglishVoice.collectAsStateWithLifecycle()
 
     var inlineQuery by remember(currentQuery) { mutableStateOf(currentQuery) }
+    var showAwlDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        audioManager.prepareTtsCheckIfNeeded()
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.openWordEvent.collect { target ->
+            onOpenWord(target, null, null)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                audioManager.refreshTtsVoiceAvailability()
+                viewModel.refreshIfPackBecameAvailable()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     val onToggleDirection = remember(viewModel) { { viewModel.toggleDirectionManual() } }
     val onToggleFavorite = remember(viewModel) { { viewModel.toggleFavorite() } }
     val onSelectUsageFilter = remember(viewModel) { { opt: UsageFilterOption -> viewModel.selectUsageFilter(opt) } }
@@ -162,7 +209,10 @@ fun WordDetailScreen(
 
                 OutlinedTextField(
                     value = inlineQuery,
-                    onValueChange = { inlineQuery = it },
+                    onValueChange = {
+                        inlineQuery = it
+                        viewModel.onInlineQueryChanged(it)
+                    },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("word_detail_search_field"),
@@ -213,33 +263,23 @@ fun WordDetailScreen(
                 )
             }
 
-            if (missingLanguagePackBanner) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    color = colors.errorContainer,
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "حمّل حزمة العربية والإنجليزية من شاشة اللغات للترجمة الفورية",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onErrorContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = {
-                            viewModel.dismissMissingPackBanner()
-                            onOpenLanguages()
-                        }) {
-                            Text("اللغات", color = colors.primary)
+            // BUG 6: Live instant translation directly under the search bar while typing
+            inlineTranslation?.let { instant ->
+                InstantTranslationCard(
+                    result = instant,
+                    showMachineLabel = showMachineLabel,
+                    audioManager = audioManager,
+                    playingKey = playingKey,
+                    onOpenFull = {
+                        val trimmed = instant.query.trim()
+                        if (ArabicTextUtils.isMultiWordQuery(trimmed)) {
+                            onOpenSentence(trimmed)
+                        } else {
+                            viewModel.loadWord(trimmed)
                         }
-                    }
-                }
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
             }
 
             when (val state = uiState) {
@@ -269,9 +309,12 @@ fun WordDetailScreen(
                             color = colors.onBackground
                         )
                         if (state.needsLanguagePack) {
-                            Button(onClick = onOpenLanguages) {
-                                Text("فتح شاشة اللغات")
-                            }
+                            MissingArabicPackTopBanner(
+                                isDownloading = isDownloadingPack,
+                                errorMessage = packDownloadMessage,
+                                onDownloadClick = { viewModel.requestDownloadArabicPack() },
+                                onOpenLanguages = onOpenLanguages
+                            )
                         } else {
                             Button(
                                 onClick = { viewModel.loadWord(currentQuery, forceRefresh = true) },
@@ -296,6 +339,7 @@ fun WordDetailScreen(
                     var synonymsExpanded by remember(entry.word) { mutableStateOf(true) }
                     var antonymsExpanded by remember(entry.word) { mutableStateOf(false) }
                     var collocationsExpanded by remember(entry.word) { mutableStateOf(false) }
+                    var phrasalDetailsExpanded by remember(entry.word) { mutableStateOf(true) }
                     var phrasesExpanded by remember(entry.word, highlightedChip) {
                         mutableStateOf(!highlightedChip.isNullOrBlank())
                     }
@@ -304,6 +348,10 @@ fun WordDetailScreen(
                     var generalSpecExpanded by remember(entry.word) { mutableStateOf(false) }
                     var relatedExpanded by remember(entry.word) { mutableStateOf(false) }
                     var tatoebaExpanded by remember(entry.word) { mutableStateOf(true) }
+
+                    val displayPhrasals = remember(phrasalDetails, entry.phrasalVerbsAndIdioms) {
+                        phrasalDetails.ifEmpty { entry.phrasalVerbsAndIdioms }
+                    }
 
                     val hasAnyUsageLabels by remember(entry) {
                         derivedStateOf {
@@ -326,6 +374,19 @@ fun WordDetailScreen(
                         }
                     }
 
+                    val hasEnglishSentencesRequiringTts by remember(entry) {
+                        derivedStateOf {
+                            entry.posGroups.any { g ->
+                                g.senses.any { s ->
+                                    s.examples.any { ex ->
+                                        !ArabicTextUtils.containsArabicLetters(ex) &&
+                                            s.exampleAudioUrls[ex].isNullOrBlank()
+                                    }
+                                }
+                            } || entry.tatoebaSentences.any { it.audioUrl.isNullOrBlank() }
+                        }
+                    }
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
@@ -343,15 +404,45 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Headword Card with Human US/UK Audio Buttons (English only) + ML Kit Machine Translation Chips
+                        // Section 19.11: Missing Arabic pack banner with direct Download button at top
+                        if (entry.missingTranslationPack) {
+                            item(key = "missing_ar_pack_top", contentType = "banner") {
+                                MissingArabicPackTopBanner(
+                                    isDownloading = isDownloadingPack,
+                                    errorMessage = packDownloadMessage,
+                                    onDownloadClick = { viewModel.requestDownloadArabicPack() },
+                                    onOpenLanguages = onOpenLanguages
+                                )
+                            }
+                        }
+
+                        // Section 19.7: Missing English TTS voice prompt when sentences need TTS
+                        if (ttsMissingEnglishVoice && hasEnglishSentencesRequiringTts) {
+                            item(key = "missing_tts_voice", contentType = "banner") {
+                                MissingEnglishTtsVoiceBanner(
+                                    onInstallVoiceClick = {
+                                        runCatching {
+                                            context.startActivity(audioManager.buildInstallTtsDataIntent())
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        // Headword Card with Human US/UK Audio Buttons, Speed Selector, AWL chip & Quick Translations
                         item(key = "headword_${entry.word}", contentType = "headword") {
                             HeadwordCard(
                                 entry = entry,
                                 isFavorite = isFavorite,
                                 audioManager = audioManager,
+                                audioSpeed = audioSpeed,
+                                showArabicTranslations = showArabicTranslations,
+                                showMachineLabel = showMachineLabel,
+                                chipMeanings = chipMeanings,
+                                onSelectSpeed = { audioManager.setAudioSpeed(it) },
                                 onToggleFavorite = onToggleFavorite,
-                                onOpenWord = { w -> onOpenWord(w, null, null) },
-                                onOpenLanguages = onOpenLanguages
+                                onOpenAwlInfo = { showAwlDialog = true },
+                                onChipClick = { w -> viewModel.onChipTapped(w) }
                             )
                         }
 
@@ -398,7 +489,7 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Sense-by-sense layout grouped by POS (Section 4.2 + 13)
+                        // Sense-by-sense layout grouped by POS (English/source first, Arabic/target directly BELOW)
                         filteredPosGroups.forEach { group ->
                             item(key = "pos_${group.partOfSpeech}", contentType = "pos_group") {
                                 PosGroupCard(
@@ -409,10 +500,15 @@ fun WordDetailScreen(
                                         val cur = expandedPosGroups[group.partOfSpeech] == true
                                         expandedPosGroups[group.partOfSpeech] = !cur
                                     },
-                                    arabicTranslations = arabicTranslations,
-                                    onToggleArabicHelp = { key, text ->
-                                        viewModel.toggleArabicHelp(key, text)
+                                    showArabicTranslations = showArabicTranslations,
+                                    showMachineLabel = showMachineLabel,
+                                    playingKey = playingKey,
+                                    chipMeanings = chipMeanings,
+                                    onSpeakSentence = { sentence, url, key ->
+                                        audioManager.playSentenceAudio(sentence, url, key)
                                     },
+                                    onStopAudio = { audioManager.stopPlayback() },
+                                    onChipClick = { viewModel.onChipTapped(it) },
                                     onOpenWord = { onOpenWord(it, null, null) }
                                 )
                             }
@@ -428,7 +524,60 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // 4.3 Collapsible Sections (shown ONLY if real data exists)
+                        // BUG 4: Phrasal verbs & idioms with English meaning, Arabic meaning below, and example
+                        if (displayPhrasals.isNotEmpty() || isLoadingPhrasals) {
+                            item(key = "sec_phrasal_idioms", contentType = "phrasals_section") {
+                                CollapsibleSectionCard(
+                                    title = "الأفعال المركبة والتعابير الاصطلاحية",
+                                    count = displayPhrasals.size,
+                                    expanded = phrasalDetailsExpanded,
+                                    onToggle = { phrasalDetailsExpanded = !phrasalDetailsExpanded }
+                                ) {
+                                    if (isLoadingPhrasals && displayPhrasals.isEmpty()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            CircularProgressIndicator(
+                                                color = colors.secondary,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "جاري تحميل معاني الأفعال المركبة والتعابير...",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = colors.onSurfaceVariant
+                                            )
+                                        }
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            displayPhrasals.forEachIndexed { idx, item ->
+                                                PhrasalIdiomDetailCard(
+                                                    item = item,
+                                                    showArabicTranslations = showArabicTranslations,
+                                                    showMachineLabel = showMachineLabel,
+                                                    playingKey = playingKey,
+                                                    onTapPhrase = { viewModel.onChipTapped(item.phrase) },
+                                                    onSpeak = { text, url, key ->
+                                                        if (playingKey == key) audioManager.stopPlayback()
+                                                        else audioManager.playSentenceAudio(text, url, key)
+                                                    }
+                                                )
+                                                if (idx < displayPhrasals.lastIndex) {
+                                                    HorizontalDivider(color = colors.outline, thickness = 1.dp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Collapsible Sections (shown ONLY if real data exists)
                         if (entry.synonyms.isNotEmpty()) {
                             item(key = "sec_synonyms", contentType = "chips_section") {
                                 CollapsibleChipsSection(
@@ -436,7 +585,8 @@ fun WordDetailScreen(
                                     expanded = synonymsExpanded,
                                     onToggle = { synonymsExpanded = !synonymsExpanded },
                                     items = entry.synonyms,
-                                    onChipClick = { onOpenWord(it, null, null) }
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) }
                                 )
                             }
                         }
@@ -448,7 +598,8 @@ fun WordDetailScreen(
                                     expanded = antonymsExpanded,
                                     onToggle = { antonymsExpanded = !antonymsExpanded },
                                     items = entry.antonyms,
-                                    onChipClick = { onOpenWord(it, null, null) }
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) }
                                 )
                             }
                         }
@@ -460,7 +611,8 @@ fun WordDetailScreen(
                                     expanded = collocationsExpanded,
                                     onToggle = { collocationsExpanded = !collocationsExpanded },
                                     items = entry.collocations,
-                                    onChipClick = { onOpenWord(it, entry.word, it) }
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) }
                                 )
                             }
                         }
@@ -472,10 +624,11 @@ fun WordDetailScreen(
                                     expanded = phrasesExpanded,
                                     onToggle = { phrasesExpanded = !phrasesExpanded },
                                     items = entry.prepositionsAndPhrases,
+                                    chipMeanings = chipMeanings,
                                     highlightedChip = highlightedChip,
                                     onChipClick = { phrase ->
                                         viewModel.clearHighlightedChip()
-                                        onOpenWord(phrase, entry.word, phrase)
+                                        viewModel.onChipTapped(phrase)
                                     }
                                 )
                             }
@@ -491,21 +644,34 @@ fun WordDetailScreen(
                                 ) {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         entry.wordFamily.forEachIndexed { idx, member ->
+                                            val memberArabic = chipMeanings[member.word.trim().lowercase(Locale.US)]
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .clip(RoundedCornerShape(8.dp))
-                                                    .clickable { onOpenWord(member.word, null, null) }
+                                                    .clickable { viewModel.onChipTapped(member.word) }
                                                     .padding(vertical = 8.dp, horizontal = 4.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                                    Text(
-                                                        text = member.word,
-                                                        style = MaterialTheme.typography.labelLarge,
-                                                        color = colors.secondary
-                                                    )
+                                                Column(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                        Text(
+                                                            text = member.word,
+                                                            style = MaterialTheme.typography.labelLarge,
+                                                            color = colors.secondary
+                                                        )
+                                                    }
+                                                    if (!memberArabic.isNullOrBlank()) {
+                                                        Text(
+                                                            text = memberArabic,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = colors.onSurfaceVariant
+                                                        )
+                                                    }
                                                 }
                                                 if (member.partOfSpeechArabic.isNotBlank()) {
                                                     PosChip(text = member.partOfSpeechArabic)
@@ -520,7 +686,6 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // 4.10 Easily Confused Words (lazy fetch + background page-1 prefetch)
                         if (entry.confusableCandidates.isNotEmpty()) {
                             item(key = "sec_confusables", contentType = "confusables_section") {
                                 CollapsibleSectionCard(
@@ -573,12 +738,9 @@ fun WordDetailScreen(
                                                 if (detail != null) {
                                                     ConfusableCard(
                                                         detail = detail,
+                                                        wordArabicMeaning = chipMeanings[detail.word.trim().lowercase(Locale.US)],
                                                         audioManager = audioManager,
-                                                        arabicTranslations = arabicTranslations,
-                                                        onToggleArabicHelp = { key, txt ->
-                                                            viewModel.toggleArabicHelp(key, txt)
-                                                        },
-                                                        onOpenWord = { onOpenWord(detail.word, null, null) }
+                                                        onOpenWord = { viewModel.onChipTapped(detail.word) }
                                                     )
                                                 }
                                             }
@@ -588,7 +750,6 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // More general & specific terms
                         if (entry.generalTerms.isNotEmpty() || entry.specificTerms.isNotEmpty()) {
                             item(key = "sec_general_specific", contentType = "general_specific_section") {
                                 CollapsibleSectionCard(
@@ -606,7 +767,8 @@ fun WordDetailScreen(
                                             )
                                             ChipWrapRow(
                                                 items = entry.generalTerms,
-                                                onChipClick = { onOpenWord(it, null, null) }
+                                                chipMeanings = chipMeanings,
+                                                onChipClick = { viewModel.onChipTapped(it) }
                                             )
                                         }
                                         if (entry.specificTerms.isNotEmpty()) {
@@ -617,7 +779,8 @@ fun WordDetailScreen(
                                             )
                                             ChipWrapRow(
                                                 items = entry.specificTerms,
-                                                onChipClick = { onOpenWord(it, null, null) }
+                                                chipMeanings = chipMeanings,
+                                                onChipClick = { viewModel.onChipTapped(it) }
                                             )
                                         }
                                     }
@@ -625,7 +788,6 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Related words (ml + rel_trg)
                         if (entry.relatedWords.isNotEmpty()) {
                             item(key = "sec_related", contentType = "chips_section") {
                                 CollapsibleChipsSection(
@@ -633,12 +795,13 @@ fun WordDetailScreen(
                                     expanded = relatedExpanded,
                                     onToggle = { relatedExpanded = !relatedExpanded },
                                     items = entry.relatedWords,
-                                    onChipClick = { onOpenWord(it, null, null) }
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) }
                                 )
                             }
                         }
 
-                        // Tatoeba More Example Sentences (Human Translations)
+                        // Tatoeba More Example Sentences (Human Translations + Standalone Speaker Button for EN & AR)
                         if (entry.tatoebaSentences.isNotEmpty()) {
                             item(key = "sec_tatoeba", contentType = "tatoeba_section") {
                                 CollapsibleSectionCard(
@@ -649,26 +812,92 @@ fun WordDetailScreen(
                                 ) {
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         entry.tatoebaSentences.forEachIndexed { idx, pair ->
+                                            val tatKey = "tat_${entry.word}_$idx"
                                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                 if (entry.isArabicWord) {
-                                                    Text(
-                                                        text = pair.arabic,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        color = colors.onSurface
-                                                    )
-                                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
                                                         Text(
-                                                            text = pair.english,
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                            color = colors.onSurfaceVariant,
-                                                            modifier = Modifier.fillMaxWidth()
+                                                            text = pair.arabic,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = colors.onSurface,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        SentenceSpeakerButton(
+                                                            isPlaying = playingKey == "${tatKey}_ar",
+                                                            onClick = {
+                                                                if (playingKey == "${tatKey}_ar") {
+                                                                    audioManager.stopPlayback()
+                                                                } else {
+                                                                    audioManager.playSentenceAudio(
+                                                                        sentence = pair.arabic,
+                                                                        audioUrl = null,
+                                                                        key = "${tatKey}_ar"
+                                                                    )
+                                                                }
+                                                            },
+                                                            modifier = Modifier.testTag("tatoeba_speak_ar_$idx")
+                                                        )
+                                                    }
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                            Text(
+                                                                text = pair.english,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = colors.onSurfaceVariant,
+                                                                modifier = Modifier.weight(1f)
+                                                            )
+                                                        }
+                                                        SentenceSpeakerButton(
+                                                            isPlaying = playingKey == tatKey,
+                                                            onClick = {
+                                                                if (playingKey == tatKey) {
+                                                                    audioManager.stopPlayback()
+                                                                } else {
+                                                                    audioManager.playSentenceAudio(
+                                                                        sentence = pair.english,
+                                                                        audioUrl = pair.audioUrl,
+                                                                        key = tatKey
+                                                                    )
+                                                                }
+                                                            },
+                                                            modifier = Modifier.testTag("tatoeba_speak_$idx")
                                                         )
                                                     }
                                                 } else {
-                                                    HighlightedEnglishText(
-                                                        sentence = pair.english,
-                                                        targetWord = entry.word
-                                                    )
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        HighlightedEnglishText(
+                                                            sentence = pair.english,
+                                                            targetWord = entry.word,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        SentenceSpeakerButton(
+                                                            isPlaying = playingKey == tatKey,
+                                                            onClick = {
+                                                                if (playingKey == tatKey) {
+                                                                    audioManager.stopPlayback()
+                                                                } else {
+                                                                    audioManager.playSentenceAudio(
+                                                                        sentence = pair.english,
+                                                                        audioUrl = pair.audioUrl,
+                                                                        key = tatKey
+                                                                    )
+                                                                }
+                                                            },
+                                                            modifier = Modifier.testTag("tatoeba_speak_$idx")
+                                                        )
+                                                    }
                                                     Text(
                                                         text = pair.arabic,
                                                         style = MaterialTheme.typography.bodySmall,
@@ -692,67 +921,67 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // 4.7 Links Only (Longman + Cambridge via Custom Tabs for English entries)
-                        if (!entry.isArabicWord) {
-                            item(key = "external_dict_links", contentType = "external_links") {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            val slug = encodeDictSlug(entry.word)
-                                            openInCustomTab(
-                                                context,
-                                                "https://www.ldoceonline.com/dictionary/$slug"
-                                            )
-                                        },
-                                        border = BorderStroke(1.dp, colors.outline),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(48.dp)
-                                            .testTag("open_longman_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = AppIcons.OpenInNew,
-                                            contentDescription = null,
-                                            tint = colors.secondary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Longman", color = colors.onSurface)
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            val slug = encodeDictSlug(entry.word)
-                                            openInCustomTab(
-                                                context,
-                                                "https://dictionary.cambridge.org/dictionary/english/$slug"
-                                            )
-                                        },
-                                        border = BorderStroke(1.dp, colors.outline),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(48.dp)
-                                            .testTag("open_cambridge_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = AppIcons.OpenInNew,
-                                            contentDescription = null,
-                                            tint = colors.secondary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Cambridge", color = colors.onSurface)
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
+    }
+
+    phraseSheet?.let { sheetData ->
+        PhraseFallbackBottomSheet(
+            sheetData = sheetData,
+            showMachineLabel = showMachineLabel,
+            audioManager = audioManager,
+            playingKey = playingKey,
+            onOpenSentenceLookup = { phrase -> onOpenSentence(phrase) },
+            onDismiss = { viewModel.dismissPhraseSheet() }
+        )
+    }
+
+    // Section 12.3: Academic Word List (AWL) attribution dialog
+    if (showAwlDialog) {
+        AlertDialog(
+            onDismissRequest = { showAwlDialog = false },
+            containerColor = colors.surface,
+            title = {
+                Text("كلمة أكاديمية (AWL)", style = MaterialTheme.typography.headlineSmall)
+            },
+            text = {
+                Text(
+                    text = "من قائمة الكلمات الأكاديمية (Academic Word List) الشائعة في التحضير للتوفل والآيلتس. ليست قائمة رسمية من ETS أو IELTS.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showAwlDialog = false }) {
+                    Text("حسناً", color = colors.primary)
+                }
+            }
+        )
+    }
+
+    if (showCellularConfirm) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissCellularDownload() },
+            containerColor = colors.surface,
+            title = { Text("التحميل عبر بيانات الهاتف؟", style = MaterialTheme.typography.headlineSmall) },
+            text = {
+                Text(
+                    "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزمة العربية والإنجليزية؟",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.confirmCellularDownload() }) {
+                    Text("متابعة")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissCellularDownload() }) {
+                    Text("إلغاء")
+                }
+            }
+        )
     }
 }
 
@@ -762,13 +991,19 @@ private fun HeadwordCard(
     entry: WordEntry,
     isFavorite: Boolean,
     audioManager: AudioPlayerManager,
+    audioSpeed: Float,
+    showArabicTranslations: Boolean,
+    showMachineLabel: Boolean,
+    chipMeanings: Map<String, String>,
+    onSelectSpeed: (Float) -> Unit,
     onToggleFavorite: () -> Unit,
-    onOpenWord: (String) -> Unit,
-    onOpenLanguages: () -> Unit
+    onOpenAwlInfo: () -> Unit,
+    onChipClick: (String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val hasUs = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.US, entry.usAudioUrl)
     val hasUk = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.UK, entry.ukAudioUrl)
+    val hasAwlTag = entry.tags.any { it.equals("AWL", ignoreCase = true) }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -842,98 +1077,138 @@ private fun HeadwordCard(
                 }
             }
 
-            // Section 15.6: NEVER show US/UK pronunciation buttons for Arabic words
-            if (!entry.isArabicWord && (hasUs || hasUk || entry.usIpa.isNotBlank() || entry.ukIpa.isNotBlank())) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+            // Section 12.3: Tappable AWL chip if offline pack tagged this word with "AWL"
+            if (hasAwlTag) {
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable(onClick = onOpenAwlInfo)
+                        .testTag("awl_badge_chip"),
+                    color = colors.secondaryContainer,
+                    shape = RoundedCornerShape(999.dp),
+                    border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.4f))
                 ) {
-                    if (hasUs || entry.usIpa.isNotBlank()) {
-                        PronunciationPillButton(
-                            regionLabel = "US",
-                            ipa = entry.usIpa,
-                            hasAudio = hasUs,
-                            onClick = {
-                                audioManager.playHumanPronunciation(
-                                    word = entry.word,
-                                    accent = Accent.US,
-                                    audioUrl = entry.usAudioUrl,
-                                    key = "head_us_${entry.word}"
-                                )
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("pronounce_us_button")
-                        )
-                    }
-                    if (hasUk || entry.ukIpa.isNotBlank()) {
-                        PronunciationPillButton(
-                            regionLabel = "UK",
-                            ipa = entry.ukIpa,
-                            hasAudio = hasUk,
-                            onClick = {
-                                audioManager.playHumanPronunciation(
-                                    word = entry.word,
-                                    accent = Accent.UK,
-                                    audioUrl = entry.ukAudioUrl,
-                                    key = "head_uk_${entry.word}"
-                                )
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("pronounce_uk_button")
-                        )
-                    }
+                    Text(
+                        text = "كلمة أكاديمية (AWL)",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        color = colors.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
                 }
             }
 
-            // Section 15.2 & 15.3: Machine translation chips (Arabic <-> English)
-            if (entry.machineTranslations.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    UsageLabelChip(text = "ترجمة آلية")
-                    if (entry.isArabicWord) {
+            // Real human US / UK word pronunciations + Audio Speed Selector
+            if (!entry.isArabicWord) {
+                if (hasUs || hasUk || entry.usIpa.isNotBlank() || entry.ukIpa.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (hasUs || entry.usIpa.isNotBlank()) {
+                            PronunciationPillButton(
+                                regionLabel = "US",
+                                ipa = entry.usIpa,
+                                hasAudio = hasUs,
+                                onClick = {
+                                    audioManager.playHumanPronunciation(
+                                        word = entry.word,
+                                        accent = Accent.US,
+                                        audioUrl = entry.usAudioUrl,
+                                        key = "head_us_${entry.word}"
+                                    )
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("pronounce_us_button")
+                            )
+                        }
+                        if (hasUk || entry.ukIpa.isNotBlank()) {
+                            PronunciationPillButton(
+                                regionLabel = "UK",
+                                ipa = entry.ukIpa,
+                                hasAudio = hasUk,
+                                onClick = {
+                                    audioManager.playHumanPronunciation(
+                                        word = entry.word,
+                                        accent = Accent.UK,
+                                        audioUrl = entry.ukAudioUrl,
+                                        key = "head_uk_${entry.word}"
+                                    )
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("pronounce_uk_button")
+                            )
+                        }
+                    }
+                }
+                if (!hasUs && !hasUk) {
+                    Text(
+                        text = "لا يوجد صوت متاح",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Quick translations directly under the word & US/UK speaker row (BUG 6 / BUG 8)
+            if (entry.machineTranslations.isNotEmpty() && (entry.isArabicWord || showArabicTranslations)) {
+                if (entry.isArabicWord) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (showMachineLabel) {
+                            Text(
+                                text = "ترجمة آلية",
+                                fontSize = 9.sp,
+                                lineHeight = 11.sp,
+                                color = colors.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                        }
                         ChipWrapRow(
                             items = entry.machineTranslations,
-                            onChipClick = onOpenWord
+                            chipMeanings = chipMeanings,
+                            onChipClick = onChipClick
                         )
-                    } else {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            entry.machineTranslations.forEach { arText ->
-                                Surface(
-                                    color = colors.surfaceVariant,
-                                    shape = RoundedCornerShape(999.dp),
-                                    border = BorderStroke(1.dp, colors.outline)
-                                ) {
-                                    Text(
-                                        text = arText,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = colors.onSurface,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    )
-                                }
+                    }
+                } else {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        entry.machineTranslations.forEach { arText ->
+                            Surface(
+                                color = colors.surfaceVariant,
+                                shape = RoundedCornerShape(999.dp),
+                                border = BorderStroke(1.dp, colors.outline)
+                            ) {
+                                ArabicTranslatedText(
+                                    text = arText,
+                                    isMachineTranslated = true,
+                                    showMachineLabel = showMachineLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colors.primary,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
                             }
                         }
                     }
                 }
-            } else if (entry.missingTranslationPack) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "حمّل حزمة العربية والإنجليزية لعرض الترجمة الآلية.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = onOpenLanguages) {
-                        Text("اللغات", color = colors.secondary)
-                    }
-                }
+            }
+
+            // BUG 8: Compact ~28dp speed selector as a separate small control
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "سرعة الصوت",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant
+                )
+                AudioSpeedSelector(
+                    currentSpeed = audioSpeed,
+                    onSelectSpeed = onSelectSpeed
+                )
             }
         }
     }
@@ -945,8 +1220,13 @@ private fun PosGroupCard(
     group: PosSenseGroup,
     showAll: Boolean,
     onToggleShowAll: () -> Unit,
-    arabicTranslations: Map<String, String>,
-    onToggleArabicHelp: (key: String, text: String) -> Unit,
+    showArabicTranslations: Boolean,
+    showMachineLabel: Boolean,
+    playingKey: String?,
+    chipMeanings: Map<String, String>,
+    onSpeakSentence: (sentence: String, audioUrl: String?, key: String) -> Unit,
+    onStopAudio: () -> Unit,
+    onChipClick: (String) -> Unit,
     onOpenWord: (String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
@@ -967,14 +1247,14 @@ private fun PosGroupCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                PosChip(text = group.partOfSpeechArabic)
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     Text(
                         text = group.partOfSpeech,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colors.primary
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant
                     )
                 }
-                PosChip(text = group.partOfSpeechArabic)
             }
 
             HorizontalDivider(color = colors.outline, thickness = 1.dp)
@@ -983,8 +1263,13 @@ private fun PosGroupCard(
                 SenseCardContent(
                     word = word,
                     sense = sense,
-                    arabicTranslations = arabicTranslations,
-                    onToggleArabicHelp = onToggleArabicHelp,
+                    showArabicTranslations = showArabicTranslations,
+                    showMachineLabel = showMachineLabel,
+                    playingKey = playingKey,
+                    chipMeanings = chipMeanings,
+                    onSpeakSentence = onSpeakSentence,
+                    onStopAudio = onStopAudio,
+                    onChipClick = onChipClick,
                     onOpenWord = onOpenWord
                 )
                 if (idx < visibleSenses.lastIndex) {
@@ -1013,14 +1298,18 @@ private fun PosGroupCard(
 private fun SenseCardContent(
     word: String,
     sense: SenseItem,
-    arabicTranslations: Map<String, String>,
-    onToggleArabicHelp: (key: String, text: String) -> Unit,
+    showArabicTranslations: Boolean,
+    showMachineLabel: Boolean,
+    playingKey: String?,
+    chipMeanings: Map<String, String>,
+    onSpeakSentence: (sentence: String, audioUrl: String?, key: String) -> Unit,
+    onStopAudio: () -> Unit,
+    onChipClick: (String) -> Unit,
     onOpenWord: (String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val defKey = "def_${sense.partOfSpeech}_${sense.index}"
-    val translatedDef = arabicTranslations[defKey]
     val defIsArabic = ArabicTextUtils.containsArabicLetters(sense.definition)
+    val translatedMeaning = sense.definitionArabic?.takeIf { it.isNotBlank() }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Section 13.1 & 13.2: Per-sense usage labels & spelling variant chips
@@ -1038,6 +1327,7 @@ private fun SenseCardContent(
                 sense.otherSpellingWord?.let { otherWord ->
                     InteractiveWordChip(
                         word = otherWord,
+                        arabicSubtext = chipMeanings[otherWord.trim().lowercase(Locale.US)],
                         onClick = { onOpenWord(otherWord) }
                     )
                 }
@@ -1068,31 +1358,52 @@ private fun SenseCardContent(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                // BUG 8: Source definition on TOP, target translation directly BELOW it
                 CompositionLocalProvider(
                     LocalLayoutDirection provides if (defIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
                 ) {
                     Text(
                         text = sense.definition,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                         color = colors.onSurface,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
 
-                if (!defIsArabic) {
-                    ArabicHelpToggle(
-                        translatedText = translatedDef,
-                        onToggle = { onToggleArabicHelp(defKey, sense.definition) }
-                    )
+                if (translatedMeaning != null) {
+                    if (!defIsArabic && showArabicTranslations) {
+                        ArabicTranslatedText(
+                            text = translatedMeaning,
+                            isMachineTranslated = sense.definitionArabicIsMachine,
+                            showMachineLabel = showMachineLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("sense_arabic_def_${sense.partOfSpeech}_${sense.index}")
+                        )
+                    } else if (defIsArabic) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = translatedMeaning,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("sense_english_def_${sense.partOfSpeech}_${sense.index}")
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // Examples from the SAME sense
+        // BUG 1, BUG 5, BUG 8: Examples from the same sense with speaker button (EN & AR) + translation directly below
         sense.examples.forEachIndexed { exIdx, example ->
             val exKey = "ex_${sense.partOfSpeech}_${sense.index}_$exIdx"
-            val translatedEx = arabicTranslations[exKey]
             val exIsArabic = ArabicTextUtils.containsArabicLetters(example)
+            val exTranslation = sense.exampleTranslations[example]?.takeIf { it.isNotBlank() }
+            val exAudioUrl = sense.exampleAudioUrls[example]
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -1104,21 +1415,71 @@ private fun SenseCardContent(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     if (exIsArabic) {
-                        Text(
-                            text = example,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.onSurface,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = example,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SentenceSpeakerButton(
+                                isPlaying = playingKey == exKey,
+                                onClick = {
+                                    if (playingKey == exKey) onStopAudio()
+                                    else onSpeakSentence(example, exAudioUrl, exKey)
+                                },
+                                modifier = Modifier.testTag("speaker_$exKey")
+                            )
+                        }
+                        if (exTranslation != null) {
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Text(
+                                    text = exTranslation,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("arabic_$exKey")
+                                )
+                            }
+                        }
                     } else {
-                        HighlightedEnglishText(
-                            sentence = example,
-                            targetWord = word
-                        )
-                        ArabicHelpToggle(
-                            translatedText = translatedEx,
-                            onToggle = { onToggleArabicHelp(exKey, example) }
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            HighlightedEnglishText(
+                                sentence = example,
+                                targetWord = word,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SentenceSpeakerButton(
+                                isPlaying = playingKey == exKey,
+                                onClick = {
+                                    if (playingKey == exKey) onStopAudio()
+                                    else onSpeakSentence(example, exAudioUrl, exKey)
+                                },
+                                modifier = Modifier.testTag("speaker_$exKey")
+                            )
+                        }
+
+                        if (showArabicTranslations && exTranslation != null) {
+                            ArabicTranslatedText(
+                                text = exTranslation,
+                                isMachineTranslated = sense.exampleIsMachine[example] ?: true,
+                                showMachineLabel = showMachineLabel,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("arabic_$exKey")
+                            )
+                        }
                     }
                 }
             }
@@ -1132,7 +1493,11 @@ private fun SenseCardContent(
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
-                ChipWrapRow(items = sense.synonyms, onChipClick = onOpenWord)
+                ChipWrapRow(
+                    items = sense.synonyms,
+                    chipMeanings = chipMeanings,
+                    onChipClick = onChipClick
+                )
             }
         }
         if (sense.antonyms.isNotEmpty()) {
@@ -1142,40 +1507,121 @@ private fun SenseCardContent(
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
-                ChipWrapRow(items = sense.antonyms, onChipClick = onOpenWord)
+                ChipWrapRow(
+                    items = sense.antonyms,
+                    chipMeanings = chipMeanings,
+                    onChipClick = onChipClick
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ArabicHelpToggle(
-    translatedText: String?,
-    onToggle: () -> Unit
+private fun PhrasalIdiomDetailCard(
+    item: PhraseDetailItem,
+    showArabicTranslations: Boolean,
+    showMachineLabel: Boolean,
+    playingKey: String?,
+    onTapPhrase: () -> Unit,
+    onSpeak: (text: String, audioUrl: String?, key: String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = if (translatedText != null) "إخفاء الترجمة العربية" else "ترجمة عربية",
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.secondary,
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .clickable(onClick = onToggle)
-                .padding(horizontal = 4.dp, vertical = 2.dp)
-        )
-        if (translatedText != null) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    val phraseKey = "phrasal_${item.phrase.hashCode()}"
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onTapPhrase)
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Text(
+                        text = item.phrase,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = colors.secondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+                UsageLabelChip(text = if (item.isIdiom) "تعبير اصطلاحي" else "فعل مركب")
+            }
+
+            SentenceSpeakerButton(
+                isPlaying = playingKey == phraseKey,
+                onClick = { onSpeak(item.phrase, null, phraseKey) }
+            )
+        }
+
+        if (item.englishMeaning.isNotBlank()) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(
-                    text = "ترجمة آلية",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.tertiary
-                )
-                Text(
-                    text = translatedText,
+                    text = item.englishMeaning,
                     style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant
+                    color = colors.onSurface,
+                    modifier = Modifier.fillMaxWidth()
                 )
+            }
+        }
+
+        if (showArabicTranslations && !item.arabicMeaning.isNullOrBlank()) {
+            ArabicTranslatedText(
+                text = item.arabicMeaning,
+                isMachineTranslated = item.isArabicMachine,
+                showMachineLabel = showMachineLabel,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = colors.primary,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        if (item.example.isNotBlank()) {
+            val exKey = "phrasal_ex_${item.phrase.hashCode()}"
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = colors.surfaceVariant,
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        HighlightedEnglishText(
+                            sentence = item.example,
+                            targetWord = item.phrase,
+                            modifier = Modifier.weight(1f)
+                        )
+                        SentenceSpeakerButton(
+                            isPlaying = playingKey == exKey,
+                            onClick = { onSpeak(item.example, item.exampleAudioUrl, exKey) }
+                        )
+                    }
+                    if (showArabicTranslations && !item.exampleArabic.isNullOrBlank()) {
+                        ArabicTranslatedText(
+                            text = item.exampleArabic,
+                            isMachineTranslated = item.exampleIsMachine,
+                            showMachineLabel = showMachineLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
         }
     }
@@ -1185,15 +1631,13 @@ private fun ArabicHelpToggle(
 @Composable
 private fun ConfusableCard(
     detail: ConfusableWordDetail,
+    wordArabicMeaning: String?,
     audioManager: AudioPlayerManager,
-    arabicTranslations: Map<String, String>,
-    onToggleArabicHelp: (key: String, text: String) -> Unit,
     onOpenWord: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val hasUs = audioManager.hasAudioOrCache(detail.word, Accent.US, detail.usAudioUrl)
     val hasUk = audioManager.hasAudioOrCache(detail.word, Accent.UK, detail.ukAudioUrl)
-    val defKey = "conf_${detail.word}"
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1210,24 +1654,35 @@ private fun ConfusableCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(6.dp))
                         .clickable(onClick = onOpenWord)
                         .padding(vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = detail.word,
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                            color = colors.secondary
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = detail.word,
+                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                color = colors.secondary
+                            )
+                        }
+                        if (detail.partOfSpeech.isNotBlank()) {
+                            PosChip(text = detail.partOfSpeech)
+                        }
                     }
-                    if (detail.partOfSpeech.isNotBlank()) {
-                        PosChip(text = detail.partOfSpeech)
+                    if (!wordArabicMeaning.isNullOrBlank()) {
+                        Text(
+                            text = wordArabicMeaning,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.primary
+                        )
                     }
                 }
 
@@ -1282,10 +1737,13 @@ private fun ConfusableCard(
                         color = colors.onSurface
                     )
                 }
-                ArabicHelpToggle(
-                    translatedText = arabicTranslations[defKey],
-                    onToggle = { onToggleArabicHelp(defKey, detail.shortDefinition) }
-                )
+                if (!detail.shortDefinitionArabic.isNullOrBlank()) {
+                    Text(
+                        text = detail.shortDefinitionArabic,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
             }
 
             if (detail.example.isNotBlank()) {
@@ -1304,6 +1762,7 @@ private fun CollapsibleChipsSection(
     expanded: Boolean,
     onToggle: () -> Unit,
     items: List<String>,
+    chipMeanings: Map<String, String> = emptyMap(),
     highlightedChip: String? = null,
     onChipClick: (String) -> Unit
 ) {
@@ -1315,6 +1774,7 @@ private fun CollapsibleChipsSection(
     ) {
         ChipWrapRow(
             items = items,
+            chipMeanings = chipMeanings,
             highlightedChip = highlightedChip,
             onChipClick = onChipClick
         )
@@ -1384,21 +1844,5 @@ private fun matchesUsageFilter(sense: SenseItem, filter: UsageFilterOption): Boo
         UsageFilterOption.INFORMAL -> "غير رسمي" in sense.usageLabels
         UsageFilterOption.US -> "أمريكي" in sense.usageLabels || sense.spellingVariantLabel == "إملاء أمريكي"
         UsageFilterOption.UK -> "بريطاني" in sense.usageLabels || sense.spellingVariantLabel == "إملاء بريطاني"
-    }
-}
-
-private fun encodeDictSlug(word: String): String {
-    val dashed = word.trim().lowercase(Locale.US).replace(Regex("\\s+"), "-")
-    return URLEncoder.encode(dashed, "UTF-8").replace("+", "-")
-}
-
-private fun openInCustomTab(context: Context, url: String) {
-    val uri = Uri.parse(url)
-    runCatching {
-        CustomTabsIntent.Builder().build().launchUrl(context, uri)
-    }.onFailure {
-        runCatching {
-            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-        }
     }
 }

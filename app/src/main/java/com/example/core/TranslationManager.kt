@@ -254,6 +254,54 @@ class TranslationManager(
     }
 
     /**
+     * Section 19.10: Translates multiple senses/examples in one parallel batch (up to 4 concurrent),
+     * reusing shared Translator instances without blocking the UI thread.
+     */
+    suspend fun translateBatchIfReady(
+        texts: List<String>,
+        sourceCode: String = TranslateLanguage.ENGLISH,
+        targetCode: String = TranslateLanguage.ARABIC,
+        concurrency: Int = CONCURRENT_TRANSLATION_CHUNKS
+    ): Map<String, String> = withContext(Dispatchers.Default) {
+        val unique = texts.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (unique.isEmpty()) return@withContext emptyMap()
+        if (sourceCode == targetCode) return@withContext unique.associateWith { it }
+        if (!isPairDownloaded(sourceCode, targetCode)) return@withContext emptyMap()
+
+        val translator = getOrCreateTranslator(sourceCode, targetCode)
+        val semaphore = Semaphore(concurrency.coerceIn(1, 4))
+        val results = coroutineScope {
+            unique.map { item ->
+                async {
+                    val cacheKey = "$sourceCode|$targetCode|$item"
+                    if (item.length <= SHORT_CACHE_MAX_LEN) {
+                        synchronized(shortCache) {
+                            shortCache.get(cacheKey)
+                        }?.let { return@async item to it }
+                    }
+                    semaphore.withPermit {
+                        ensureActive()
+                        val translated = runCatching {
+                            withTimeout(15_000L) {
+                                translator.translate(item).awaitTask().trim()
+                            }
+                        }.getOrNull()
+                        if (!translated.isNullOrBlank()) {
+                            if (item.length <= SHORT_CACHE_MAX_LEN) {
+                                synchronized(shortCache) { shortCache.put(cacheKey, translated) }
+                            }
+                            item to translated
+                        } else {
+                            null
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        results.filterNotNull().toMap()
+    }
+
+    /**
      * Splits text into chunks <= 500 chars by paragraph, then sentence, without cutting words.
      */
     fun splitIntoChunks(text: String, maxChars: Int = MAX_CHUNK_CHARS): List<String> {

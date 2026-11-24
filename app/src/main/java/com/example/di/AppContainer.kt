@@ -7,6 +7,7 @@ import com.example.core.FileTranslationManager
 import com.example.core.NetworkMonitor
 import com.example.core.OfflinePackManager
 import com.example.core.TranslationManager
+import com.example.core.UserSettingsPreferences
 import com.example.data.local.AppDatabase
 import com.example.data.remote.DatamuseApi
 import com.example.data.remote.FreeDictionaryApi
@@ -98,6 +99,10 @@ class AppContainer(context: Context) {
         ThemePreferences(appContext)
     }
 
+    val userSettingsPreferences: UserSettingsPreferences by lazy {
+        UserSettingsPreferences(appContext)
+    }
+
     val networkMonitor: NetworkMonitor by lazy {
         NetworkMonitor(appContext)
     }
@@ -112,7 +117,8 @@ class AppContainer(context: Context) {
     val audioPlayerManager: AudioPlayerManager by lazy {
         AudioPlayerManager(
             context = appContext,
-            okHttpClient = okHttpClient
+            okHttpClient = okHttpClient,
+            settingsPreferences = userSettingsPreferences
         )
     }
 

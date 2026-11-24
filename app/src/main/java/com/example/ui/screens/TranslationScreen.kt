@@ -51,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,14 +65,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.AudioPlayerManager
 import com.example.core.ChunkSlice
 import com.example.core.LanguagePackInfo
 import com.example.ui.components.AppIcons
+import com.example.ui.components.AudioSpeedSelector
+import com.example.ui.components.LongTextAudioBar
 import com.example.ui.viewmodel.TranslationViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun TranslationScreen(
     viewModel: TranslationViewModel,
+    audioManager: AudioPlayerManager,
     onBack: () -> Unit,
     onOpenLanguages: () -> Unit,
     modifier: Modifier = Modifier
@@ -79,8 +85,12 @@ fun TranslationScreen(
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val languages by viewModel.languages.collectAsStateWithLifecycle()
+    val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
+    val ttsProgress by audioManager.ttsProgress.collectAsStateWithLifecycle()
+    val audioSpeed by audioManager.audioSpeed.collectAsStateWithLifecycle()
 
     var selectingSource by remember { mutableStateOf(false) }
     var selectingTarget by remember { mutableStateOf(false) }
@@ -209,7 +219,7 @@ fun TranslationScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Missing language pack banner (Section 2.3)
+            // Missing language pack banner
             if (state.missingPacks) {
                 Surface(
                     modifier = Modifier
@@ -355,6 +365,38 @@ fun TranslationScreen(
                     }
                 }
 
+                if (state.inputText.isNotBlank()) {
+                    item(key = "input_audio_controls") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                LongTextAudioBar(
+                                    title = "قراءة النص المدخل",
+                                    isPlaying = playingKey == "tr_input_text",
+                                    ttsProgress = ttsProgress,
+                                    onPlayClick = {
+                                        audioManager.playSentenceAudio(
+                                            sentence = state.inputText,
+                                            audioUrl = null,
+                                            key = "tr_input_text"
+                                        )
+                                    },
+                                    onStopClick = { audioManager.stopPlayback() },
+                                    playTag = "tr_input_audio_play",
+                                    stopTag = "tr_input_audio_stop"
+                                )
+                            }
+                            AudioSpeedSelector(
+                                currentSpeed = audioSpeed,
+                                onSelectSpeed = { audioManager.setAudioSpeed(it) }
+                            )
+                        }
+                    }
+                }
+
                 if (state.isTranslating && (state.progressPercent > 0 || state.importedFileName != null)) {
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -406,16 +448,22 @@ fun TranslationScreen(
                                         style = MaterialTheme.typography.labelMedium,
                                         color = colors.secondary
                                     )
-                                    IconButton(
-                                        onClick = { clipboard.setText(AnnotatedString(state.shortOutput)) },
-                                        modifier = Modifier.size(44.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = AppIcons.ContentCopy,
-                                            contentDescription = "نسخ",
-                                            tint = colors.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        AudioSpeedSelector(
+                                            currentSpeed = audioSpeed,
+                                            onSelectSpeed = { audioManager.setAudioSpeed(it) }
                                         )
+                                        IconButton(
+                                            onClick = { clipboard.setText(AnnotatedString(state.shortOutput)) },
+                                            modifier = Modifier.size(44.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = AppIcons.ContentCopy,
+                                                contentDescription = "نسخ",
+                                                tint = colors.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                                 Text(
@@ -423,37 +471,96 @@ fun TranslationScreen(
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = colors.onSurface
                                 )
+                                LongTextAudioBar(
+                                    title = "استماع للترجمة",
+                                    isPlaying = playingKey == "tr_short_output",
+                                    ttsProgress = ttsProgress,
+                                    onPlayClick = {
+                                        audioManager.playSentenceAudio(
+                                            sentence = state.shortOutput,
+                                            audioUrl = null,
+                                            key = "tr_short_output"
+                                        )
+                                    },
+                                    onStopClick = { audioManager.stopPlayback() },
+                                    playTag = "tr_short_audio_play",
+                                    stopTag = "tr_short_audio_stop"
+                                )
                             }
                         }
                     }
                 }
 
-                // Streamed chunk output header + Export .txt (Section 2.4 bounded memory viewer)
+                // Streamed chunk output header + Long Text Audio + Export .txt (BUG 7)
                 if (state.slices.isNotEmpty()) {
                     item {
-                        Row(
+                        Surface(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            color = colors.surface,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, colors.outline)
                         ) {
-                            Text(
-                                text = "الترجمة المتدفقة (${state.slices.size} مقاطع)",
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = colors.onBackground
-                            )
-                            OutlinedButton(
-                                onClick = { exportTxtLauncher.launch("translated_output.txt") },
-                                border = BorderStroke(1.dp, colors.outline),
-                                modifier = Modifier.testTag("export_txt_button")
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Icon(
-                                    imageVector = AppIcons.SaveAlt,
-                                    contentDescription = null,
-                                    tint = colors.secondary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("تصدير .txt", color = colors.onSurface)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "الترجمة المتدفقة (${state.slices.size} مقاطع)",
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = colors.onBackground
+                                    )
+                                    OutlinedButton(
+                                        onClick = { exportTxtLauncher.launch("translated_output.txt") },
+                                        border = BorderStroke(1.dp, colors.outline),
+                                        modifier = Modifier.testTag("export_txt_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = AppIcons.SaveAlt,
+                                            contentDescription = null,
+                                            tint = colors.secondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("تصدير .txt", color = colors.onSurface)
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        LongTextAudioBar(
+                                            title = "قراءة كل النص المترجم",
+                                            isPlaying = playingKey == "tr_streamed_out",
+                                            ttsProgress = ttsProgress,
+                                            onPlayClick = {
+                                                coroutineScope.launch {
+                                                    val fullText = viewModel.readAllTranslatedText()
+                                                    if (fullText.isNotBlank()) {
+                                                        audioManager.playSentenceAudio(
+                                                            sentence = fullText,
+                                                            audioUrl = null,
+                                                            key = "tr_streamed_out"
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                            onStopClick = { audioManager.stopPlayback() },
+                                            playTag = "tr_streamed_audio_play",
+                                            stopTag = "tr_streamed_audio_stop"
+                                        )
+                                    }
+                                    AudioSpeedSelector(
+                                        currentSpeed = audioSpeed,
+                                        onSelectSpeed = { audioManager.setAudioSpeed(it) }
+                                    )
+                                }
                             }
                         }
                     }

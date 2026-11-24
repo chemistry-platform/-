@@ -39,11 +39,14 @@ data class WordIndexEntity(
 )
 
 /**
- * Offline Dictionary Pack storage imported via streaming GZIP + JsonReader (Section 5 & 15.7).
+ * Offline Dictionary Pack storage imported via streaming GZIP + JsonReader (Section 5, 12.2 & 15.7).
  */
 @Entity(
     tableName = "offline_pack_words",
-    indices = [Index(value = ["normalizedWord", "lang"])]
+    indices = [
+        Index(value = ["normalizedWord", "lang"]),
+        Index(value = ["hasAwlTag"])
+    ]
 )
 data class OfflinePackWordEntity(
     @PrimaryKey val word: String,
@@ -51,7 +54,19 @@ data class OfflinePackWordEntity(
     val lang: String = "en",
     val phonetic: String = "",
     val summaryDefinition: String = "",
+    val tagsCsv: String = "",
+    val hasAwlTag: Boolean = false,
     val payloadJson: String
+)
+
+/**
+ * Room-backed cache for ML Kit translations of dictionary senses & example sentences (Section 19.10).
+ */
+@Entity(tableName = "translation_cache")
+data class TranslationCacheEntity(
+    @PrimaryKey val cacheKey: String,
+    val translatedText: String,
+    val timestampMs: Long = System.currentTimeMillis()
 )
 
 @Entity(
