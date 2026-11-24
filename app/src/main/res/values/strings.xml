@@ -4,8 +4,11 @@
     <string name="nav_discover">اكتشف</string>
     <string name="nav_favorites">المفضلة</string>
     <string name="nav_more">أكثر</string>
+    <string name="nav_files">ملفات</string>
+    <string name="file_translation_title">ترجمة ملفات</string>
+    <string name="direction_toggle_chip">عربي ⇄ إنجليزي</string>
     <string name="search_placeholder_home">ابحث عن كلمة أو جملة...</string>
-    <string name="search_placeholder_translate">أدخل كلمة للبحث...</string>
+    <string name="search_placeholder_translate">أدخل كلمة أو جملة للبحث...</string>
     <string name="lang_arabic">العربية</string>
     <string name="lang_english">الإنجليزية</string>
     <string name="recent_searches">سجل البحث</string>
@@ -15,7 +18,7 @@
     <string name="phrases_title">حروف الجر والأفعال المركبة</string>
     <string name="similar_words_title">عائلة الكلمة</string>
     <string name="confusables_title">كلمات يسهل الخلط بينها</string>
-    <string name="more_examples_title">أمثلة إضافية</string>
+    <string name="more_examples_title">أمثلة إضافية (ترجمة بشرية من Tatoeba)</string>
     <string name="related_terms_title">كلمات ذات صلة</string>
     <string name="hypernyms_hyponyms_title">مصطلحات أعم وأخص</string>
     <string name="no_internet_title">لا يوجد اتصال بالإنترنت</string>

@@ -1,5 +1,6 @@
 package com.example.domain.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -15,6 +16,7 @@ enum class SenseSource {
     OFFLINE_PACK
 }
 
+@Immutable
 @Serializable
 data class SenseItem(
     val index: Int,
@@ -24,9 +26,13 @@ data class SenseItem(
     val examples: List<String> = emptyList(),
     val synonyms: List<String> = emptyList(),
     val antonyms: List<String> = emptyList(),
+    val usageLabels: List<String> = emptyList(),
+    val spellingVariantLabel: String? = null,
+    val otherSpellingWord: String? = null,
     val source: SenseSource = SenseSource.FREE_DICTIONARY
 )
 
+@Immutable
 @Serializable
 data class PosSenseGroup(
     val partOfSpeech: String,
@@ -34,6 +40,7 @@ data class PosSenseGroup(
     val senses: List<SenseItem>
 )
 
+@Immutable
 @Serializable
 data class WordFamilyItem(
     val word: String,
@@ -41,12 +48,14 @@ data class WordFamilyItem(
     val partOfSpeechArabic: String
 )
 
+@Immutable
 @Serializable
 data class ConfusableCandidate(
     val word: String,
     val labels: List<String>
 )
 
+@Immutable
 @Serializable
 data class ConfusableWordDetail(
     val word: String,
@@ -58,19 +67,26 @@ data class ConfusableWordDetail(
     val ukAudioUrl: String? = null
 )
 
+@Immutable
 @Serializable
 data class TatoebaSentence(
     val english: String,
     val arabic: String
 )
 
+@Immutable
 @Serializable
 data class WordEntry(
     val word: String,
+    val displayWord: String = word,
+    val isArabicWord: Boolean = false,
+    val lang: String = "en",
     val usIpa: String = "",
     val ukIpa: String = "",
     val usAudioUrl: String? = null,
     val ukAudioUrl: String? = null,
+    val machineTranslations: List<String> = emptyList(),
+    val missingTranslationPack: Boolean = false,
     val posGroups: List<PosSenseGroup> = emptyList(),
     val synonyms: List<String> = emptyList(),
     val antonyms: List<String> = emptyList(),
@@ -89,6 +105,7 @@ data class WordEntry(
     val isFromCache: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class SearchSuggestion(
     val word: String,
@@ -96,5 +113,18 @@ data class SearchSuggestion(
     val summaryDefinition: String = "",
     val usAudioUrl: String? = null,
     val ukAudioUrl: String? = null,
+    val isArabic: Boolean = false,
     val isLocal: Boolean = false
+)
+
+@Immutable
+data class SentenceLookupResult(
+    val originalText: String,
+    val isArabicInput: Boolean,
+    val machineTranslation: String? = null,
+    val missingTranslationPack: Boolean = false,
+    val wordChips: List<String> = emptyList(),
+    val tatoebaSentences: List<TatoebaSentence> = emptyList(),
+    val isUpdating: Boolean = false,
+    val directPhraseEntryAvailable: Boolean = false
 )

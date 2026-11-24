@@ -2,6 +2,7 @@ package com.example.core
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import com.google.mlkit.common.model.DownloadConditions
@@ -20,7 +21,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -45,6 +45,7 @@ private const val TAG = "TranslationManager"
 private const val SHORT_CACHE_MAX_LEN = 220
 private const val MAX_CHUNK_CHARS = 500
 private const val CONCURRENT_TRANSLATION_CHUNKS = 4
+private const val PROGRESS_THROTTLE_MS = 350L
 
 data class LanguagePackInfo(
     val code: String,
@@ -420,6 +421,7 @@ class TranslationManager(
             var globalCompleted = 0
             var chunkGlobalIndex = 0
             var byteOffset = 0L
+            var lastProgressEmitMs = 0L
 
             FileOutputStream(streamOutputFile, false).use { fos ->
                 BufferedWriter(OutputStreamWriter(fos, Charsets.UTF_8)).use { writer ->
@@ -455,7 +457,11 @@ class TranslationManager(
                                     chunkGlobalIndex++
                                     globalCompleted++
                                     onNewSliceWritten(slice)
-                                    onProgress(globalCompleted, totalChunks)
+                                    val nowMs = SystemClock.elapsedRealtime()
+                                    if (globalCompleted >= totalChunks || (nowMs - lastProgressEmitMs) >= PROGRESS_THROTTLE_MS) {
+                                        lastProgressEmitMs = nowMs
+                                        onProgress(globalCompleted, totalChunks)
+                                    }
                                 }
                             }
                         }
@@ -489,6 +495,7 @@ class TranslationManager(
             var completed = 0
             var globalIndex = 0
             var byteOffset = 0L
+            var lastProgressEmitMs = 0L
 
             FileOutputStream(streamOutputFile, false).use { fos ->
                 BufferedWriter(OutputStreamWriter(fos, Charsets.UTF_8)).use { writer ->
@@ -519,7 +526,11 @@ class TranslationManager(
                                 globalIndex++
                                 completed++
                                 onNewSliceWritten(slice)
-                                onProgress(completed, totalChunksHint)
+                                val nowMs = SystemClock.elapsedRealtime()
+                                if (completed >= totalChunksHint || (nowMs - lastProgressEmitMs) >= PROGRESS_THROTTLE_MS) {
+                                    lastProgressEmitMs = nowMs
+                                    onProgress(completed, totalChunksHint)
+                                }
                             }
                         }
                     }
@@ -530,6 +541,50 @@ class TranslationManager(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Chunk sequence translation failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Section 16.5: Streaming chunk pipeline for a single document page (about 500 chars per chunk,
+     * up to 4 concurrent chunks, ordered output, shared translator cache).
+     */
+    suspend fun translatePageTextStreaming(
+        pageText: String,
+        sourceCode: String,
+        targetCode: String
+    ): Result<String> = withContext(Dispatchers.Default) {
+        if (pageText.isBlank()) return@withContext Result.success("")
+        if (sourceCode == targetCode) return@withContext Result.success(pageText)
+        if (!isPairDownloaded(sourceCode, targetCode)) {
+            return@withContext Result.failure(MissingLanguagePackException(sourceCode, targetCode))
+        }
+        return@withContext try {
+            val chunks = splitIntoChunks(pageText, MAX_CHUNK_CHARS)
+            val translator = getOrCreateTranslator(sourceCode, targetCode)
+            val semaphore = Semaphore(CONCURRENT_TRANSLATION_CHUNKS)
+            val out = StringBuilder(pageText.length)
+            for (subBatch in chunks.chunked(16)) {
+                coroutineContext.ensureActive()
+                val translatedBatch = coroutineScope {
+                    subBatch.map { chunk ->
+                        async(Dispatchers.Default) {
+                            semaphore.withPermit {
+                                ensureActive()
+                                translateSingleChunkRaw(translator, sourceCode, targetCode, chunk)
+                            }
+                        }
+                    }.awaitAll()
+                }
+                for (part in translatedBatch) {
+                    out.append(part)
+                }
+            }
+            Result.success(out.toString().trim())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Page streaming translation failed", e)
             Result.failure(e)
         }
     }

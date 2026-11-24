@@ -5,8 +5,8 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Per-(word, source) cache for external dictionary APIs (Section 4.9).
- * source values: "freedict", "wiktionary", "datamuse", "tatoeba", "confusable_entry", "confusables_meta"
+ * Per-(word, source) cache for external dictionary APIs (Section 4.9 & 15).
+ * source values: "freedict", "wiktionary", "wiktionary_ar", "datamuse", "tatoeba", "tatoeba_ar", "confusable_entry"
  */
 @Entity(
     tableName = "api_cache",
@@ -23,9 +23,14 @@ data class ApiCacheEntity(
 /**
  * Lightweight local word index built from cached lookups for instant prefix suggestions & favorites metadata.
  */
-@Entity(tableName = "word_index")
+@Entity(
+    tableName = "word_index",
+    indices = [Index(value = ["normalizedWord", "lang"])]
+)
 data class WordIndexEntity(
     @PrimaryKey val word: String,
+    val normalizedWord: String = word,
+    val lang: String = "en",
     val summaryDefinition: String,
     val partOfSpeech: String,
     val usAudioUrl: String? = null,
@@ -34,19 +39,28 @@ data class WordIndexEntity(
 )
 
 /**
- * Offline Dictionary Pack storage imported via streaming GZIP + JsonReader (Section 5).
+ * Offline Dictionary Pack storage imported via streaming GZIP + JsonReader (Section 5 & 15.7).
  */
-@Entity(tableName = "offline_pack_words")
+@Entity(
+    tableName = "offline_pack_words",
+    indices = [Index(value = ["normalizedWord", "lang"])]
+)
 data class OfflinePackWordEntity(
     @PrimaryKey val word: String,
+    val normalizedWord: String = word,
+    val lang: String = "en",
     val phonetic: String = "",
     val summaryDefinition: String = "",
     val payloadJson: String
 )
 
-@Entity(tableName = "search_history")
+@Entity(
+    tableName = "search_history",
+    indices = [Index(value = ["normalizedQuery"])]
+)
 data class SearchHistoryEntity(
     @PrimaryKey val queryKey: String,
+    val normalizedQuery: String = queryKey,
     val displayQuery: String,
     val resolvedEnglishWord: String,
     val previewSummary: String,

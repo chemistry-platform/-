@@ -9,6 +9,9 @@ object HomeRoute
 object DiscoverRoute
 
 @Serializable
+object FileTranslationRoute
+
+@Serializable
 object FavoritesRoute
 
 @Serializable
@@ -34,4 +37,9 @@ data class WordDetailRoute(
     val query: String,
     val fallbackBaseWord: String? = null,
     val highlightChip: String? = null
+)
+
+@Serializable
+data class SentenceLookupRoute(
+    val query: String
 )

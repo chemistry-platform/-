@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.core.ArabicTextUtils
 import com.example.data.local.SearchHistoryEntity
 import com.example.data.repository.LexiconRepository
 import com.example.domain.model.LanguageDirection
@@ -30,7 +31,13 @@ class QuickTranslateViewModel(
     private val _query = MutableStateFlow(initialQuery)
     val query: StateFlow<String> = _query.asStateFlow()
 
-    private val _direction = MutableStateFlow(initialDirection)
+    private val _direction = MutableStateFlow(
+        if (initialQuery.isNotBlank() && ArabicTextUtils.containsArabicLetters(initialQuery)) {
+            LanguageDirection.AR_TO_EN
+        } else {
+            initialDirection
+        }
+    )
     val direction: StateFlow<LanguageDirection> = _direction.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
@@ -61,7 +68,12 @@ class QuickTranslateViewModel(
                 } else {
                     _isLoading.value = true
                     try {
-                        emit(repository.getLiveSuggestions(trimmed))
+                        val list = repository.getLiveSuggestions(trimmed)
+                        // Section 18.3: Prefetch top suggestion in the background
+                        list.firstOrNull()?.word?.let { topWord ->
+                            repository.prefetchWord(topWord)
+                        }
+                        emit(list)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
@@ -80,7 +92,14 @@ class QuickTranslateViewModel(
 
     fun onQueryChange(newValue: String) {
         _query.value = newValue
-        if (newValue.isBlank()) {
+        if (newValue.isNotBlank()) {
+            // Section 15.1: Auto-detect direction from script
+            _direction.value = if (ArabicTextUtils.containsArabicLetters(newValue)) {
+                LanguageDirection.AR_TO_EN
+            } else {
+                LanguageDirection.EN_TO_AR
+            }
+        } else {
             _isLoading.value = false
         }
     }

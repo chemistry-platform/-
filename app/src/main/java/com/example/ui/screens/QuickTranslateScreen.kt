@@ -59,11 +59,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Accent
+import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.data.local.SearchHistoryEntity
 import com.example.domain.model.SearchSuggestion
 import com.example.ui.components.AppIcons
 import com.example.ui.components.CompactWordAudioButtons
+import com.example.ui.components.DirectionToggleChip
 import com.example.ui.components.LanguageSwapBar
 import com.example.ui.components.NoInternetBanner
 import com.example.ui.components.PosChip
@@ -75,6 +77,7 @@ fun QuickTranslateScreen(
     audioManager: AudioPlayerManager,
     onBack: () -> Unit,
     onOpenWord: (String) -> Unit,
+    onOpenSentence: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
@@ -131,63 +134,79 @@ fun QuickTranslateScreen(
                 )
             }
 
-            OutlinedTextField(
-                value = query,
-                onValueChange = { viewModel.onQueryChange(it) },
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { isFieldFocused = it.isFocused }
-                    .testTag("quick_translate_input"),
-                placeholder = {
-                    Text(
-                        text = stringResource(R.string.search_placeholder_translate),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurfaceVariant
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Search,
-                        contentDescription = null,
-                        tint = colors.secondary
-                    )
-                },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(
-                            onClick = { viewModel.onQueryChange("") },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = stringResource(R.string.cd_clear_search),
-                                tint = colors.onSurfaceVariant
-                            )
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { viewModel.onQueryChange(it) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { isFieldFocused = it.isFocused }
+                        .testTag("quick_translate_input"),
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.search_placeholder_translate),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.onSurfaceVariant
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = colors.secondary
+                        )
+                    },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(
+                                onClick = { viewModel.onQueryChange("") },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.cd_clear_search),
+                                    tint = colors.onSurfaceVariant
+                                )
+                            }
                         }
-                    }
-                },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = colors.surface,
-                    unfocusedContainerColor = colors.surface,
-                    focusedBorderColor = colors.secondary,
-                    unfocusedBorderColor = colors.outline,
-                    cursorColor = colors.secondary
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = {
-                        val trimmed = query.trim()
-                        if (trimmed.isNotEmpty()) {
-                            onOpenWord(trimmed)
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = colors.surface,
+                        unfocusedContainerColor = colors.surface,
+                        focusedBorderColor = colors.secondary,
+                        unfocusedBorderColor = colors.outline,
+                        cursorColor = colors.secondary
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            val trimmed = query.trim()
+                            if (trimmed.isNotEmpty()) {
+                                if (ArabicTextUtils.isMultiWordQuery(trimmed)) {
+                                    onOpenSentence(trimmed)
+                                } else {
+                                    onOpenWord(trimmed)
+                                }
+                            }
                         }
-                    }
+                    )
                 )
-            )
+
+                DirectionToggleChip(
+                    direction = direction,
+                    onToggle = { viewModel.swapLanguages() }
+                )
+            }
 
             if (isLoading) {
                 LinearProgressIndicator(
@@ -208,16 +227,21 @@ fun QuickTranslateScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (!isOnline) {
-                    item { NoInternetBanner() }
+                    item(key = "offline_banner", contentType = "banner") { NoInternetBanner() }
                 }
 
                 if (query.isNotBlank()) {
-                    // Direct lookup row
-                    item {
+                    val trimmedQuery = query.trim()
+                    val isSentence = ArabicTextUtils.isMultiWordQuery(trimmedQuery)
+                    // Direct lookup row (multi-word -> SentenceLookupScreen, single word -> WordDetailScreen)
+                    item(key = "direct_lookup", contentType = "direct_lookup") {
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onOpenWord(query.trim()) }
+                                .clickable {
+                                    if (isSentence) onOpenSentence(trimmedQuery)
+                                    else onOpenWord(trimmedQuery)
+                                }
                                 .testTag("direct_lookup_button"),
                             color = colors.surfaceVariant,
                             shape = RoundedCornerShape(12.dp),
@@ -229,7 +253,11 @@ fun QuickTranslateScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "فتح صفحة المعجم الكاملة لـ \"${query.trim()}\"",
+                                    text = if (isSentence) {
+                                        "ترجمة وتحليل الجملة: \"$trimmedQuery\""
+                                    } else {
+                                        "فتح صفحة المعجم الكاملة لـ \"$trimmedQuery\""
+                                    },
                                     style = MaterialTheme.typography.labelLarge,
                                     color = colors.secondary,
                                     modifier = Modifier.weight(1f),
@@ -237,7 +265,7 @@ fun QuickTranslateScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "بحث",
+                                    text = if (isSentence) "ترجمة الجملة" else "بحث",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = colors.primary
                                 )
@@ -245,9 +273,9 @@ fun QuickTranslateScreen(
                         }
                     }
 
-                    // Live suggestions (Section 6)
+                    // Live suggestions (Section 6 & 15)
                     if (suggestions.isNotEmpty()) {
-                        item {
+                        item(key = "suggestions_card", contentType = "suggestions") {
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 color = colors.surface,
@@ -361,8 +389,8 @@ private fun SuggestionResultRow(
     onOpenWord: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val hasUs = audioManager.hasAudioOrCache(suggestion.word, Accent.US, suggestion.usAudioUrl)
-    val hasUk = audioManager.hasAudioOrCache(suggestion.word, Accent.UK, suggestion.ukAudioUrl)
+    val hasUs = !suggestion.isArabic && audioManager.hasAudioOrCache(suggestion.word, Accent.US, suggestion.usAudioUrl)
+    val hasUk = !suggestion.isArabic && audioManager.hasAudioOrCache(suggestion.word, Accent.UK, suggestion.ukAudioUrl)
 
     Row(
         modifier = Modifier
@@ -377,7 +405,9 @@ private fun SuggestionResultRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            CompositionLocalProvider(
+                LocalLayoutDirection provides if (suggestion.isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+            ) {
                 Text(
                     text = suggestion.word,
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
@@ -404,26 +434,28 @@ private fun SuggestionResultRow(
             if (suggestion.partOfSpeech.isNotBlank()) {
                 PosChip(text = suggestion.partOfSpeech)
             }
-            CompactWordAudioButtons(
-                hasUsAudio = hasUs,
-                hasUkAudio = hasUk,
-                onPlayUs = {
-                    audioManager.playHumanPronunciation(
-                        word = suggestion.word,
-                        accent = Accent.US,
-                        audioUrl = suggestion.usAudioUrl,
-                        key = "sug_us_${suggestion.word}"
-                    )
-                },
-                onPlayUk = {
-                    audioManager.playHumanPronunciation(
-                        word = suggestion.word,
-                        accent = Accent.UK,
-                        audioUrl = suggestion.ukAudioUrl,
-                        key = "sug_uk_${suggestion.word}"
-                    )
-                }
-            )
+            if (!suggestion.isArabic) {
+                CompactWordAudioButtons(
+                    hasUsAudio = hasUs,
+                    hasUkAudio = hasUk,
+                    onPlayUs = {
+                        audioManager.playHumanPronunciation(
+                            word = suggestion.word,
+                            accent = Accent.US,
+                            audioUrl = suggestion.usAudioUrl,
+                            key = "sug_us_${suggestion.word}"
+                        )
+                    },
+                    onPlayUk = {
+                        audioManager.playHumanPronunciation(
+                            word = suggestion.word,
+                            accent = Accent.UK,
+                            audioUrl = suggestion.ukAudioUrl,
+                            key = "sug_uk_${suggestion.word}"
+                        )
+                    }
+                )
+            }
         }
     }
 }

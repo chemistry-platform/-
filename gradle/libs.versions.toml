@@ -22,6 +22,8 @@ okhttp = "4.10.0"
 moshi = "1.15.2"
 robolectric = "4.16.1"
 mlkitTranslate = "17.0.3"
+mlkitTextRecognition = "16.0.1"
+pdfboxAndroid = "2.0.27.0"
 kotlinxSerializationJson = "1.13.0"
 browser = "1.10.0"
 
@@ -60,6 +62,8 @@ moshi-kotlin = { group = "com.squareup.moshi", name = "moshi-kotlin", version.re
 moshi-kotlin-codegen = { group = "com.squareup.moshi", name = "moshi-kotlin-codegen", version.ref = "moshi" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 
 [plugins]

@@ -48,6 +48,7 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onOpenQuickTranslate: (initialQuery: String, isArabicSource: Boolean) -> Unit,
     onOpenTranslation: () -> Unit,
+    onOpenFileTranslation: () -> Unit,
     onOpenLanguages: () -> Unit,
     onOpenWord: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -70,7 +71,7 @@ fun HomeScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            item {
+            item(key = "home_header", contentType = "header") {
                 Column {
                     Text(
                         text = stringResource(R.string.app_name),
@@ -86,13 +87,13 @@ fun HomeScreen(
             }
 
             if (!isOnline) {
-                item {
+                item(key = "home_offline", contentType = "banner") {
                     NoInternetBanner()
                 }
             }
 
             // Rounded card with blue border containing language switcher & search trigger
-            item {
+            item(key = "home_search", contentType = "search_card") {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = colors.surface,
@@ -132,35 +133,46 @@ fun HomeScreen(
                 }
             }
 
-            // Two functional tool tiles: الترجمة (Text & Files) + اللغات (Offline Packs)
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+            // Functional tool tiles: الترجمة + ترجمة ملفات + اللغات
+            item(key = "home_tools_row", contentType = "tools_row") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        HomeActionTile(
+                            title = "ترجمة النصوص",
+                            subtitle = "59 لغة محلياً",
+                            icon = AppIcons.Translate,
+                            onClick = onOpenTranslation,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("home_translation_tile")
+                        )
+                        HomeActionTile(
+                            title = "ترجمة ملفات",
+                            subtitle = "PDF • صور • TXT",
+                            icon = AppIcons.Description,
+                            onClick = onOpenFileTranslation,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("home_files_tile")
+                        )
+                    }
                     HomeActionTile(
-                        title = "ترجمة النصوص والملفات",
-                        subtitle = "تدفق سريع بدون إنترنت",
-                        icon = AppIcons.Translate,
-                        onClick = onOpenTranslation,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("home_translation_tile")
-                    )
-                    HomeActionTile(
-                        title = "اللغات",
-                        subtitle = "حزم الترجمة المحلية",
+                        title = "إدارة اللغات وحزم الترجمة",
+                        subtitle = "تحميل وتحديث حزم العمل بدون إنترنت",
                         icon = AppIcons.Language,
                         onClick = onOpenLanguages,
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .testTag("home_languages_tile")
                     )
                 }
             }
 
-            // Quick dictionary entry shortcuts (no search history on Home per Section 7)
-            item {
+            // Quick dictionary entry shortcuts (English & Arabic)
+            item(key = "home_quick_words", contentType = "quick_chips") {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = colors.surface,
@@ -177,7 +189,7 @@ fun HomeScreen(
                             color = colors.onSurface
                         )
                         ChipWrapRow(
-                            items = listOf("run", "look after", "resilient", "affect", "effect", "eloquent"),
+                            items = listOf("run", "look after", "resilient", "affect", "كتاب", "حكمة", "سلام"),
                             onChipClick = onOpenWord
                         )
                     }

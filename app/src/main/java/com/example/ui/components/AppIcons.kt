@@ -668,6 +668,120 @@ object AppIcons {
         }
     }
 
+    val Description: ImageVector by lazy {
+        vector24("Description") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(14f, 2f)
+                horizontalLineTo(6f)
+                curveToRelative(-1.1f, 0f, -1.99f, 0.9f, -1.99f, 2f)
+                lineTo(4f, 20f)
+                curveToRelative(0f, 1.1f, 0.89f, 2f, 1.99f, 2f)
+                horizontalLineTo(18f)
+                curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+                verticalLineTo(8f)
+                lineToRelative(-6f, -6f)
+                close()
+                moveTo(16f, 18f)
+                horizontalLineTo(8f)
+                verticalLineToRelative(-2f)
+                horizontalLineToRelative(8f)
+                verticalLineToRelative(2f)
+                close()
+                moveTo(16f, 14f)
+                horizontalLineTo(8f)
+                verticalLineToRelative(-2f)
+                horizontalLineToRelative(8f)
+                verticalLineToRelative(2f)
+                close()
+                moveTo(13f, 9f)
+                verticalLineTo(3.5f)
+                lineTo(18.5f, 9f)
+                horizontalLineTo(13f)
+                close()
+            }
+        }
+    }
+
+    val PictureAsPdf: ImageVector by lazy {
+        vector24("PictureAsPdf") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(20f, 2f)
+                horizontalLineTo(8f)
+                curveToRelative(-1.1f, 0f, -2f, 0.9f, -2f, 2f)
+                verticalLineToRelative(12f)
+                curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+                horizontalLineToRelative(12f)
+                curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+                verticalLineTo(4f)
+                curveToRelative(0f, -1.1f, -0.9f, -2f, -2f, -2f)
+                close()
+                moveTo(11.5f, 9.5f)
+                curveToRelative(0f, 0.83f, -0.67f, 1.5f, -1.5f, 1.5f)
+                horizontalLineTo(9f)
+                verticalLineToRelative(2f)
+                horizontalLineTo(7.5f)
+                verticalLineTo(7f)
+                horizontalLineTo(10f)
+                curveToRelative(0.83f, 0f, 1.5f, 0.67f, 1.5f, 1.5f)
+                verticalLineToRelative(1f)
+                close()
+                moveTo(16.5f, 11.5f)
+                curveToRelative(0f, 0.83f, -0.67f, 1.5f, -1.5f, 1.5f)
+                horizontalLineToRelative(-2.5f)
+                verticalLineTo(7f)
+                horizontalLineTo(15f)
+                curveToRelative(0.83f, 0f, 1.5f, 0.67f, 1.5f, 1.5f)
+                verticalLineToRelative(3f)
+                close()
+                moveTo(20.5f, 8.5f)
+                horizontalLineTo(19f)
+                verticalLineToRelative(1f)
+                horizontalLineToRelative(1.5f)
+                verticalLineTo(11f)
+                horizontalLineTo(19f)
+                verticalLineToRelative(2f)
+                horizontalLineToRelative(-1.5f)
+                verticalLineTo(7f)
+                horizontalLineToRelative(3f)
+                verticalLineToRelative(1.5f)
+                close()
+                moveTo(4f, 6f)
+                horizontalLineTo(2f)
+                verticalLineToRelative(14f)
+                curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+                horizontalLineToRelative(14f)
+                verticalLineToRelative(-2f)
+                horizontalLineTo(4f)
+                verticalLineTo(6f)
+                close()
+            }
+        }
+    }
+
+    val ImageFile: ImageVector by lazy {
+        vector24("ImageFile") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(21f, 19f)
+                verticalLineTo(5f)
+                curveToRelative(0f, -1.1f, -0.9f, -2f, -2f, -2f)
+                horizontalLineTo(5f)
+                curveToRelative(-1.1f, 0f, -2f, 0.9f, -2f, 2f)
+                verticalLineToRelative(14f)
+                curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+                horizontalLineToRelative(14f)
+                curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+                close()
+                moveTo(8.5f, 13.5f)
+                lineToRelative(2.5f, 3.01f)
+                lineTo(14.5f, 12f)
+                lineToRelative(4.5f, 6f)
+                horizontalLineTo(5f)
+                lineToRelative(3.5f, -4.5f)
+                close()
+            }
+        }
+    }
+
     private inline fun vector24(
         name: String,
         block: ImageVector.Builder.() -> Unit

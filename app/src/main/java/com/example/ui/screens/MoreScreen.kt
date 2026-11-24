@@ -64,6 +64,7 @@ fun MoreScreen(
     viewModel: MoreViewModel,
     onOpenLanguages: () -> Unit,
     onOpenTranslation: () -> Unit,
+    onOpenFileTranslation: () -> Unit,
     onOpenSourcesCredits: () -> Unit,
     onOpenWord: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -245,12 +246,47 @@ fun MoreScreen(
                                 )
                                 Column {
                                     Text(
-                                        text = "ترجمة النصوص والملفات",
+                                        text = "ترجمة النصوص",
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = colors.onSurface
                                     )
                                     Text(
-                                        text = "ترجمة جمل وملفات .txt طويلة دون اتصال",
+                                        text = "ترجمة جمل ونصوص .txt طويلة دون اتصال",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Text("فتح", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                        }
+                        HorizontalDivider(color = colors.outline)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onOpenFileTranslation)
+                                .padding(16.dp)
+                                .testTag("more_open_file_translation"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = AppIcons.Description,
+                                    contentDescription = null,
+                                    tint = colors.secondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "ترجمة ملفات (PDF • صور • TXT)",
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = colors.onSurface
+                                    )
+                                    Text(
+                                        text = "معالجة صفحة بصفحة مع OCR وحفظ .txt تدريجي",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )

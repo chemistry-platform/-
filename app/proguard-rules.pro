@@ -68,8 +68,22 @@
 -keep @androidx.room.Dao interface * { *; }
 -dontwarn androidx.room.**
 
-# ML Kit Translate
--keep class com.google.mlkit.** { *; }
--keepclassmembers class com.google.mlkit.** { *; }
+# ML Kit Translate & Text Recognition
+-keep class com.google.mlkit.nl.translate.** { *; }
+-keepclassmembers class com.google.mlkit.nl.translate.** { *; }
+-keep class com.google.mlkit.vision.text.** { *; }
+-keepclassmembers class com.google.mlkit.vision.text.** { *; }
+-keep class com.google.mlkit.vision.common.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_text_common.** { *; }
 -dontwarn com.google.mlkit.**
 -dontwarn com.google.android.gms.**
+
+# PDFBox-Android (Section 17.1)
+-keep class com.tom_roush.pdfbox.pdmodel.** { *; }
+-keep class com.tom_roush.pdfbox.text.** { *; }
+-keep class com.tom_roush.pdfbox.android.PDFBoxResourceLoader { *; }
+-keep class com.tom_roush.pdfbox.io.MemoryUsageSetting { *; }
+-keep class com.tom_roush.fontbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+-dontwarn com.tom_roush.fontbox.**
+-dontwarn org.bouncycastle.**

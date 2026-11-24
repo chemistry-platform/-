@@ -72,6 +72,17 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+  packaging {
+    resources {
+      excludes += setOf(
+        "META-INF/DEPENDENCIES",
+        "META-INF/LICENSE",
+        "META-INF/LICENSE.txt",
+        "META-INF/NOTICE",
+        "META-INF/NOTICE.txt"
+      )
+    }
+  }
 }
 
 dependencies {
@@ -95,8 +106,10 @@ dependencies {
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.mlkit.translate)
+  implementation(libs.mlkit.text.recognition)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  implementation(libs.pdfbox.android)
   implementation(libs.retrofit)
 
   testImplementation(libs.androidx.compose.ui.test.junit4)

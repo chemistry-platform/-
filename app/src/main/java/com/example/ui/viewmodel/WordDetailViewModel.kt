@@ -3,10 +3,12 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.core.ArabicTextUtils
 import com.example.core.TranslationManager
 import com.example.data.repository.LexiconRepository
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.ConfusableWordDetail
+import com.example.domain.model.LanguageDirection
 import com.example.domain.model.WordEntry
 import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -20,6 +22,14 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+enum class UsageFilterOption(val labelAr: String) {
+    ALL("الكل"),
+    FORMAL("رسمي"),
+    INFORMAL("غير رسمي"),
+    US("أمريكي"),
+    UK("بريطاني")
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class WordDetailViewModel(
     private val repository: LexiconRepository,
@@ -32,8 +42,20 @@ class WordDetailViewModel(
     private val _currentQuery = MutableStateFlow(initialQuery)
     val currentQuery: StateFlow<String> = _currentQuery.asStateFlow()
 
+    private val _direction = MutableStateFlow(
+        if (ArabicTextUtils.containsArabicLetters(initialQuery)) {
+            LanguageDirection.AR_TO_EN
+        } else {
+            LanguageDirection.EN_TO_AR
+        }
+    )
+    val direction: StateFlow<LanguageDirection> = _direction.asStateFlow()
+
     private val _uiState = MutableStateFlow<WordLoadState>(WordLoadState.Loading)
     val uiState: StateFlow<WordLoadState> = _uiState.asStateFlow()
+
+    private val _usageFilter = MutableStateFlow(UsageFilterOption.ALL)
+    val usageFilter: StateFlow<UsageFilterOption> = _usageFilter.asStateFlow()
 
     private val _highlightedChip = MutableStateFlow<String?>(null)
     val highlightedChip: StateFlow<String?> = _highlightedChip.asStateFlow()
@@ -63,6 +85,7 @@ class WordDetailViewModel(
 
     private var loadJob: Job? = null
     private var confusableLoadedForWord: String? = null
+    private var confusablePrefetchedForWord: String? = null
 
     init {
         loadWord(
@@ -82,11 +105,18 @@ class WordDetailViewModel(
         val cleaned = query.trim()
         if (cleaned.isEmpty()) return
         _currentQuery.value = cleaned
+        _direction.value = if (ArabicTextUtils.containsArabicLetters(cleaned)) {
+            LanguageDirection.AR_TO_EN
+        } else {
+            LanguageDirection.EN_TO_AR
+        }
+        _usageFilter.value = UsageFilterOption.ALL
         _confusableDetails.value = emptyMap()
         _isLoadingConfusables.value = false
         _arabicTranslations.value = emptyMap()
         _missingLanguagePackBanner.value = false
         confusableLoadedForWord = null
+        confusablePrefetchedForWord = null
 
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -97,8 +127,16 @@ class WordDetailViewModel(
                         _uiState.value = WordLoadState.Loading
                     }
                     is WordLoadState.Success -> {
-                        _activeEntryWord.value = state.entry.word
+                        _activeEntryWord.value = state.entry.displayWord
                         _uiState.value = state
+                        if (!state.isUpdating &&
+                            state.entry.confusableCandidates.isNotEmpty() &&
+                            confusablePrefetchedForWord != state.entry.word
+                        ) {
+                            // Section 18.3: Prefetch first page of below-the-fold confusables in background
+                            confusablePrefetchedForWord = state.entry.word
+                            prefetchFirstConfusablesPage(state.entry)
+                        }
                     }
                     is WordLoadState.Error -> {
                         if (!switchedToFallback && !fallbackWord.isNullOrBlank()) {
@@ -108,7 +146,7 @@ class WordDetailViewModel(
                             repository.observeWordEntry(fallbackWord, forceRefresh = false)
                                 .collect { fbState ->
                                     if (fbState is WordLoadState.Success) {
-                                        _activeEntryWord.value = fbState.entry.word
+                                        _activeEntryWord.value = fbState.entry.displayWord
                                     }
                                     _uiState.value = fbState
                                 }
@@ -118,6 +156,27 @@ class WordDetailViewModel(
                     }
                 }
             }
+        }
+    }
+
+    private fun prefetchFirstConfusablesPage(entry: WordEntry) {
+        if (entry.confusableCandidates.isEmpty()) return
+        viewModelScope.launch {
+            val firstPage = repository.loadConfusableDetails(entry.confusableCandidates, maxCount = 4)
+            if (firstPage.isNotEmpty()) {
+                _confusableDetails.value = _confusableDetails.value + firstPage
+            }
+        }
+    }
+
+    fun selectUsageFilter(option: UsageFilterOption) {
+        _usageFilter.value = option
+    }
+
+    fun toggleDirectionManual() {
+        _direction.value = when (_direction.value) {
+            LanguageDirection.EN_TO_AR -> LanguageDirection.AR_TO_EN
+            LanguageDirection.AR_TO_EN -> LanguageDirection.EN_TO_AR
         }
     }
 
@@ -134,7 +193,7 @@ class WordDetailViewModel(
         viewModelScope.launch {
             _isLoadingConfusables.value = true
             try {
-                val loaded = repository.loadConfusableDetails(entry.confusableCandidates)
+                val loaded = repository.loadConfusableDetails(entry.confusableCandidates, maxCount = 12)
                 _confusableDetails.value = loaded
             } finally {
                 _isLoadingConfusables.value = false

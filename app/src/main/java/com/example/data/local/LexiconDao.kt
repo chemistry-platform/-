@@ -22,10 +22,14 @@ interface LexiconDao {
     suspend fun clearApiCache()
 
     // --- Word Index for fast local prefix suggestions ---
-    @Query("SELECT * FROM word_index WHERE word LIKE :prefix || '%' ORDER BY updatedAt DESC LIMIT :limit")
+    @Query(
+        "SELECT * FROM word_index " +
+            "WHERE (word LIKE :prefix || '%' OR normalizedWord LIKE :prefix || '%') " +
+            "ORDER BY updatedAt DESC LIMIT :limit"
+    )
     suspend fun searchIndexByPrefix(prefix: String, limit: Int = 10): List<WordIndexEntity>
 
-    @Query("SELECT * FROM word_index WHERE word = :normalizedWord LIMIT 1")
+    @Query("SELECT * FROM word_index WHERE word = :normalizedWord OR normalizedWord = :normalizedWord LIMIT 1")
     suspend fun getWordIndex(normalizedWord: String): WordIndexEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -38,10 +42,20 @@ interface LexiconDao {
     suspend fun clearWordIndex()
 
     // --- Offline Dictionary Pack ---
-    @Query("SELECT * FROM offline_pack_words WHERE word = :normalizedWord LIMIT 1")
-    suspend fun getOfflinePackWord(normalizedWord: String): OfflinePackWordEntity?
+    @Query("SELECT * FROM offline_pack_words WHERE word = :key OR normalizedWord = :key LIMIT 1")
+    suspend fun getOfflinePackWord(key: String): OfflinePackWordEntity?
 
-    @Query("SELECT * FROM offline_pack_words WHERE word LIKE :prefix || '%' ORDER BY word ASC LIMIT :limit")
+    @Query(
+        "SELECT * FROM offline_pack_words " +
+            "WHERE (word = :key OR normalizedWord = :key) AND lang = :lang LIMIT 1"
+    )
+    suspend fun getOfflinePackWordByLang(key: String, lang: String): OfflinePackWordEntity?
+
+    @Query(
+        "SELECT * FROM offline_pack_words " +
+            "WHERE (word LIKE :prefix || '%' OR normalizedWord LIKE :prefix || '%') " +
+            "ORDER BY word ASC LIMIT :limit"
+    )
     suspend fun searchOfflinePackByPrefix(prefix: String, limit: Int = 10): List<OfflinePackWordEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -59,6 +73,13 @@ interface LexiconDao {
     // --- Search History (max 50 unique, newest first) ---
     @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT 50")
     fun observeRecentHistory(): Flow<List<SearchHistoryEntity>>
+
+    @Query(
+        "SELECT * FROM search_history " +
+            "WHERE queryKey LIKE :prefix || '%' OR normalizedQuery LIKE :prefix || '%' " +
+            "ORDER BY timestamp DESC LIMIT :limit"
+    )
+    suspend fun searchHistoryByPrefix(prefix: String, limit: Int = 10): List<SearchHistoryEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertHistory(entity: SearchHistoryEntity)

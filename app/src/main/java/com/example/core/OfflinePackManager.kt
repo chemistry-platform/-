@@ -1,6 +1,7 @@
 package com.example.core
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.JsonReader
 import android.util.JsonToken
 import android.util.Log
@@ -146,6 +147,7 @@ class OfflinePackManager(
                             val buf = ByteArray(16 * 1024)
                             var copied = 0L
                             var lastPct = -1
+                            var lastEmitMs = 0L
                             val input = body.byteStream()
                             while (true) {
                                 coroutineContext.ensureActive()
@@ -156,8 +158,10 @@ class OfflinePackManager(
                                 if (total > 0L) {
                                     val fraction = (copied.toFloat() / total.toFloat()).coerceIn(0f, 0.7f)
                                     val pct = (copied * 100 / total).toInt()
-                                    if (pct != lastPct) {
+                                    val nowMs = SystemClock.elapsedRealtime()
+                                    if (pct != lastPct && (pct == 100 || (nowMs - lastEmitMs) >= 350L)) {
                                         lastPct = pct
+                                        lastEmitMs = nowMs
                                         _state.value = OfflinePackState.Downloading(
                                             progress = fraction,
                                             indeterminate = false,
@@ -304,6 +308,7 @@ class OfflinePackManager(
     ): OfflinePackWordEntity? {
         val root = JSONObject()
         var word = ""
+        var lang = ""
         var phonetic = ""
         var summaryDef = ""
 
@@ -315,6 +320,10 @@ class OfflinePackManager(
                 "word" -> {
                     word = readStringOrNull(reader).orEmpty().trim()
                     root.put("word", word)
+                }
+                "lang" -> {
+                    lang = readStringOrNull(reader).orEmpty().trim().lowercase(Locale.US)
+                    if (lang.isNotEmpty()) root.put("lang", lang)
                 }
                 "phonetic" -> {
                     phonetic = readStringOrNull(reader).orEmpty().trim()
@@ -334,10 +343,27 @@ class OfflinePackManager(
             }
         }
 
-        val normalized = word.lowercase(Locale.US)
-        if (normalized.isBlank()) return null
+        val trimmedWord = word.trim()
+        if (trimmedWord.isBlank()) return null
+        val resolvedLang = when {
+            lang == "ar" || lang == "en" -> lang
+            ArabicTextUtils.containsArabicLetters(trimmedWord) -> "ar"
+            else -> "en"
+        }
+        val keyWord = if (resolvedLang == "ar") {
+            ArabicTextUtils.stripArabicDiacriticsKeepHamza(trimmedWord)
+        } else {
+            trimmedWord.lowercase(Locale.US)
+        }
+        val normalized = if (resolvedLang == "ar") {
+            ArabicTextUtils.normalizeArabicForMatching(trimmedWord)
+        } else {
+            trimmedWord.lowercase(Locale.US)
+        }
         return OfflinePackWordEntity(
-            word = normalized,
+            word = keyWord,
+            normalizedWord = normalized,
+            lang = resolvedLang,
             phonetic = phonetic,
             summaryDefinition = summaryDef.take(180),
             payloadJson = root.toString()

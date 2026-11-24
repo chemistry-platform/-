@@ -41,29 +41,35 @@ import com.example.ui.components.AppUpdateDialogs
 import com.example.ui.components.BottomNavTab
 import com.example.ui.navigation.DiscoverRoute
 import com.example.ui.navigation.FavoritesRoute
+import com.example.ui.navigation.FileTranslationRoute
 import com.example.ui.navigation.HomeRoute
 import com.example.ui.navigation.LanguagesRoute
 import com.example.ui.navigation.MoreRoute
 import com.example.ui.navigation.QuickTranslateRoute
+import com.example.ui.navigation.SentenceLookupRoute
 import com.example.ui.navigation.SourcesCreditsRoute
 import com.example.ui.navigation.TranslationRoute
 import com.example.ui.navigation.WordDetailRoute
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.FavoritesScreen
+import com.example.ui.screens.FileTranslationScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LanguagesScreen
 import com.example.ui.screens.MoreScreen
 import com.example.ui.screens.QuickTranslateScreen
+import com.example.ui.screens.SentenceLookupScreen
 import com.example.ui.screens.SourcesCreditsScreen
 import com.example.ui.screens.TranslationScreen
 import com.example.ui.screens.WordDetailScreen
 import com.example.ui.theme.AlMakhzanjiTheme
 import com.example.ui.theme.ThemeMode
 import com.example.ui.viewmodel.FavoritesViewModel
+import com.example.ui.viewmodel.FileTranslationViewModel
 import com.example.ui.viewmodel.HomeViewModel
 import com.example.ui.viewmodel.LanguagesViewModel
 import com.example.ui.viewmodel.MoreViewModel
 import com.example.ui.viewmodel.QuickTranslateViewModel
+import com.example.ui.viewmodel.SentenceLookupViewModel
 import com.example.ui.viewmodel.TranslationViewModel
 import com.example.ui.viewmodel.WordDetailViewModel
 
@@ -75,8 +81,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         appContainer = AppContainer(this)
-        appContainer.appUpdateManager.checkForUpdate(force = false)
-
         enableEdgeToEdge()
 
         setContent {
@@ -147,6 +151,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     val currentBottomTab = when {
         currentDestination?.hasRoute<HomeRoute>() == true -> BottomNavTab.HOME
         currentDestination?.hasRoute<DiscoverRoute>() == true -> BottomNavTab.DISCOVER
+        currentDestination?.hasRoute<FileTranslationRoute>() == true -> BottomNavTab.FILES
         currentDestination?.hasRoute<FavoritesRoute>() == true -> BottomNavTab.FAVORITES
         currentDestination?.hasRoute<MoreRoute>() == true -> BottomNavTab.MORE
         else -> null
@@ -172,6 +177,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                         val targetRoute: Any = when (tab) {
                             BottomNavTab.HOME -> HomeRoute
                             BottomNavTab.DISCOVER -> DiscoverRoute
+                            BottomNavTab.FILES -> FileTranslationRoute
                             BottomNavTab.FAVORITES -> FavoritesRoute
                             BottomNavTab.MORE -> MoreRoute
                         }
@@ -212,6 +218,9 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     onOpenTranslation = {
                         navController.navigate(TranslationRoute)
                     },
+                    onOpenFileTranslation = {
+                        navController.navigate(FileTranslationRoute)
+                    },
                     onOpenLanguages = {
                         navController.navigate(LanguagesRoute)
                     },
@@ -226,6 +235,19 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     onOpenWord = { word ->
                         navController.navigate(WordDetailRoute(query = word))
                     }
+                )
+            }
+
+            composable<FileTranslationRoute> {
+                val fileTranslationViewModel: FileTranslationViewModel = viewModel(
+                    factory = FileTranslationViewModel.Factory(
+                        translationManager = appContainer.translationManager,
+                        fileTranslationManager = appContainer.fileTranslationManager
+                    )
+                )
+                FileTranslationScreen(
+                    viewModel = fileTranslationViewModel,
+                    onOpenLanguages = { navController.navigate(LanguagesRoute) }
                 )
             }
 
@@ -254,6 +276,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     viewModel = moreViewModel,
                     onOpenLanguages = { navController.navigate(LanguagesRoute) },
                     onOpenTranslation = { navController.navigate(TranslationRoute) },
+                    onOpenFileTranslation = { navController.navigate(FileTranslationRoute) },
                     onOpenSourcesCredits = { navController.navigate(SourcesCreditsRoute) },
                     onOpenWord = { word ->
                         navController.navigate(WordDetailRoute(query = word))
@@ -281,6 +304,9 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     onBack = { navController.popBackStack() },
                     onOpenWord = { word ->
                         navController.navigate(WordDetailRoute(query = word))
+                    },
+                    onOpenSentence = { sentence ->
+                        navController.navigate(SentenceLookupRoute(query = sentence))
                     }
                 )
             }
@@ -336,6 +362,33 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                                 highlightChip = highlightChip
                             )
                         )
+                    },
+                    onOpenSentence = { sentence ->
+                        navController.navigate(SentenceLookupRoute(query = sentence))
+                    },
+                    onOpenLanguages = { navController.navigate(LanguagesRoute) }
+                )
+            }
+
+            composable<SentenceLookupRoute> { entry ->
+                val args = entry.toRoute<SentenceLookupRoute>()
+                val sentenceViewModel: SentenceLookupViewModel = viewModel(
+                    key = "sentence_${args.query}",
+                    factory = SentenceLookupViewModel.Factory(
+                        repository = appContainer.repository,
+                        initialQuery = args.query
+                    )
+                )
+                SentenceLookupScreen(
+                    viewModel = sentenceViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenWord = { word ->
+                        navController.navigate(WordDetailRoute(query = word))
+                    },
+                    onOpenDirectPhrase = { phrase ->
+                        navController.navigate(WordDetailRoute(query = phrase)) {
+                            popUpTo<SentenceLookupRoute> { inclusive = true }
+                        }
                     },
                     onOpenLanguages = { navController.navigate(LanguagesRoute) }
                 )

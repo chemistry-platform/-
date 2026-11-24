@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -38,6 +40,8 @@ import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Accent
+import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.ConfusableWordDetail
@@ -81,10 +87,14 @@ import com.example.domain.model.WordEntry
 import com.example.ui.components.AppIcons
 import com.example.ui.components.ChipWrapRow
 import com.example.ui.components.CompactWordAudioButtons
+import com.example.ui.components.DirectionToggleChip
 import com.example.ui.components.HighlightedEnglishText
+import com.example.ui.components.InteractiveWordChip
 import com.example.ui.components.LoadingCard
 import com.example.ui.components.PosChip
 import com.example.ui.components.PronunciationPillButton
+import com.example.ui.components.UsageLabelChip
+import com.example.ui.viewmodel.UsageFilterOption
 import com.example.ui.viewmodel.WordDetailViewModel
 import java.net.URLEncoder
 import java.util.Locale
@@ -95,6 +105,7 @@ fun WordDetailScreen(
     audioManager: AudioPlayerManager,
     onBack: () -> Unit,
     onOpenWord: (query: String, fallbackBase: String?, highlightChip: String?) -> Unit,
+    onOpenSentence: (String) -> Unit,
     onOpenLanguages: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -103,6 +114,8 @@ fun WordDetailScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isFavorite by viewModel.isFavorite.collectAsStateWithLifecycle()
     val currentQuery by viewModel.currentQuery.collectAsStateWithLifecycle()
+    val direction by viewModel.direction.collectAsStateWithLifecycle()
+    val usageFilter by viewModel.usageFilter.collectAsStateWithLifecycle()
     val highlightedChip by viewModel.highlightedChip.collectAsStateWithLifecycle()
     val confusableDetails by viewModel.confusableDetails.collectAsStateWithLifecycle()
     val isLoadingConfusables by viewModel.isLoadingConfusables.collectAsStateWithLifecycle()
@@ -110,6 +123,9 @@ fun WordDetailScreen(
     val missingLanguagePackBanner by viewModel.missingLanguagePackBanner.collectAsStateWithLifecycle()
 
     var inlineQuery by remember(currentQuery) { mutableStateOf(currentQuery) }
+    val onToggleDirection = remember(viewModel) { { viewModel.toggleDirectionManual() } }
+    val onToggleFavorite = remember(viewModel) { { viewModel.toggleFavorite() } }
+    val onSelectUsageFilter = remember(viewModel) { { opt: UsageFilterOption -> viewModel.selectUsageFilter(opt) } }
 
     Box(
         modifier = modifier
@@ -149,7 +165,6 @@ fun WordDetailScreen(
                     onValueChange = { inlineQuery = it },
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 8.dp)
                         .testTag("word_detail_search_field"),
                     placeholder = {
                         Text(
@@ -181,10 +196,20 @@ fun WordDetailScreen(
                         onSearch = {
                             val trimmed = inlineQuery.trim()
                             if (trimmed.isNotEmpty()) {
-                                viewModel.loadWord(trimmed)
+                                if (ArabicTextUtils.isMultiWordQuery(trimmed)) {
+                                    onOpenSentence(trimmed)
+                                } else {
+                                    viewModel.loadWord(trimmed)
+                                }
                             }
                         }
                     )
+                )
+
+                DirectionToggleChip(
+                    direction = direction,
+                    onToggle = onToggleDirection,
+                    modifier = Modifier.padding(end = 4.dp)
                 )
             }
 
@@ -280,13 +305,34 @@ fun WordDetailScreen(
                     var relatedExpanded by remember(entry.word) { mutableStateOf(false) }
                     var tatoebaExpanded by remember(entry.word) { mutableStateOf(true) }
 
+                    val hasAnyUsageLabels by remember(entry) {
+                        derivedStateOf {
+                            entry.posGroups.any { g ->
+                                g.senses.any { it.usageLabels.isNotEmpty() || it.spellingVariantLabel != null }
+                            }
+                        }
+                    }
+
+                    val filteredPosGroups by remember(entry, usageFilter) {
+                        derivedStateOf {
+                            if (usageFilter == UsageFilterOption.ALL) {
+                                entry.posGroups
+                            } else {
+                                entry.posGroups.mapNotNull { group ->
+                                    val kept = group.senses.filter { matchesUsageFilter(it, usageFilter) }
+                                    if (kept.isEmpty()) null else group.copy(senses = kept)
+                                }
+                            }
+                        }
+                    }
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         if (state.isUpdating) {
-                            item {
+                            item(key = "updating_bar", contentType = "progress") {
                                 LinearProgressIndicator(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -297,29 +343,64 @@ fun WordDetailScreen(
                             }
                         }
 
-                        if (!state.arabicQuery.isNullOrBlank()) {
-                            item {
-                                Text(
-                                    text = "نتائج البحث لـ \"${state.arabicQuery}\"",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = colors.secondary
-                                )
-                            }
-                        }
-
-                        // Headword Card with Standalone Human US/UK Audio Buttons (Section 3)
-                        item {
+                        // Headword Card with Human US/UK Audio Buttons (English only) + ML Kit Machine Translation Chips
+                        item(key = "headword_${entry.word}", contentType = "headword") {
                             HeadwordCard(
                                 entry = entry,
                                 isFavorite = isFavorite,
                                 audioManager = audioManager,
-                                onToggleFavorite = { viewModel.toggleFavorite() }
+                                onToggleFavorite = onToggleFavorite,
+                                onOpenWord = { w -> onOpenWord(w, null, null) },
+                                onOpenLanguages = onOpenLanguages
                             )
                         }
 
-                        // Sense-by-sense layout grouped by POS (Section 4.2)
-                        entry.posGroups.forEach { group ->
-                            item(key = "pos_${group.partOfSpeech}") {
+                        // Section 13.3: Usage filter row (hidden if NO sense has a label)
+                        if (hasAnyUsageLabels) {
+                            item(key = "usage_filter_row", contentType = "filter_row") {
+                                LazyRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(
+                                        items = UsageFilterOption.entries,
+                                        key = { it.name },
+                                        contentType = { "usage_filter_chip" }
+                                    ) { option ->
+                                        val selected = option == usageFilter
+                                        FilterChip(
+                                            selected = selected,
+                                            onClick = { onSelectUsageFilter(option) },
+                                            label = {
+                                                Text(
+                                                    text = option.labelAr,
+                                                    style = MaterialTheme.typography.labelMedium
+                                                )
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = colors.primaryContainer,
+                                                selectedLabelColor = colors.primary
+                                            ),
+                                            modifier = Modifier.testTag("usage_filter_${option.name}")
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (filteredPosGroups.isEmpty() && usageFilter != UsageFilterOption.ALL) {
+                            item(key = "empty_filter_notice", contentType = "notice") {
+                                Text(
+                                    text = "لا توجد معانٍ مطابقة لتصفية \"${usageFilter.labelAr}\".",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        // Sense-by-sense layout grouped by POS (Section 4.2 + 13)
+                        filteredPosGroups.forEach { group ->
+                            item(key = "pos_${group.partOfSpeech}", contentType = "pos_group") {
                                 PosGroupCard(
                                     word = entry.word,
                                     group = group,
@@ -338,7 +419,7 @@ fun WordDetailScreen(
                         }
 
                         if (entry.hasWiktionaryAttribution) {
-                            item {
+                            item(key = "wiktionary_attribution", contentType = "attribution") {
                                 Text(
                                     text = "المصدر: ويكاموس (Wiktionary) • CC BY-SA 4.0",
                                     style = MaterialTheme.typography.labelSmall,
@@ -349,7 +430,7 @@ fun WordDetailScreen(
 
                         // 4.3 Collapsible Sections (shown ONLY if real data exists)
                         if (entry.synonyms.isNotEmpty()) {
-                            item {
+                            item(key = "sec_synonyms", contentType = "chips_section") {
                                 CollapsibleChipsSection(
                                     title = stringResource(R.string.synonyms_title),
                                     expanded = synonymsExpanded,
@@ -361,7 +442,7 @@ fun WordDetailScreen(
                         }
 
                         if (entry.antonyms.isNotEmpty()) {
-                            item {
+                            item(key = "sec_antonyms", contentType = "chips_section") {
                                 CollapsibleChipsSection(
                                     title = stringResource(R.string.antonyms_title),
                                     expanded = antonymsExpanded,
@@ -373,7 +454,7 @@ fun WordDetailScreen(
                         }
 
                         if (entry.collocations.isNotEmpty()) {
-                            item {
+                            item(key = "sec_collocations", contentType = "chips_section") {
                                 CollapsibleChipsSection(
                                     title = stringResource(R.string.collocations_title),
                                     expanded = collocationsExpanded,
@@ -385,7 +466,7 @@ fun WordDetailScreen(
                         }
 
                         if (entry.prepositionsAndPhrases.isNotEmpty()) {
-                            item {
+                            item(key = "sec_phrases", contentType = "chips_section") {
                                 CollapsibleChipsSection(
                                     title = stringResource(R.string.phrases_title),
                                     expanded = phrasesExpanded,
@@ -401,7 +482,7 @@ fun WordDetailScreen(
                         }
 
                         if (entry.wordFamily.isNotEmpty()) {
-                            item {
+                            item(key = "sec_word_family", contentType = "word_family_section") {
                                 CollapsibleSectionCard(
                                     title = stringResource(R.string.similar_words_title),
                                     count = entry.wordFamily.size,
@@ -439,9 +520,9 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // 4.10 Easily Confused Words (lazy fetch ONLY when expanded)
+                        // 4.10 Easily Confused Words (lazy fetch + background page-1 prefetch)
                         if (entry.confusableCandidates.isNotEmpty()) {
-                            item {
+                            item(key = "sec_confusables", contentType = "confusables_section") {
                                 CollapsibleSectionCard(
                                     title = stringResource(R.string.confusables_title),
                                     count = entry.confusableCandidates.size,
@@ -509,7 +590,7 @@ fun WordDetailScreen(
 
                         // More general & specific terms
                         if (entry.generalTerms.isNotEmpty() || entry.specificTerms.isNotEmpty()) {
-                            item {
+                            item(key = "sec_general_specific", contentType = "general_specific_section") {
                                 CollapsibleSectionCard(
                                     title = stringResource(R.string.hypernyms_hyponyms_title),
                                     count = entry.generalTerms.size + entry.specificTerms.size,
@@ -546,7 +627,7 @@ fun WordDetailScreen(
 
                         // Related words (ml + rel_trg)
                         if (entry.relatedWords.isNotEmpty()) {
-                            item {
+                            item(key = "sec_related", contentType = "chips_section") {
                                 CollapsibleChipsSection(
                                     title = stringResource(R.string.related_terms_title),
                                     expanded = relatedExpanded,
@@ -557,9 +638,9 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Tatoeba More Example Sentences
+                        // Tatoeba More Example Sentences (Human Translations)
                         if (entry.tatoebaSentences.isNotEmpty()) {
-                            item {
+                            item(key = "sec_tatoeba", contentType = "tatoeba_section") {
                                 CollapsibleSectionCard(
                                     title = stringResource(R.string.more_examples_title),
                                     count = entry.tatoebaSentences.size,
@@ -569,15 +650,31 @@ fun WordDetailScreen(
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         entry.tatoebaSentences.forEachIndexed { idx, pair ->
                                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                HighlightedEnglishText(
-                                                    sentence = pair.english,
-                                                    targetWord = entry.word
-                                                )
-                                                Text(
-                                                    text = pair.arabic,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = colors.onSurfaceVariant
-                                                )
+                                                if (entry.isArabicWord) {
+                                                    Text(
+                                                        text = pair.arabic,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        color = colors.onSurface
+                                                    )
+                                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                        Text(
+                                                            text = pair.english,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = colors.onSurfaceVariant,
+                                                            modifier = Modifier.fillMaxWidth()
+                                                        )
+                                                    }
+                                                } else {
+                                                    HighlightedEnglishText(
+                                                        sentence = pair.english,
+                                                        targetWord = entry.word
+                                                    )
+                                                    Text(
+                                                        text = pair.arabic,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = colors.onSurfaceVariant
+                                                    )
+                                                }
                                             }
                                             if (idx < entry.tatoebaSentences.lastIndex) {
                                                 HorizontalDivider(color = colors.outline, thickness = 1.dp)
@@ -595,58 +692,60 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // 4.7 Links Only (Longman + Cambridge via Custom Tabs)
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        val slug = encodeDictSlug(entry.word)
-                                        openInCustomTab(
-                                            context,
-                                            "https://www.ldoceonline.com/dictionary/$slug"
-                                        )
-                                    },
-                                    border = BorderStroke(1.dp, colors.outline),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(48.dp)
-                                        .testTag("open_longman_button")
+                        // 4.7 Links Only (Longman + Cambridge via Custom Tabs for English entries)
+                        if (!entry.isArabicWord) {
+                            item(key = "external_dict_links", contentType = "external_links") {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = AppIcons.OpenInNew,
-                                        contentDescription = null,
-                                        tint = colors.secondary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Longman", color = colors.onSurface)
-                                }
+                                    OutlinedButton(
+                                        onClick = {
+                                            val slug = encodeDictSlug(entry.word)
+                                            openInCustomTab(
+                                                context,
+                                                "https://www.ldoceonline.com/dictionary/$slug"
+                                            )
+                                        },
+                                        border = BorderStroke(1.dp, colors.outline),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .testTag("open_longman_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = AppIcons.OpenInNew,
+                                            contentDescription = null,
+                                            tint = colors.secondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Longman", color = colors.onSurface)
+                                    }
 
-                                OutlinedButton(
-                                    onClick = {
-                                        val slug = encodeDictSlug(entry.word)
-                                        openInCustomTab(
-                                            context,
-                                            "https://dictionary.cambridge.org/dictionary/english/$slug"
+                                    OutlinedButton(
+                                        onClick = {
+                                            val slug = encodeDictSlug(entry.word)
+                                            openInCustomTab(
+                                                context,
+                                                "https://dictionary.cambridge.org/dictionary/english/$slug"
+                                            )
+                                        },
+                                        border = BorderStroke(1.dp, colors.outline),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .testTag("open_cambridge_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = AppIcons.OpenInNew,
+                                            contentDescription = null,
+                                            tint = colors.secondary,
+                                            modifier = Modifier.size(16.dp)
                                         )
-                                    },
-                                    border = BorderStroke(1.dp, colors.outline),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(48.dp)
-                                        .testTag("open_cambridge_button")
-                                ) {
-                                    Icon(
-                                        imageVector = AppIcons.OpenInNew,
-                                        contentDescription = null,
-                                        tint = colors.secondary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Cambridge", color = colors.onSurface)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Cambridge", color = colors.onSurface)
+                                    }
                                 }
                             }
                         }
@@ -657,16 +756,19 @@ fun WordDetailScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HeadwordCard(
     entry: WordEntry,
     isFavorite: Boolean,
     audioManager: AudioPlayerManager,
-    onToggleFavorite: () -> Unit
+    onToggleFavorite: () -> Unit,
+    onOpenWord: (String) -> Unit,
+    onOpenLanguages: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val hasUs = audioManager.hasAudioOrCache(entry.word, Accent.US, entry.usAudioUrl)
-    val hasUk = audioManager.hasAudioOrCache(entry.word, Accent.UK, entry.ukAudioUrl)
+    val hasUs = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.US, entry.usAudioUrl)
+    val hasUk = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.UK, entry.ukAudioUrl)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -683,9 +785,11 @@ private fun HeadwordCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (entry.isArabicWord) LayoutDirection.Rtl else LayoutDirection.Ltr
+                ) {
                     Text(
-                        text = entry.word,
+                        text = entry.displayWord.ifBlank { entry.word },
                         style = MaterialTheme.typography.displayLarge,
                         color = colors.onSurface,
                         modifier = Modifier.weight(1f),
@@ -738,7 +842,8 @@ private fun HeadwordCard(
                 }
             }
 
-            if (hasUs || hasUk || entry.usIpa.isNotBlank() || entry.ukIpa.isNotBlank()) {
+            // Section 15.6: NEVER show US/UK pronunciation buttons for Arabic words
+            if (!entry.isArabicWord && (hasUs || hasUk || entry.usIpa.isNotBlank() || entry.ukIpa.isNotBlank())) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -778,6 +883,55 @@ private fun HeadwordCard(
                                 .weight(1f)
                                 .testTag("pronounce_uk_button")
                         )
+                    }
+                }
+            }
+
+            // Section 15.2 & 15.3: Machine translation chips (Arabic <-> English)
+            if (entry.machineTranslations.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    UsageLabelChip(text = "ترجمة آلية")
+                    if (entry.isArabicWord) {
+                        ChipWrapRow(
+                            items = entry.machineTranslations,
+                            onChipClick = onOpenWord
+                        )
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            entry.machineTranslations.forEach { arText ->
+                                Surface(
+                                    color = colors.surfaceVariant,
+                                    shape = RoundedCornerShape(999.dp),
+                                    border = BorderStroke(1.dp, colors.outline)
+                                ) {
+                                    Text(
+                                        text = arText,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colors.onSurface,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (entry.missingTranslationPack) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "حمّل حزمة العربية والإنجليزية لعرض الترجمة الآلية.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onOpenLanguages) {
+                        Text("اللغات", color = colors.secondary)
                     }
                 }
             }
@@ -854,6 +1008,7 @@ private fun PosGroupCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SenseCardContent(
     word: String,
@@ -865,8 +1020,30 @@ private fun SenseCardContent(
     val colors = MaterialTheme.colorScheme
     val defKey = "def_${sense.partOfSpeech}_${sense.index}"
     val translatedDef = arabicTranslations[defKey]
+    val defIsArabic = ArabicTextUtils.containsArabicLetters(sense.definition)
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Section 13.1 & 13.2: Per-sense usage labels & spelling variant chips
+        if (sense.usageLabels.isNotEmpty() || sense.spellingVariantLabel != null) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                sense.usageLabels.forEach { label ->
+                    UsageLabelChip(text = label)
+                }
+                sense.spellingVariantLabel?.let { variantLabel ->
+                    UsageLabelChip(text = variantLabel)
+                }
+                sense.otherSpellingWord?.let { otherWord ->
+                    InteractiveWordChip(
+                        word = otherWord,
+                        onClick = { onOpenWord(otherWord) }
+                    )
+                }
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
@@ -891,7 +1068,9 @@ private fun SenseCardContent(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (defIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                ) {
                     Text(
                         text = sense.definition,
                         style = MaterialTheme.typography.bodyMedium,
@@ -900,10 +1079,12 @@ private fun SenseCardContent(
                     )
                 }
 
-                ArabicHelpToggle(
-                    translatedText = translatedDef,
-                    onToggle = { onToggleArabicHelp(defKey, sense.definition) }
-                )
+                if (!defIsArabic) {
+                    ArabicHelpToggle(
+                        translatedText = translatedDef,
+                        onToggle = { onToggleArabicHelp(defKey, sense.definition) }
+                    )
+                }
             }
         }
 
@@ -911,6 +1092,7 @@ private fun SenseCardContent(
         sense.examples.forEachIndexed { exIdx, example ->
             val exKey = "ex_${sense.partOfSpeech}_${sense.index}_$exIdx"
             val translatedEx = arabicTranslations[exKey]
+            val exIsArabic = ArabicTextUtils.containsArabicLetters(example)
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -921,14 +1103,23 @@ private fun SenseCardContent(
                     modifier = Modifier.padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    HighlightedEnglishText(
-                        sentence = example,
-                        targetWord = word
-                    )
-                    ArabicHelpToggle(
-                        translatedText = translatedEx,
-                        onToggle = { onToggleArabicHelp(exKey, example) }
-                    )
+                    if (exIsArabic) {
+                        Text(
+                            text = example,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        HighlightedEnglishText(
+                            sentence = example,
+                            targetWord = word
+                        )
+                        ArabicHelpToggle(
+                            translatedText = translatedEx,
+                            onToggle = { onToggleArabicHelp(exKey, example) }
+                        )
+                    }
                 }
             }
         }
@@ -1183,6 +1374,16 @@ private fun CollapsibleSectionCard(
                 }
             }
         }
+    }
+}
+
+private fun matchesUsageFilter(sense: SenseItem, filter: UsageFilterOption): Boolean {
+    return when (filter) {
+        UsageFilterOption.ALL -> true
+        UsageFilterOption.FORMAL -> "رسمي" in sense.usageLabels
+        UsageFilterOption.INFORMAL -> "غير رسمي" in sense.usageLabels
+        UsageFilterOption.US -> "أمريكي" in sense.usageLabels || sense.spellingVariantLabel == "إملاء أمريكي"
+        UsageFilterOption.UK -> "بريطاني" in sense.usageLabels || sense.spellingVariantLabel == "إملاء بريطاني"
     }
 }
 

@@ -259,6 +259,60 @@ fun RegisterBadge(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun UsageLabelChip(text: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        color = colors.tertiaryContainer,
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, colors.tertiary.copy(alpha = 0.35f))
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.tertiary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+    }
+}
+
+@Composable
+fun DirectionToggleChip(
+    direction: LanguageDirection,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val desc = if (direction == LanguageDirection.AR_TO_EN) {
+        "عربي ⇄ إنجليزي"
+    } else {
+        "إنجليزي ⇄ عربي"
+    }
+    Surface(
+        modifier = modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onToggle)
+            .testTag("manual_direction_toggle"),
+        color = colors.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.6f))
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = desc,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = colors.secondary,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 fun PosChip(text: String, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Surface(
@@ -407,6 +461,7 @@ fun LoadingCard(message: String = "جاري التحميل...", modifier: Modifi
 enum class BottomNavTab(val labelRes: Int, val testTag: String) {
     HOME(R.string.nav_home, "nav_home"),
     DISCOVER(R.string.nav_discover, "nav_discover"),
+    FILES(R.string.file_translation_title, "nav_files"),
     FAVORITES(R.string.nav_favorites, "nav_favorites"),
     MORE(R.string.nav_more, "nav_more")
 }
@@ -429,6 +484,7 @@ fun AlMakhzanjiBottomBar(
                 val icon = when (tab) {
                     BottomNavTab.HOME -> if (selected) Icons.Rounded.Home else Icons.Outlined.Home
                     BottomNavTab.DISCOVER -> AppIcons.Explore
+                    BottomNavTab.FILES -> AppIcons.Description
                     BottomNavTab.FAVORITES -> if (selected) AppIcons.Bookmark else AppIcons.BookmarkBorder
                     BottomNavTab.MORE -> if (selected) Icons.Rounded.Menu else Icons.Outlined.Menu
                 }
@@ -446,8 +502,9 @@ fun AlMakhzanjiBottomBar(
                     label = {
                         Text(
                             text = stringResource(tab.labelRes),
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     },
                     colors = NavigationBarItemDefaults.colors(

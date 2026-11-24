@@ -3,6 +3,7 @@ package com.example.di
 import android.content.Context
 import com.example.core.AppUpdateManager
 import com.example.core.AudioPlayerManager
+import com.example.core.FileTranslationManager
 import com.example.core.NetworkMonitor
 import com.example.core.OfflinePackManager
 import com.example.core.TranslationManager
@@ -115,6 +116,13 @@ class AppContainer(context: Context) {
         )
     }
 
+    val fileTranslationManager: FileTranslationManager by lazy {
+        FileTranslationManager(
+            context = appContext,
+            translationManager = translationManager
+        )
+    }
+
     val offlinePackManager: OfflinePackManager by lazy {
         OfflinePackManager(
             context = appContext,
@@ -148,6 +156,7 @@ class AppContainer(context: Context) {
 
     fun release() {
         audioPlayerManager.release()
+        fileTranslationManager.close()
         translationManager.close()
     }
 }

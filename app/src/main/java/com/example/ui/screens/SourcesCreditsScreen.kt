@@ -75,6 +75,18 @@ private val openSources = listOf(
         description = "الروابط الدلالية والمفاهيم الأعم والأخص التي يعتمد عليها محرك Datamuse.",
         licenseLabel = null,
         url = "https://wordnet.princeton.edu/"
+    ),
+    CreditSource(
+        title = "PDFBox-Android (Apache PDFBox)",
+        description = "استخراج النصوص من ملفات PDF صفحة بصفحة محلياً على الجهاز بكفاءة ومن دون استهلاك مفرط للذاكرة.",
+        licenseLabel = "الترخيص: Apache License 2.0",
+        url = "https://github.com/TomRoush/PdfBox-Android"
+    ),
+    CreditSource(
+        title = "Google ML Kit (On-Device Translation & Text Recognition)",
+        description = "الترجمة الآلية المحلية لأكثر من 59 لغة، والتعرف الضوئي على الحروف اللاتينية في الصور وملفات PDF المصوّرة دون اتصال.",
+        licenseLabel = "تراخيص Google ML Kit",
+        url = "https://developers.google.com/ml-kit/terms"
     )
 )
 
