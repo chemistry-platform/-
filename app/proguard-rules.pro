@@ -102,3 +102,7 @@
 -dontwarn com.tom_roush.pdfbox.**
 -dontwarn com.tom_roush.fontbox.**
 -dontwarn org.bouncycastle.**
+# Restore broad ML Kit keep (fixes launch crash)
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keep class com.google.android.gms.internal.mlkit-** { *; }
