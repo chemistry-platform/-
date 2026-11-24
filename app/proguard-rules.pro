@@ -65,7 +65,13 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# App DTOs & Audio/TTS
+# App DTOs, Updater & Audio/TTS
+-keep class com.example.BuildConfig { *; }
+-keep class com.example.core.AppUpdateManager { *; }
+-keep class com.example.core.AppUpdateManager$** { *; }
+-keep class com.example.core.UpdateUiState { *; }
+-keep class com.example.core.UpdateUiState$** { *; }
+-keep class org.json.** { *; }
 -keep class com.example.data.remote.*Dto { *; }
 -keep class com.example.data.remote.*JsonAdapter { *; }
 -keep class com.example.core.AudioPlayerManager { *; }

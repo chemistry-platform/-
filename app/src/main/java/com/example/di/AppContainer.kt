@@ -11,7 +11,6 @@ import com.example.core.UserSettingsPreferences
 import com.example.data.local.AppDatabase
 import com.example.data.remote.DatamuseApi
 import com.example.data.remote.FreeDictionaryApi
-import com.example.data.remote.GitHubReleaseApi
 import com.example.data.remote.TatoebaApi
 import com.example.data.remote.WiktionaryApi
 import com.example.data.repository.LexiconRepository
@@ -82,15 +81,6 @@ class AppContainer(context: Context) {
             .create(TatoebaApi::class.java)
     }
 
-    private val gitHubReleaseApi: GitHubReleaseApi by lazy {
-        Retrofit.Builder()
-            .baseUrl("https://api.github.com/")
-            .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-            .create(GitHubReleaseApi::class.java)
-    }
-
     private val database: AppDatabase by lazy {
         AppDatabase.getInstance(appContext)
     }
@@ -141,7 +131,6 @@ class AppContainer(context: Context) {
     val appUpdateManager: AppUpdateManager by lazy {
         AppUpdateManager(
             context = appContext,
-            gitHubApi = gitHubReleaseApi,
             okHttpClient = okHttpClient,
             networkMonitor = networkMonitor
         )

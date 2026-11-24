@@ -8,7 +8,6 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import com.example.BuildConfig
-import com.example.data.remote.GitHubReleaseApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,17 +18,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import retrofit2.HttpException
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 
 private const val TAG = "AppUpdateManager"
-private const val PREFS_NAME = "app_updater_prefs"
-private const val KEY_LAST_CHECK_MS = "last_check_timestamp_ms"
 private const val TARGET_ASSET_NAME = "app-release.apk"
-private val APP_RELEASE_TAG_REGEX = Regex("^v(\\d+)\\.(\\d+)\\.(\\d+)$")
+private const val MSG_UP_TO_DATE = "التطبيق محدّث"
+private const val MSG_CHECK_FAILED = "تعذر التحقق، حاول لاحقاً"
+private const val MSG_OFFLINE = "لا يوجد اتصال بالإنترنت"
 
 sealed interface UpdateUiState {
     data object Idle : UpdateUiState
@@ -42,23 +44,21 @@ sealed interface UpdateUiState {
 
 class AppUpdateManager(
     context: Context,
-    private val gitHubApi: GitHubReleaseApi,
     private val okHttpClient: OkHttpClient,
     private val networkMonitor: NetworkMonitor
 ) {
     private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _uiState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val uiState: StateFlow<UpdateUiState> = _uiState.asStateFlow()
 
     private var checkJob: Job? = null
+    private var activeCheckForced: Boolean = false
     private var downloadJob: Job? = null
     private var pendingInstallFile: File? = null
 
     fun checkForUpdate(force: Boolean = false) {
-        if (checkJob?.isActive == true) return
         if (_uiState.value is UpdateUiState.Downloading ||
             _uiState.value is UpdateUiState.UpdateAvailable ||
             _uiState.value is UpdateUiState.NeedsInstallPermission
@@ -66,84 +66,91 @@ class AppUpdateManager(
             return
         }
 
-        val repoParts = BuildConfig.GITHUB_REPO.split("/")
-        if (repoParts.size != 2 ||
-            repoParts[0].isBlank() ||
-            repoParts[1].isBlank() ||
-            BuildConfig.GITHUB_REPO == "unknown/unknown"
-        ) {
+        if (checkJob?.isActive == true) {
+            if (force && !activeCheckForced) {
+                checkJob?.cancel()
+            } else {
+                return
+            }
+        }
+
+        val repoPair = parseRepoOwnerAndName(BuildConfig.GITHUB_REPO)
+        if (repoPair == null) {
+            Log.e(TAG, "Update check aborted: invalid BuildConfig.GITHUB_REPO='${BuildConfig.GITHUB_REPO}'")
             if (force) {
-                _uiState.value = UpdateUiState.Message("التطبيق محدّث")
+                _uiState.value = UpdateUiState.Message(MSG_CHECK_FAILED)
             }
             return
         }
 
         if (!networkMonitor.isOnline()) {
+            Log.e(TAG, "Update check aborted: device is offline")
             if (force) {
-                _uiState.value = UpdateUiState.Message("لا يوجد اتصال بالإنترنت")
+                _uiState.value = UpdateUiState.Message(MSG_OFFLINE)
             }
             return
         }
 
+        val (owner, repo) = repoPair
+        val url = buildReleasesApiUrl(owner, repo)
+        val installedCode = BuildConfig.VERSION_CODE
+        val installedName = BuildConfig.VERSION_NAME
+
+        activeCheckForced = force
         checkJob = scope.launch {
             if (force) {
                 _uiState.value = UpdateUiState.Checking
             }
             try {
-                val releases = withContext(Dispatchers.IO) {
-                    gitHubApi.getReleases(
-                        owner = repoParts[0].trim(),
-                        repo = repoParts[1].trim()
+                Log.d(
+                    TAG,
+                    "Checking updates for repo=$owner/$repo installed=$installedName ($installedCode) url=$url"
+                )
+                val outcome = withContext(Dispatchers.IO) {
+                    fetchAndEvaluateReleases(
+                        okHttpClient = okHttpClient,
+                        url = url,
+                        installedVersionCode = installedCode,
+                        userAgent = "Al-Makhzanji-Android-Updater/$installedName"
                     )
                 }
 
-                prefs.edit().putLong(KEY_LAST_CHECK_MS, System.currentTimeMillis()).apply()
-
-                val bestMatch = releases
-                    .asSequence()
-                    .filter { it.draft != true && it.prerelease != true }
-                    .mapNotNull { release ->
-                        val parsed = parseAppReleaseTag(release.tagName) ?: return@mapNotNull null
-                        val apkUrl = release.assets.orEmpty().firstOrNull { asset ->
-                            asset.name.equals(TARGET_ASSET_NAME, ignoreCase = true) &&
-                                !asset.browserDownloadUrl.isNullOrBlank()
-                        }?.browserDownloadUrl ?: return@mapNotNull null
-                        Triple(parsed, release, apkUrl)
+                when (outcome) {
+                    is UpdateCheckOutcome.UpdateAvailable -> {
+                        Log.d(
+                            TAG,
+                            "Update available: remote=${outcome.tagName} (${outcome.versionCode}) > installed=$installedCode"
+                        )
+                        _uiState.value = UpdateUiState.UpdateAvailable(outcome.downloadUrl)
                     }
-                    .maxWithOrNull { a, b -> compareVersions(a.first, b.first) }
-
-                if (bestMatch != null &&
-                    isNewerThanInstalled(bestMatch.first)
-                ) {
-                    _uiState.value = UpdateUiState.UpdateAvailable(bestMatch.third)
-                } else {
-                    _uiState.value = if (force) {
-                        UpdateUiState.Message("التطبيق محدّث")
-                    } else {
-                        UpdateUiState.Idle
+                    is UpdateCheckOutcome.UpToDate -> {
+                        Log.d(TAG, "App is up to date (installed=$installedCode)")
+                        _uiState.value = if (force) {
+                            UpdateUiState.Message(MSG_UP_TO_DATE)
+                        } else {
+                            UpdateUiState.Idle
+                        }
+                    }
+                    is UpdateCheckOutcome.Error -> {
+                        Log.e(TAG, "GitHub release check failed: ${outcome.reason}", outcome.throwable)
+                        _uiState.value = if (force) {
+                            UpdateUiState.Message(MSG_CHECK_FAILED)
+                        } else {
+                            UpdateUiState.Idle
+                        }
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: HttpException) {
-                Log.w(TAG, "GitHub release check HTTP ${e.code()}", e)
-                if (force) {
-                    val msg = when (e.code()) {
-                        404 -> "التطبيق محدّث"
-                        403, 429 -> "تم تجاوز حد الطلبات مؤقتاً، حاول لاحقاً"
-                        else -> "تعذر التحقق من التحديث حالياً"
-                    }
-                    _uiState.value = UpdateUiState.Message(msg)
-                } else {
-                    _uiState.value = UpdateUiState.Idle
-                }
             } catch (e: Exception) {
-                Log.w(TAG, "GitHub release check failed", e)
+                Log.e(TAG, "Unexpected exception during update check", e)
                 _uiState.value = if (force) {
-                    UpdateUiState.Message("تعذر التحقق من التحديث حالياً")
+                    UpdateUiState.Message(MSG_CHECK_FAILED)
                 } else {
                     UpdateUiState.Idle
                 }
+            } finally {
+                activeCheckForced = false
             }
         }
     }
@@ -153,7 +160,7 @@ class AppUpdateManager(
         val downloadUrl = current.downloadUrl
 
         if (!networkMonitor.isOnline()) {
-            _uiState.value = UpdateUiState.Message("لا يوجد اتصال بالإنترنت")
+            _uiState.value = UpdateUiState.Message(MSG_OFFLINE)
             return
         }
 
@@ -168,7 +175,9 @@ class AppUpdateManager(
 
                     val request = Request.Builder()
                         .url(downloadUrl)
-                        .header("User-Agent", "Al-Makhzanji-Android-Updater")
+                        .cacheControl(CacheControl.FORCE_NETWORK)
+                        .header("Cache-Control", "no-cache")
+                        .header("User-Agent", "Al-Makhzanji-Android-Updater/${BuildConfig.VERSION_NAME}")
                         .build()
 
                     okHttpClient.newCall(request).execute().use { response ->
@@ -282,37 +291,167 @@ class AppUpdateManager(
         }
     }
 
-    private data class SemVer(val major: Int, val minor: Int, val patch: Int)
+    internal sealed interface UpdateCheckOutcome {
+        data class UpdateAvailable(
+            val downloadUrl: String,
+            val tagName: String,
+            val versionCode: Int
+        ) : UpdateCheckOutcome
 
-    private fun parseAppReleaseTag(tagName: String?): SemVer? {
-        val raw = tagName?.trim() ?: return null
-        if (raw.equals("dictionary-pack", ignoreCase = true)) return null
-        val match = APP_RELEASE_TAG_REGEX.matchEntire(raw) ?: return null
-        val major = match.groupValues[1].toIntOrNull() ?: return null
-        val minor = match.groupValues[2].toIntOrNull() ?: return null
-        val patch = match.groupValues[3].toIntOrNull() ?: return null
-        return SemVer(major, minor, patch)
+        data object UpToDate : UpdateCheckOutcome
+
+        data class Error(
+            val reason: String,
+            val throwable: Throwable? = null
+        ) : UpdateCheckOutcome
     }
 
-    private fun compareVersions(a: SemVer, b: SemVer): Int {
-        if (a.major != b.major) return a.major.compareTo(b.major)
-        if (a.minor != b.minor) return a.minor.compareTo(b.minor)
-        return a.patch.compareTo(b.patch)
-    }
-
-    private fun isNewerThanInstalled(remote: SemVer): Boolean {
-        // CI builds use versionCode = run_number and versionName = 1.0.<run_number>
-        // Compare against VERSION_CODE when major.minor matches 1.0, and also compare parsed versionName.
-        val installedMatch = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)").find(BuildConfig.VERSION_NAME)
-        val installed = if (installedMatch != null) {
-            SemVer(
-                installedMatch.groupValues[1].toIntOrNull() ?: 1,
-                installedMatch.groupValues[2].toIntOrNull() ?: 0,
-                installedMatch.groupValues[3].toIntOrNull() ?: BuildConfig.VERSION_CODE
-            )
-        } else {
-            SemVer(1, 0, BuildConfig.VERSION_CODE)
+    companion object {
+        internal fun parseRepoOwnerAndName(rawRepo: String?): Pair<String, String>? {
+            val trimmed = rawRepo?.trim() ?: return null
+            if (trimmed.isEmpty() || trimmed.equals("unknown/unknown", ignoreCase = true)) {
+                return null
+            }
+            val parts = trimmed.split("/")
+            if (parts.size != 2) return null
+            val owner = parts[0].trim()
+            val repo = parts[1].trim()
+            if (owner.isEmpty() || repo.isEmpty()) return null
+            return owner to repo
         }
-        return compareVersions(remote, installed) > 0 || remote.patch > BuildConfig.VERSION_CODE
+
+        internal fun buildReleasesApiUrl(owner: String, repo: String): String {
+            return "https://api.github.com/repos/$owner/$repo/releases?per_page=30"
+        }
+
+        internal fun fetchAndEvaluateReleases(
+            okHttpClient: OkHttpClient,
+            url: String,
+            installedVersionCode: Int,
+            userAgent: String
+        ): UpdateCheckOutcome {
+            return try {
+                val request = Request.Builder()
+                    .url(url)
+                    .cacheControl(CacheControl.FORCE_NETWORK)
+                    .header("Cache-Control", "no-cache, no-store, max-age=0")
+                    .header("Pragma", "no-cache")
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", userAgent)
+                    .build()
+
+                okHttpClient.newCall(request).execute().use { response ->
+                    val rawBody = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        return UpdateCheckOutcome.Error(
+                            reason = "HTTP ${response.code} from $url: ${rawBody.take(300)}"
+                        )
+                    }
+                    evaluateReleasesJson(
+                        jsonBody = rawBody,
+                        installedVersionCode = installedVersionCode
+                    )
+                }
+            } catch (e: Exception) {
+                UpdateCheckOutcome.Error(
+                    reason = "Network or I/O error calling $url: ${e.message}",
+                    throwable = e
+                )
+            }
+        }
+
+        /**
+         * Parses GitHub releases JSON purely using org.json (no reflection) so R8 never breaks it.
+         * Extracts the integer after the last dot in tag_name (e.g. v1.0.5 -> 5) and compares against
+         * BuildConfig.VERSION_CODE, ignoring draft, prerelease, and dictionary-pack releases.
+         */
+        internal fun evaluateReleasesJson(
+            jsonBody: String,
+            installedVersionCode: Int
+        ): UpdateCheckOutcome {
+            val trimmed = jsonBody.trim()
+            if (trimmed.isEmpty()) {
+                return UpdateCheckOutcome.Error("Empty response body from GitHub releases API")
+            }
+
+            if (trimmed.startsWith("{")) {
+                val message = runCatching {
+                    JSONObject(trimmed).optString("message", "").trim()
+                }.getOrNull().orEmpty()
+                return UpdateCheckOutcome.Error(
+                    if (message.isNotEmpty()) {
+                        "GitHub API returned error object: $message"
+                    } else {
+                        "Expected JSON array of releases but received JSON object"
+                    }
+                )
+            }
+
+            val releasesArray = try {
+                JSONArray(trimmed)
+            } catch (e: JSONException) {
+                return UpdateCheckOutcome.Error(
+                    reason = "Failed parsing GitHub releases JSONArray: ${e.message}",
+                    throwable = e
+                )
+            }
+
+            var bestTag = ""
+            var bestVersionCode = -1
+            var bestApkUrl: String? = null
+
+            for (i in 0 until releasesArray.length()) {
+                val releaseObj = releasesArray.optJSONObject(i) ?: continue
+                if (releaseObj.optBoolean("draft", false)) continue
+                if (releaseObj.optBoolean("prerelease", false)) continue
+
+                val tagName = releaseObj.optString("tag_name", "").trim()
+                if (tagName.isEmpty()) continue
+                if (tagName.equals("dictionary-pack", ignoreCase = true) ||
+                    tagName.contains("dictionary-pack", ignoreCase = true)
+                ) {
+                    continue
+                }
+
+                val versionCode = parseVersionAfterLastDot(tagName) ?: continue
+                val assetsArray = releaseObj.optJSONArray("assets") ?: continue
+                var apkUrl: String? = null
+                for (j in 0 until assetsArray.length()) {
+                    val assetObj = assetsArray.optJSONObject(j) ?: continue
+                    val assetName = assetObj.optString("name", "").trim()
+                    val downloadUrl = assetObj.optString("browser_download_url", "").trim()
+                    if (assetName.equals(TARGET_ASSET_NAME, ignoreCase = true) && downloadUrl.isNotEmpty()) {
+                        apkUrl = downloadUrl
+                        break
+                    }
+                }
+                if (apkUrl == null) continue
+
+                if (versionCode > bestVersionCode) {
+                    bestVersionCode = versionCode
+                    bestTag = tagName
+                    bestApkUrl = apkUrl
+                }
+            }
+
+            return if (bestApkUrl != null && bestVersionCode > installedVersionCode) {
+                UpdateCheckOutcome.UpdateAvailable(
+                    downloadUrl = bestApkUrl,
+                    tagName = bestTag,
+                    versionCode = bestVersionCode
+                )
+            } else {
+                UpdateCheckOutcome.UpToDate
+            }
+        }
+
+        internal fun parseVersionAfterLastDot(tagName: String?): Int? {
+            val raw = tagName?.trim() ?: return null
+            if (raw.isEmpty() || raw.contains("dictionary-pack", ignoreCase = true)) return null
+            val lastDot = raw.lastIndexOf('.')
+            if (lastDot < 0 || lastDot >= raw.length - 1) return null
+            val suffix = raw.substring(lastDot + 1).trim()
+            return suffix.toIntOrNull()
+        }
     }
 }

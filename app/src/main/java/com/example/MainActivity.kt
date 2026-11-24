@@ -20,6 +20,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -141,11 +142,15 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    val isOnHomeScreen by rememberUpdatedState(currentDestination?.hasRoute<HomeRoute>() == true)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 updateManager.onHostResumed()
                 appContainer.audioPlayerManager.refreshTtsVoiceAvailability()
+                if (isOnHomeScreen) {
+                    updateManager.checkForUpdate(force = false)
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -161,6 +166,17 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
         currentDestination?.hasRoute<FavoritesRoute>() == true -> BottomNavTab.FAVORITES
         currentDestination?.hasRoute<MoreRoute>() == true -> BottomNavTab.MORE
         else -> null
+    }
+
+    // Automatic background check on app launch and every time Home screen becomes active
+    LaunchedEffect(Unit) {
+        updateManager.checkForUpdate(force = false)
+    }
+
+    LaunchedEffect(backStackEntry) {
+        if (currentDestination?.hasRoute<HomeRoute>() == true) {
+            updateManager.checkForUpdate(force = false)
+        }
     }
 
     LaunchedEffect(updateUiState) {
