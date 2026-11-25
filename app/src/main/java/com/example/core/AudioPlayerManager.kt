@@ -55,6 +55,7 @@ class AudioPlayerManager(
     private val audioCacheDir = File(appContext.filesDir, "audio_cache").apply {
         if (!exists()) mkdirs()
     }
+    private val failedAudioUrls = java.util.Collections.synchronizedSet(HashSet<String>())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var mediaPlayer: MediaPlayer? = null
@@ -858,19 +859,19 @@ class AudioPlayerManager(
     }
 
     fun prefetchWordAudio(word: String, usAudioUrl: String?, ukAudioUrl: String?) {
-        val usUrl = normalizeAudioUrl(usAudioUrl)
-        val ukUrl = normalizeAudioUrl(ukAudioUrl)
+        val usUrl = normalizeAudioUrl(usAudioUrl)?.takeIf { it !in failedAudioUrls }
+        val ukUrl = normalizeAudioUrl(ukAudioUrl)?.takeIf { it !in failedAudioUrls }
         if (usUrl == null && ukUrl == null) return
 
         scope.launch(Dispatchers.IO) {
             runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
-            if (usUrl != null) {
+            if (usUrl != null && usUrl !in failedAudioUrls) {
                 val usFile = cacheFileFor(word, Accent.US, usUrl)
                 if (!usFile.exists() || usFile.length() == 0L) {
                     runCatching { downloadToCache(usUrl, usFile) }
                 }
             }
-            if (ukUrl != null) {
+            if (ukUrl != null && ukUrl !in failedAudioUrls) {
                 val ukFile = cacheFileFor(word, Accent.UK, ukUrl)
                 if (!ukFile.exists() || ukFile.length() == 0L) {
                     runCatching { downloadToCache(ukUrl, ukFile) }
@@ -880,7 +881,8 @@ class AudioPlayerManager(
     }
 
     fun hasAudioOrCache(word: String, accent: Accent, audioUrl: String?): Boolean {
-        if (normalizeAudioUrl(audioUrl) != null) return true
+        val normalized = normalizeAudioUrl(audioUrl)
+        if (normalized != null && normalized !in failedAudioUrls) return true
         return findExistingWordCacheFile(word, accent) != null
     }
 
@@ -973,6 +975,7 @@ class AudioPlayerManager(
     }
 
     private fun downloadToCache(url: String, targetFile: File): File? {
+        if (url in failedAudioUrls) return null
         val tempFile = File(audioCacheDir, "${targetFile.name}.tmp")
         if (tempFile.exists()) tempFile.delete()
         return try {
@@ -983,12 +986,16 @@ class AudioPlayerManager(
 
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "HTTP ${response.code} downloading audio: $url")
+                    if (response.code == 404 || response.code == 410) {
+                        failedAudioUrls.add(url)
+                    }
+                    Log.w(TAG, "HTTP ${response.code} downloading optional audio: $url")
                     return null
                 }
                 val contentType = response.header("Content-Type")?.lowercase(Locale.US).orEmpty()
                 if (contentType.startsWith("text/") || contentType.contains("json")) {
-                    Log.e(TAG, "Unexpected non-audio Content-Type ($contentType) for: $url")
+                    failedAudioUrls.add(url)
+                    Log.w(TAG, "Unexpected non-audio Content-Type ($contentType) for: $url")
                     return null
                 }
                 val body = response.body ?: return null
@@ -1009,7 +1016,7 @@ class AudioPlayerManager(
                 null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Audio download exception for $url", e)
+            Log.w(TAG, "Optional audio download skipped for $url: ${e.message}")
             tempFile.delete()
             null
         }
