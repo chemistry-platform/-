@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.InputDocumentType
@@ -75,6 +76,7 @@ import com.example.core.LanguagePackInfo
 import com.example.core.TranslatedPageResult
 import com.example.ui.components.AppIcons
 import com.example.ui.components.AudioSpeedSelector
+import com.example.ui.components.HighlightableSentencesText
 import com.example.ui.components.LongTextAudioBar
 import com.example.ui.components.UsageLabelChip
 import com.example.ui.viewmodel.FileTranslationViewModel
@@ -93,6 +95,7 @@ fun FileTranslationScreen(
     val languages by viewModel.languages.collectAsStateWithLifecycle()
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
     val ttsProgress by audioManager.ttsProgress.collectAsStateWithLifecycle()
+    val readerState by audioManager.readerState.collectAsStateWithLifecycle()
     val audioSpeed by audioManager.audioSpeed.collectAsStateWithLifecycle()
 
     var pickingForSource by remember { mutableStateOf<Boolean?>(null) }
@@ -516,9 +519,15 @@ fun FileTranslationScreen(
                     targetIsArabic = ArabicTextUtils.containsArabicLetters(page.translatedText),
                     playingKey = playingKey,
                     ttsProgress = ttsProgress,
+                    readerState = readerState,
                     audioSpeed = audioSpeed,
                     onSelectSpeed = { audioManager.setAudioSpeed(it) },
-                    onSpeakText = { text, key -> audioManager.playSentenceAudio(text, null, key) },
+                    onSpeakText = { text, key -> audioManager.startLongReading(key = key, text = text) },
+                    onPauseSpeech = { audioManager.pauseLongReading() },
+                    onResumeSpeech = { audioManager.resumeLongReading() },
+                    onSkipPrevious = { audioManager.skipPrevious() },
+                    onSkipNext = { audioManager.skipNext() },
+                    onSelectAccent = { audioManager.switchReaderAccent(it) },
                     onStopSpeech = { audioManager.stopPlayback() }
                 )
             }
@@ -665,9 +674,15 @@ private fun TranslatedPageCard(
     targetIsArabic: Boolean,
     playingKey: String?,
     ttsProgress: AudioPlayerManager.TtsProgress?,
+    readerState: AudioPlayerManager.ReaderState,
     audioSpeed: Float,
     onSelectSpeed: (Float) -> Unit,
     onSpeakText: (text: String, key: String) -> Unit,
+    onPauseSpeech: () -> Unit,
+    onResumeSpeech: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSkipNext: () -> Unit,
+    onSelectAccent: (Accent) -> Unit,
     onStopSpeech: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
@@ -732,7 +747,13 @@ private fun TranslatedPageCard(
                                 audioKey = "file_orig_${page.pageNumber}",
                                 playingKey = playingKey,
                                 ttsProgress = ttsProgress,
+                                readerState = readerState,
                                 onSpeak = { onSpeakText(page.originalText, "file_orig_${page.pageNumber}") },
+                                onPause = onPauseSpeech,
+                                onResume = onResumeSpeech,
+                                onSkipPrevious = onSkipPrevious,
+                                onSkipNext = onSkipNext,
+                                onSelectAccent = onSelectAccent,
                                 onStop = onStopSpeech,
                                 modifier = Modifier.weight(1f)
                             )
@@ -743,7 +764,13 @@ private fun TranslatedPageCard(
                                 audioKey = "file_trans_${page.pageNumber}",
                                 playingKey = playingKey,
                                 ttsProgress = ttsProgress,
+                                readerState = readerState,
                                 onSpeak = { onSpeakText(page.translatedText, "file_trans_${page.pageNumber}") },
+                                onPause = onPauseSpeech,
+                                onResume = onResumeSpeech,
+                                onSkipPrevious = onSkipPrevious,
+                                onSkipNext = onSkipNext,
+                                onSelectAccent = onSelectAccent,
                                 onStop = onStopSpeech,
                                 modifier = Modifier.weight(1f)
                             )
@@ -761,7 +788,13 @@ private fun TranslatedPageCard(
                                     audioKey = "file_orig_${page.pageNumber}",
                                     playingKey = playingKey,
                                     ttsProgress = ttsProgress,
+                                    readerState = readerState,
                                     onSpeak = { onSpeakText(page.originalText, "file_orig_${page.pageNumber}") },
+                                    onPause = onPauseSpeech,
+                                    onResume = onResumeSpeech,
+                                    onSkipPrevious = onSkipPrevious,
+                                    onSkipNext = onSkipNext,
+                                    onSelectAccent = onSelectAccent,
                                     onStop = onStopSpeech,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -774,7 +807,13 @@ private fun TranslatedPageCard(
                                     audioKey = "file_trans_${page.pageNumber}",
                                     playingKey = playingKey,
                                     ttsProgress = ttsProgress,
+                                    readerState = readerState,
                                     onSpeak = { onSpeakText(page.translatedText, "file_trans_${page.pageNumber}") },
+                                    onPause = onPauseSpeech,
+                                    onResume = onResumeSpeech,
+                                    onSkipPrevious = onSkipPrevious,
+                                    onSkipNext = onSkipNext,
+                                    onSelectAccent = onSelectAccent,
                                     onStop = onStopSpeech,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -795,12 +834,19 @@ private fun PageTextColumn(
     audioKey: String,
     playingKey: String?,
     ttsProgress: AudioPlayerManager.TtsProgress?,
+    readerState: AudioPlayerManager.ReaderState,
     onSpeak: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSkipNext: () -> Unit,
+    onSelectAccent: (Accent) -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
     val isThisPlaying = playingKey == audioKey
+    val isActiveReader = isThisPlaying && readerState.isActive
     Surface(
         modifier = modifier,
         color = colors.surfaceVariant,
@@ -821,19 +867,25 @@ private fun PageTextColumn(
                     isPlaying = isThisPlaying,
                     ttsProgress = ttsProgress,
                     onPlayClick = onSpeak,
-                    onStopClick = onStop
+                    onStopClick = onStop,
+                    readerState = readerState,
+                    onPauseClick = onPause,
+                    onResumeClick = onResume,
+                    onSkipPreviousClick = onSkipPrevious,
+                    onSkipNextClick = onSkipNext,
+                    onSelectAccent = onSelectAccent,
+                    isEnglishContent = !isArabic
                 )
             }
-            CompositionLocalProvider(
-                LocalLayoutDirection provides if (isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
-            ) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurface,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+            HighlightableSentencesText(
+                text = text,
+                isArabic = isArabic,
+                isActiveReader = isActiveReader,
+                activeSentenceIndex = readerState.currentIndex,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurface,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

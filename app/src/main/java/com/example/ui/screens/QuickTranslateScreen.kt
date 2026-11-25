@@ -459,8 +459,8 @@ private fun SuggestionResultRow(
             }
             if (!suggestion.isArabic) {
                 CompactWordAudioButtons(
-                    hasUsAudio = hasUs,
-                    hasUkAudio = hasUk,
+                    hasUsAudio = true,
+                    hasUkAudio = true,
                     onPlayUs = {
                         audioManager.playHumanPronunciation(
                             word = suggestion.word,

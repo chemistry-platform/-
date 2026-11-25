@@ -47,15 +47,21 @@ class Section12And19Test {
 
     @Test
     fun audioSpeedOptions_sanitizesAndFormatsSupportedSpeeds() {
+        assertEquals(0.5f, AudioSpeedOptions.sanitize(0.4f), 0.001f)
         assertEquals(0.75f, AudioSpeedOptions.sanitize(0.7f), 0.001f)
         assertEquals(1.0f, AudioSpeedOptions.sanitize(1.0f), 0.001f)
         assertEquals(1.25f, AudioSpeedOptions.sanitize(1.22f), 0.001f)
-        assertEquals(1.5f, AudioSpeedOptions.sanitize(2.0f), 0.001f)
+        assertEquals(1.5f, AudioSpeedOptions.sanitize(1.5f), 0.001f)
+        assertEquals(1.75f, AudioSpeedOptions.sanitize(1.75f), 0.001f)
+        assertEquals(2.0f, AudioSpeedOptions.sanitize(3.0f), 0.001f)
 
+        assertEquals("0.5x", AudioSpeedOptions.formatLabel(0.5f))
         assertEquals("0.75x", AudioSpeedOptions.formatLabel(0.75f))
         assertEquals("1x", AudioSpeedOptions.formatLabel(1.0f))
         assertEquals("1.25x", AudioSpeedOptions.formatLabel(1.25f))
         assertEquals("1.5x", AudioSpeedOptions.formatLabel(1.5f))
+        assertEquals("1.75x", AudioSpeedOptions.formatLabel(1.75f))
+        assertEquals("2x", AudioSpeedOptions.formatLabel(2.0f))
     }
 
     @Test
@@ -65,17 +71,20 @@ class Section12And19Test {
         assertEquals(Accent.US, prefs.sentenceAccent.value)
         assertTrue(prefs.showArabicTranslations.value)
         assertTrue(prefs.showMachineTranslationLabel.value)
+        assertFalse(prefs.literalTranslation.value)
 
-        prefs.setAudioSpeed(1.25f)
+        prefs.setAudioSpeed(1.75f)
         prefs.setSentenceAccent(Accent.UK)
         prefs.setShowArabicTranslations(false)
         prefs.setShowMachineTranslationLabel(false)
+        prefs.setLiteralTranslation(true)
 
         val reloaded = UserSettingsPreferences(context)
-        assertEquals(1.25f, reloaded.audioSpeed.value, 0.001f)
+        assertEquals(1.75f, reloaded.audioSpeed.value, 0.001f)
         assertEquals(Accent.UK, reloaded.sentenceAccent.value)
         assertFalse(reloaded.showArabicTranslations.value)
         assertFalse(reloaded.showMachineTranslationLabel.value)
+        assertTrue(reloaded.literalTranslation.value)
     }
 
     @Test

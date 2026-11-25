@@ -76,17 +76,21 @@ class AppUpdateManager(
 
         val repoPair = parseRepoOwnerAndName(BuildConfig.GITHUB_REPO)
         if (repoPair == null) {
-            Log.e(TAG, "Update check aborted: invalid BuildConfig.GITHUB_REPO='${BuildConfig.GITHUB_REPO}'")
             if (force) {
+                Log.w(TAG, "Manual update check unavailable: BuildConfig.GITHUB_REPO='${BuildConfig.GITHUB_REPO}'")
                 _uiState.value = UpdateUiState.Message(MSG_CHECK_FAILED)
+            } else {
+                Log.d(TAG, "Background update check skipped: BuildConfig.GITHUB_REPO='${BuildConfig.GITHUB_REPO}'")
             }
             return
         }
 
         if (!networkMonitor.isOnline()) {
-            Log.e(TAG, "Update check aborted: device is offline")
             if (force) {
+                Log.w(TAG, "Manual update check skipped: device is offline")
                 _uiState.value = UpdateUiState.Message(MSG_OFFLINE)
+            } else {
+                Log.d(TAG, "Background update check skipped: device is offline")
             }
             return
         }

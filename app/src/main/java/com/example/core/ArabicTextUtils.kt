@@ -12,6 +12,7 @@ data class ExtractedUsageInfo(
 object ArabicTextUtils {
 
     private val ARABIC_DIACRITICS_REGEX = Regex("[\\u064B-\\u065F\\u0670\\u06D6-\\u06ED\\u0640]")
+    private val ARABIC_HARAKAT_ONLY_REGEX = Regex("[\\u064B-\\u065F\\u0670]")
     private val MULTI_SPACE_REGEX = Regex("\\s+")
 
     private val USAGE_SPAN_REGEX = Regex(
@@ -43,6 +44,36 @@ object ArabicTextUtils {
         }
         return false
     }
+
+    fun hasArabicDiacritics(text: String): Boolean =
+        ARABIC_HARAKAT_ONLY_REGEX.containsMatchIn(text)
+
+    /**
+     * Canonicalizes tashkeel order (shadda before vowel mark) and strips tatweel so
+     * two differently ordered vocalizations like "مَرَّ" and "مَرَّ" match identically
+     * while preserving distinct vocalizations ("مُرّ" != "مَرَّ").
+     */
+    fun canonicalizeArabicWithDiacritics(text: String): String {
+        val noTatweel = text.trim().replace("\u0640", "").replace(MULTI_SPACE_REGEX, " ")
+        val out = StringBuilder(noTatweel.length)
+        var i = 0
+        while (i < noTatweel.length) {
+            val ch = noTatweel[i]
+            out.append(ch)
+            if (i + 1 < noTatweel.length && isArabicVowelMark(ch) && noTatweel[i + 1] == '\u0651') {
+                // Swap vowel mark + shadda -> shadda + vowel mark
+                out.setCharAt(out.length - 1, '\u0651')
+                out.append(ch)
+                i += 2
+            } else {
+                i++
+            }
+        }
+        return out.toString().trim()
+    }
+
+    private fun isArabicVowelMark(ch: Char): Boolean =
+        ch in '\u064B'..'\u0650' || ch == '\u0652' || ch == '\u0670'
 
     /**
      * Section 15.2: Strip tashkeel (diacritics) and tatweel, preserve أ/إ/آ for initial Wiktionary lookup.
@@ -200,12 +231,24 @@ object ArabicTextUtils {
             "formal" -> "رسمي"
             "informal", "colloquial" -> "غير رسمي"
             "slang" -> "عامية"
-            "literary" -> "أدبي"
-            "archaic", "dated" -> "قديم"
+            "literary", "poetic" -> "أدبي"
+            "archaic", "dated", "obsolete" -> "قديم"
             "rare" -> "نادر"
-            "offensive", "derogatory" -> "مسيء"
+            "offensive", "derogatory", "pejorative" -> "مسيء"
             "vulgar" -> "بذيء"
             "technical" -> "فني"
+            "figurative", "figuratively", "metaphorical" -> "مجازي"
+            "idiomatic" -> "اصطلاحي"
+            "transitive" -> "متعدٍّ"
+            "intransitive" -> "لازم"
+            "computing", "software", "programming", "computer science" -> "حوسبة"
+            "finance", "banking", "economics", "business", "commerce" -> "أعمال ومالية"
+            "law", "legal" -> "قانون"
+            "medicine", "medical", "anatomy" -> "طب"
+            "sports", "baseball", "cricket", "football", "athletics" -> "رياضة"
+            "grammar", "linguistics" -> "نحو ولغة"
+            "mathematics", "math" -> "رياضيات"
+            "nautical", "maritime" -> "بحري"
             "us", "u.s.", "american", "north american", "us spelling" -> "أمريكي"
             "uk", "u.k.", "british", "uk spelling", "british spelling" -> "بريطاني"
             "australian", "australia" -> "أسترالي"

@@ -782,6 +782,82 @@ object AppIcons {
         }
     }
 
+    val PlayArrow: ImageVector by lazy {
+        vector24("PlayArrow") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(8f, 5f)
+                verticalLineToRelative(14f)
+                lineToRelative(11f, -7f)
+                close()
+            }
+        }
+    }
+
+    val Pause: ImageVector by lazy {
+        vector24("Pause") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(6f, 19f)
+                horizontalLineToRelative(4f)
+                verticalLineTo(5f)
+                horizontalLineTo(6f)
+                verticalLineToRelative(14f)
+                close()
+                moveTo(14f, 5f)
+                verticalLineToRelative(14f)
+                horizontalLineToRelative(4f)
+                verticalLineTo(5f)
+                horizontalLineToRelative(-4f)
+                close()
+            }
+        }
+    }
+
+    val Stop: ImageVector by lazy {
+        vector24("Stop") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(6f, 6f)
+                horizontalLineToRelative(12f)
+                verticalLineToRelative(12f)
+                horizontalLineTo(6f)
+                close()
+            }
+        }
+    }
+
+    val SkipNext: ImageVector by lazy {
+        vector24("SkipNext") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(6f, 18f)
+                lineToRelative(8.5f, -6f)
+                lineTo(6f, 6f)
+                verticalLineToRelative(12f)
+                close()
+                moveTo(16f, 6f)
+                verticalLineToRelative(12f)
+                horizontalLineToRelative(2f)
+                verticalLineTo(6f)
+                horizontalLineToRelative(-2f)
+                close()
+            }
+        }
+    }
+
+    val SkipPrevious: ImageVector by lazy {
+        vector24("SkipPrevious") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(6f, 6f)
+                horizontalLineToRelative(2f)
+                verticalLineToRelative(12f)
+                horizontalLineTo(6f)
+                close()
+                moveTo(9.5f, 12f)
+                lineToRelative(8.5f, 6f)
+                verticalLineTo(6f)
+                close()
+            }
+        }
+    }
+
     private inline fun vector24(
         name: String,
         block: ImageVector.Builder.() -> Unit

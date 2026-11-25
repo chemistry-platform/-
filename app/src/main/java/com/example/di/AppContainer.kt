@@ -12,6 +12,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.remote.DatamuseApi
 import com.example.data.remote.FreeDictionaryApi
 import com.example.data.remote.TatoebaApi
+import com.example.data.remote.WikimediaCommonsApi
 import com.example.data.remote.WiktionaryApi
 import com.example.data.repository.LexiconRepository
 import com.example.ui.theme.ThemePreferences
@@ -81,6 +82,14 @@ class AppContainer(context: Context) {
             .create(TatoebaApi::class.java)
     }
 
+    private val wikimediaCommonsApi: WikimediaCommonsApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://commons.wikimedia.org/")
+            .client(okHttpClient)
+            .build()
+            .create(WikimediaCommonsApi::class.java)
+    }
+
     private val database: AppDatabase by lazy {
         AppDatabase.getInstance(appContext)
     }
@@ -100,7 +109,8 @@ class AppContainer(context: Context) {
     val translationManager: TranslationManager by lazy {
         TranslationManager(
             context = appContext,
-            networkMonitor = networkMonitor
+            networkMonitor = networkMonitor,
+            settingsPreferences = userSettingsPreferences
         )
     }
 
@@ -143,6 +153,7 @@ class AppContainer(context: Context) {
             datamuseApi = datamuseApi,
             wiktionaryApi = wiktionaryApi,
             tatoebaApi = tatoebaApi,
+            wikimediaCommonsApi = wikimediaCommonsApi,
             translationManager = translationManager,
             audioPlayerManager = audioPlayerManager,
             networkMonitor = networkMonitor

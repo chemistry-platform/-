@@ -84,6 +84,7 @@ fun MoreScreen(
     val sentenceAccent by viewModel.sentenceAccent.collectAsStateWithLifecycle()
     val showArabicTranslations by viewModel.showArabicTranslations.collectAsStateWithLifecycle()
     val showMachineTranslationLabel by viewModel.showMachineTranslationLabel.collectAsStateWithLifecycle()
+    val literalTranslation by viewModel.literalTranslation.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
 
     var showClearHistoryDialog by remember { mutableStateOf(false) }
@@ -339,6 +340,34 @@ fun MoreScreen(
                                 onCheckedChange = { viewModel.setShowMachineTranslationLabel(it) },
                                 colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
                                 modifier = Modifier.testTag("setting_show_machine_label_switch")
+                            )
+                        }
+
+                        HorizontalDivider(color = colors.outline)
+
+                        // Literal word-by-word translation toggle (OFF = contextual by default)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "ترجمة حرفية",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.onSurface
+                                )
+                                Text(
+                                    text = "ترجمة كل كلمة على حدة بدلاً من الترجمة حسب السياق",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = literalTranslation,
+                                onCheckedChange = { viewModel.setLiteralTranslation(it) },
+                                colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
+                                modifier = Modifier.testTag("setting_literal_translation_switch")
                             )
                         }
                     }

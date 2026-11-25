@@ -8,7 +8,8 @@ import retrofit2.http.Query
 data class DatamuseWordDto(
     val word: String? = null,
     val score: Int? = null,
-    val tags: List<String>? = null
+    val tags: List<String>? = null,
+    val defs: List<String>? = null
 )
 
 interface DatamuseApi {
@@ -97,5 +98,12 @@ interface DatamuseApi {
     suspend fun getSimilarSpelling(
         @Query("sp") word: String,
         @Query("max") max: Int = 15
+    ): List<DatamuseWordDto>
+
+    @GET("words")
+    suspend fun getWordNetDefinitions(
+        @Query("sp") word: String,
+        @Query("md") metadata: String = "dp",
+        @Query("max") max: Int = 1
     ): List<DatamuseWordDto>
 }

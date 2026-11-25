@@ -12,6 +12,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +37,9 @@ import java.security.MessageDigest
 import java.util.Locale
 
 private const val TAG = "AudioPlayerManager"
-private const val NO_AUDIO_MESSAGE = "لا يوجد صوت متاح"
+private const val NO_AUDIO_MESSAGE = "لا يوجد صوت متاح على هذا الجهاز"
+private const val NO_ENGLISH_VOICE_MESSAGE = "محرك النطق الإنجليزي غير مثبت على الجهاز"
+private const val NO_ARABIC_VOICE_MESSAGE = "الصوت العربي غير مثبت على الجهاز"
 
 enum class Accent(val code: String) {
     US("us"),
@@ -68,11 +71,27 @@ class AudioPlayerManager(
         val totalChunks: Int
     )
 
+    data class ReaderState(
+        val key: String? = null,
+        val sentences: List<String> = emptyList(),
+        val currentIndex: Int = 0,
+        val isActive: Boolean = false,
+        val isPaused: Boolean = false,
+        val accent: Accent = Accent.US,
+        val isArabic: Boolean = false
+    )
+
     private val _ttsProgress = MutableStateFlow<TtsProgress?>(null)
     val ttsProgress: StateFlow<TtsProgress?> = _ttsProgress.asStateFlow()
 
+    private val _readerState = MutableStateFlow(ReaderState(accent = settingsPreferences.sentenceAccent.value))
+    val readerState: StateFlow<ReaderState> = _readerState.asStateFlow()
+
     private val _ttsMissingEnglishVoice = MutableStateFlow(false)
     val ttsMissingEnglishVoice: StateFlow<Boolean> = _ttsMissingEnglishVoice.asStateFlow()
+
+    private val _ttsMissingAccentLabel = MutableStateFlow<String?>(null)
+    val ttsMissingAccentLabel: StateFlow<String?> = _ttsMissingAccentLabel.asStateFlow()
 
     private val _audioMessage = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val audioMessage: SharedFlow<String> = _audioMessage.asSharedFlow()
@@ -85,15 +104,21 @@ class AudioPlayerManager(
     @Volatile private var pendingChunks: List<String> = emptyList()
     @Volatile private var nextChunkToEnqueue: Int = 0
     @Volatile private var totalChunksInBatch: Int = 0
+    @Volatile private var activeReaderSessionId: Long = 0L
 
     fun setAudioSpeed(speed: Float) {
         settingsPreferences.setAudioSpeed(speed)
         val sanitized = settingsPreferences.audioSpeed.value
         applySpeedToActiveMediaPlayer(sanitized)
         runCatching { tts?.setSpeechRate(sanitized) }
+
+        val activeReader = _readerState.value
+        if (activeReader.isActive && !activeReader.isPaused && activeReader.sentences.isNotEmpty()) {
+            speakReaderSentenceAt(activeReader.currentIndex)
+        }
     }
 
-    fun stopPlayback() {
+    fun stopPlayback(fromService: Boolean = false) {
         playbackJob?.cancel()
         playbackJob = null
         synchronized(ttsQueueLock) {
@@ -101,16 +126,24 @@ class AudioPlayerManager(
             pendingChunks = emptyList()
             nextChunkToEnqueue = 0
             totalChunksInBatch = 0
+            activeReaderSessionId = 0L
         }
         stopMediaPlayerOnly()
         stopTtsOnly()
         _playingKey.value = null
         _ttsProgress.value = null
+        val wasReaderActive = _readerState.value.isActive
+        _readerState.value = ReaderState(accent = settingsPreferences.sentenceAccent.value)
+        if (!fromService && wasReaderActive) {
+            stopReaderService()
+        }
     }
 
     /**
-     * Single words use real human US/UK recordings ONLY (never TTS).
-     * Shows "لا يوجد صوت متاح" if no recording or playback fails.
+     * Pronounces a single word in US or UK accent:
+     * 1) Real human recording (Free Dictionary API / Wikimedia Commons / cache).
+     * 2) Automatic fallback to TextToSpeech in requested US/UK accent (and if that regional voice
+     *    isn't installed, warns briefly and uses any installed English voice).
      */
     fun playHumanPronunciation(
         word: String,
@@ -118,63 +151,97 @@ class AudioPlayerManager(
         audioUrl: String?,
         key: String
     ) {
-        val normalizedUrl = normalizeAudioUrl(audioUrl)
-        val cachedFile = cacheFileFor(word, accent)
-        if (normalizedUrl == null && (!cachedFile.exists() || cachedFile.length() == 0L)) {
-            Log.w(TAG, "No human audio URL or cached file for $word (${accent.code})")
-            emitNoAudioAvailable()
+        val cleaned = word.trim()
+        if (cleaned.isEmpty()) {
+            emitMessage(NO_AUDIO_MESSAGE)
             return
         }
-
+        val normalizedUrl = normalizeAudioUrl(audioUrl)
         stopPlayback()
         playbackJob = scope.launch {
             _playingKey.value = key
             try {
-                val fileToPlay = withContext(Dispatchers.IO) {
-                    if (cachedFile.exists() && cachedFile.length() > 0L) {
-                        cachedFile
-                    } else if (normalizedUrl != null) {
-                        downloadToCache(normalizedUrl, cachedFile)
-                    } else {
-                        null
+                val existingCache = findExistingWordCacheFile(cleaned, accent)
+                val targetFile = if (existingCache != null) {
+                    existingCache
+                } else if (normalizedUrl != null) {
+                    val downloadTarget = cacheFileFor(cleaned, accent, normalizedUrl)
+                    withContext(Dispatchers.IO) {
+                        downloadToCache(normalizedUrl, downloadTarget)
                     }
-                }
-                if (fileToPlay != null && fileToPlay.exists() && fileToPlay.length() > 0L) {
-                    playLocalFile(fileToPlay)
                 } else {
-                    Log.e(TAG, "Human pronunciation unavailable/download failed for $word ($normalizedUrl)")
-                    _playingKey.value = null
-                    emitNoAudioAvailable()
+                    null
+                }
+
+                if (targetFile != null && targetFile.exists() && targetFile.length() > 0L) {
+                    playLocalFile(
+                        file = targetFile,
+                        onCodecOrPlayErrorFallback = {
+                            launchTtsWordFallback(cleaned, accent, key)
+                        }
+                    )
+                } else {
+                    if (normalizedUrl != null) {
+                        Log.w(TAG, "Word human audio download failed ($normalizedUrl), falling back to TTS ($accent)")
+                    }
+                    playWordViaTts(cleaned, accent, key)
                 }
             } catch (e: CancellationException) {
                 _playingKey.value = null
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Audio playback failed for $word (${accent.code})", e)
-                _playingKey.value = null
-                emitNoAudioAvailable()
+                Log.e(TAG, "Audio playback failed for $cleaned (${accent.code}), falling back to TTS", e)
+                playWordViaTts(cleaned, accent, key)
             }
         }
     }
 
+    private fun launchTtsWordFallback(word: String, accent: Accent, key: String) {
+        playbackJob?.cancel()
+        playbackJob = scope.launch {
+            _playingKey.value = key
+            playWordViaTts(word, accent, key)
+        }
+    }
+
+    private suspend fun playWordViaTts(word: String, accent: Accent, key: String) {
+        val ready = ensureTtsInitialized()
+        if (!ready) {
+            _playingKey.value = null
+            emitMessage(NO_ENGLISH_VOICE_MESSAGE)
+            return
+        }
+        val isArabicText = ArabicTextUtils.containsArabicLetters(word)
+        val available = withContext(Dispatchers.Default) {
+            if (isArabicText) configureArabicTtsVoice() else configureBestEnglishVoice(accent)
+        }
+        if (!available) {
+            _playingKey.value = null
+            emitMessage(if (isArabicText) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
+            return
+        }
+        _playingKey.value = key
+        speakSentenceChunks(word)
+    }
+
     /**
-     * Sentences/phrases/long texts:
-     * 1) Real human recording first if URL exists (cached locally).
-     * 2) Otherwise Android TextToSpeech with sentence chunking, maxSpeechInputLength enforcement,
-     *    sliding QUEUE_ADD window for 1000+ words, progress tracking, and non-blocking splitting.
-     * 3) Shows "لا يوجد صوت متاح" if playback/TTS is unavailable.
+     * Sentences/phrases/examples:
+     * 1) Human recording first if URL exists.
+     * 2) Otherwise Android TextToSpeech with requested US/UK accent (or user default).
      */
     fun playSentenceAudio(
         sentence: String,
         audioUrl: String? = null,
-        key: String
+        key: String,
+        accentOverride: Accent? = null
     ) {
         val cleaned = sentence.trim()
         if (cleaned.isEmpty()) {
-            emitNoAudioAvailable()
+            emitMessage(NO_AUDIO_MESSAGE)
             return
         }
 
+        val targetAccent = accentOverride ?: settingsPreferences.sentenceAccent.value
         stopPlayback()
         playbackJob = scope.launch {
             _playingKey.value = key
@@ -190,35 +257,21 @@ class AudioPlayerManager(
                         }
                     }
                     if (fileToPlay != null && fileToPlay.exists() && fileToPlay.length() > 0L) {
-                        playLocalFile(fileToPlay)
+                        playLocalFile(
+                            file = fileToPlay,
+                            onCodecOrPlayErrorFallback = {
+                                scope.launch {
+                                    _playingKey.value = key
+                                    playSentenceViaTts(cleaned, targetAccent)
+                                }
+                            }
+                        )
                         return@launch
                     } else {
                         Log.w(TAG, "Sentence human audio download failed ($normalizedUrl), falling back to TTS")
                     }
                 }
-
-                val ready = ensureTtsInitialized()
-                if (!ready) {
-                    Log.e(TAG, "TextToSpeech engine unavailable for sentence playback")
-                    _playingKey.value = null
-                    _ttsProgress.value = null
-                    emitNoAudioAvailable()
-                    return@launch
-                }
-
-                val isArabicText = ArabicTextUtils.containsArabicLetters(cleaned)
-                val available = withContext(Dispatchers.Default) {
-                    if (isArabicText) configureArabicTtsVoice() else configureBestEnglishVoice()
-                }
-                if (!available) {
-                    Log.e(TAG, "No supported TTS voice/language installed (isArabic=$isArabicText)")
-                    _playingKey.value = null
-                    _ttsProgress.value = null
-                    emitNoAudioAvailable()
-                    return@launch
-                }
-
-                speakSentenceChunks(cleaned)
+                playSentenceViaTts(cleaned, targetAccent)
             } catch (e: CancellationException) {
                 _playingKey.value = null
                 _ttsProgress.value = null
@@ -227,8 +280,243 @@ class AudioPlayerManager(
                 Log.e(TAG, "Sentence playback failed", e)
                 _playingKey.value = null
                 _ttsProgress.value = null
-                emitNoAudioAvailable()
+                emitMessage(NO_AUDIO_MESSAGE)
             }
+        }
+    }
+
+    private suspend fun playSentenceViaTts(cleaned: String, targetAccent: Accent) {
+        val ready = ensureTtsInitialized()
+        if (!ready) {
+            Log.e(TAG, "TextToSpeech engine unavailable for sentence playback")
+            _playingKey.value = null
+            _ttsProgress.value = null
+            emitMessage(NO_ENGLISH_VOICE_MESSAGE)
+            return
+        }
+
+        val isArabicText = ArabicTextUtils.containsArabicLetters(cleaned)
+        val available = withContext(Dispatchers.Default) {
+            if (isArabicText) configureArabicTtsVoice() else configureBestEnglishVoice(targetAccent)
+        }
+        if (!available) {
+            Log.e(TAG, "No supported TTS voice/language installed (isArabic=$isArabicText)")
+            _playingKey.value = null
+            _ttsProgress.value = null
+            emitMessage(if (isArabicText) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
+            return
+        }
+
+        speakSentenceChunks(cleaned)
+    }
+
+    /**
+     * Long-text reader mode:
+     * Splits into sentences, highlights active sentence, supports Pause/Resume/Skip Next/Prev/Stop,
+     * accent switching, and background playback via LongTextReaderService.
+     */
+    fun startLongReading(
+        key: String,
+        text: String,
+        accentOverride: Accent? = null
+    ) {
+        val cleaned = text.trim()
+        if (cleaned.isEmpty()) {
+            emitMessage(NO_AUDIO_MESSAGE)
+            return
+        }
+        val rawMax = runCatching { TextToSpeech.getMaxSpeechInputLength() }.getOrDefault(4000)
+        val safeMaxLen = (if (rawMax > 0) rawMax else 4000).coerceAtMost(3800)
+        val sentences = splitTextSafelyForTts(cleaned, safeMaxLen)
+        if (sentences.isEmpty()) {
+            emitMessage(NO_AUDIO_MESSAGE)
+            return
+        }
+
+        val targetAccent = accentOverride ?: settingsPreferences.sentenceAccent.value
+        val isArabic = ArabicTextUtils.containsArabicLetters(cleaned)
+
+        stopPlayback()
+        val sessionId = System.nanoTime()
+        synchronized(ttsQueueLock) {
+            activeReaderSessionId = sessionId
+        }
+        _playingKey.value = key
+        _readerState.value = ReaderState(
+            key = key,
+            sentences = sentences,
+            currentIndex = 0,
+            isActive = true,
+            isPaused = false,
+            accent = targetAccent,
+            isArabic = isArabic
+        )
+        _ttsProgress.value = TtsProgress(1, sentences.size)
+        syncReaderService(startForeground = true)
+        speakReaderSentenceAt(0)
+    }
+
+    fun pauseLongReading(fromService: Boolean = false) {
+        val state = _readerState.value
+        if (!state.isActive || state.isPaused) return
+        playbackJob?.cancel()
+        playbackJob = null
+        synchronized(ttsQueueLock) {
+            activeReaderSessionId = 0L
+        }
+        stopTtsOnly()
+        _readerState.value = state.copy(isPaused = true)
+        if (!fromService) {
+            syncReaderService(startForeground = false)
+        } else {
+            syncReaderService(startForeground = true)
+        }
+    }
+
+    fun resumeLongReading(fromService: Boolean = false) {
+        val state = _readerState.value
+        if (!state.isActive || !state.isPaused || state.sentences.isEmpty()) return
+        val sessionId = System.nanoTime()
+        synchronized(ttsQueueLock) {
+            activeReaderSessionId = sessionId
+        }
+        _readerState.value = state.copy(isPaused = false)
+        _playingKey.value = state.key
+        speakReaderSentenceAt(state.currentIndex)
+        if (!fromService) {
+            syncReaderService(startForeground = false)
+        } else {
+            syncReaderService(startForeground = true)
+        }
+    }
+
+    fun skipNext(fromService: Boolean = false) {
+        val state = _readerState.value
+        if (!state.isActive || state.sentences.isEmpty()) return
+        val nextIndex = state.currentIndex + 1
+        if (nextIndex >= state.sentences.size) {
+            stopPlayback(fromService = fromService)
+            return
+        }
+        moveReaderToIndex(nextIndex, fromService)
+    }
+
+    fun skipPrevious(fromService: Boolean = false) {
+        val state = _readerState.value
+        if (!state.isActive || state.sentences.isEmpty()) return
+        val prevIndex = (state.currentIndex - 1).coerceAtLeast(0)
+        moveReaderToIndex(prevIndex, fromService)
+    }
+
+    fun switchReaderAccent(accent: Accent) {
+        settingsPreferences.setSentenceAccent(accent)
+        val state = _readerState.value
+        if (!state.isActive) return
+        _readerState.value = state.copy(accent = accent)
+        if (!state.isPaused) {
+            speakReaderSentenceAt(state.currentIndex)
+        }
+    }
+
+    private fun moveReaderToIndex(index: Int, fromService: Boolean) {
+        val state = _readerState.value
+        val clamped = index.coerceIn(0, (state.sentences.size - 1).coerceAtLeast(0))
+        _readerState.value = state.copy(currentIndex = clamped)
+        _ttsProgress.value = TtsProgress(clamped + 1, state.sentences.size)
+        if (!state.isPaused) {
+            speakReaderSentenceAt(clamped)
+        } else {
+            stopTtsOnly()
+        }
+        if (!fromService) {
+            syncReaderService(startForeground = false)
+        } else {
+            syncReaderService(startForeground = true)
+        }
+    }
+
+    private fun speakReaderSentenceAt(index: Int) {
+        val state = _readerState.value
+        if (!state.isActive || index !in state.sentences.indices) return
+        val sentence = state.sentences[index]
+        val sessionId = System.nanoTime()
+        synchronized(ttsQueueLock) {
+            activeBatchId = 0L
+            pendingChunks = emptyList()
+            nextChunkToEnqueue = 0
+            totalChunksInBatch = 0
+            activeReaderSessionId = sessionId
+        }
+        _playingKey.value = state.key
+        _ttsProgress.value = TtsProgress(index + 1, state.sentences.size)
+
+        playbackJob?.cancel()
+        playbackJob = scope.launch {
+            try {
+                val ready = ensureTtsInitialized()
+                if (!ready) {
+                    emitMessage(if (state.isArabic) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
+                    stopPlayback()
+                    return@launch
+                }
+                val voiceOk = withContext(Dispatchers.Default) {
+                    if (state.isArabic) {
+                        configureArabicTtsVoice()
+                    } else {
+                        configureBestEnglishVoice(state.accent)
+                    }
+                }
+                if (!voiceOk) {
+                    emitMessage(if (state.isArabic) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
+                    stopPlayback()
+                    return@launch
+                }
+
+                val engine = tts ?: return@launch
+                runCatching { engine.setSpeechRate(settingsPreferences.audioSpeed.value) }
+                val uttId = formatReaderUtteranceId(sessionId, index)
+                val result = withContext(Dispatchers.Default) {
+                    runCatching {
+                        engine.speak(sentence, TextToSpeech.QUEUE_FLUSH, Bundle(), uttId)
+                    }.getOrDefault(TextToSpeech.ERROR)
+                }
+                if (result == TextToSpeech.ERROR) {
+                    Log.e(TAG, "Reader TTS speak ERROR at index=$index")
+                    emitMessage(NO_AUDIO_MESSAGE)
+                    stopPlayback()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Reader playback exception at index=$index", e)
+                emitMessage(NO_AUDIO_MESSAGE)
+                stopPlayback()
+            }
+        }
+    }
+
+    private fun syncReaderService(startForeground: Boolean) {
+        val state = _readerState.value
+        if (!state.isActive) {
+            stopReaderService()
+            return
+        }
+        runCatching {
+            val intent = LongTextReaderService.intentFor(
+                appContext,
+                if (startForeground) LongTextReaderService.ACTION_START else LongTextReaderService.ACTION_SYNC
+            )
+            if (startForeground) {
+                ContextCompat.startForegroundService(appContext, intent)
+            } else {
+                appContext.startService(intent)
+            }
+        }
+    }
+
+    private fun stopReaderService() {
+        runCatching {
+            appContext.stopService(LongTextReaderService.intentFor(appContext, LongTextReaderService.ACTION_STOP))
         }
     }
 
@@ -240,10 +528,11 @@ class AudioPlayerManager(
             val ready = ensureTtsInitialized()
             if (ready) {
                 withContext(Dispatchers.Default) {
-                    configureBestEnglishVoice()
+                    configureBestEnglishVoice(settingsPreferences.sentenceAccent.value)
                 }
             } else {
                 _ttsMissingEnglishVoice.value = true
+                _ttsMissingAccentLabel.value = null
             }
         }
     }
@@ -253,7 +542,7 @@ class AudioPlayerManager(
             val ready = if (tts != null) true else ensureTtsInitialized()
             if (ready) {
                 withContext(Dispatchers.Default) {
-                    configureBestEnglishVoice()
+                    configureBestEnglishVoice(settingsPreferences.sentenceAccent.value)
                 }
             }
         }
@@ -281,16 +570,46 @@ class AudioPlayerManager(
                 if (status == TextToSpeech.SUCCESS) {
                     instanceRef?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
-                            val parsed = parseUtteranceId(utteranceId) ?: return
-                            if (parsed.first == activeBatchId && totalChunksInBatch > 0) {
+                            val parsedBatch = parseUtteranceId(utteranceId)
+                            if (parsedBatch != null && parsedBatch.first == activeBatchId && totalChunksInBatch > 0) {
                                 _ttsProgress.value = TtsProgress(
-                                    currentChunk = (parsed.second + 1).coerceAtMost(totalChunksInBatch),
+                                    currentChunk = (parsedBatch.second + 1).coerceAtMost(totalChunksInBatch),
                                     totalChunks = totalChunksInBatch
                                 )
+                                return
+                            }
+                            val parsedReader = parseReaderUtteranceId(utteranceId)
+                            if (parsedReader != null && parsedReader.first == activeReaderSessionId) {
+                                val st = _readerState.value
+                                if (st.isActive) {
+                                    _ttsProgress.value = TtsProgress(
+                                        currentChunk = (parsedReader.second + 1).coerceAtMost(st.sentences.size.coerceAtLeast(1)),
+                                        totalChunks = st.sentences.size.coerceAtLeast(1)
+                                    )
+                                }
                             }
                         }
 
                         override fun onDone(utteranceId: String?) {
+                            val parsedReader = parseReaderUtteranceId(utteranceId)
+                            if (parsedReader != null) {
+                                val (sessionId, completedIdx) = parsedReader
+                                scope.launch {
+                                    val st = _readerState.value
+                                    if (sessionId == activeReaderSessionId && st.isActive && !st.isPaused) {
+                                        val nextIdx = completedIdx + 1
+                                        if (nextIdx < st.sentences.size) {
+                                            _readerState.value = st.copy(currentIndex = nextIdx)
+                                            syncReaderService(startForeground = false)
+                                            speakReaderSentenceAt(nextIdx)
+                                        } else {
+                                            stopPlayback()
+                                        }
+                                    }
+                                }
+                                return
+                            }
+
                             val parsed = parseUtteranceId(utteranceId) ?: return
                             val (batchId, chunkIdx) = parsed
                             var finishedAll = false
@@ -325,12 +644,12 @@ class AudioPlayerManager(
                         @Deprecated("Deprecated in Java")
                         override fun onError(utteranceId: String?) {
                             Log.e(TAG, "TTS utterance error (legacy) for $utteranceId")
-                            clearQueueOnError()
+                            handleUtteranceError(utteranceId)
                         }
 
                         override fun onError(utteranceId: String?, errorCode: Int) {
                             Log.e(TAG, "TTS utterance error code=$errorCode for $utteranceId")
-                            clearQueueOnError()
+                            handleUtteranceError(utteranceId)
                         }
                     })
                     if (!deferred.isCompleted) deferred.complete(true)
@@ -358,6 +677,18 @@ class AudioPlayerManager(
         return success
     }
 
+    private fun handleUtteranceError(utteranceId: String?) {
+        val readerParsed = parseReaderUtteranceId(utteranceId)
+        if (readerParsed != null && readerParsed.first == activeReaderSessionId) {
+            scope.launch {
+                stopPlayback()
+                emitMessage(NO_AUDIO_MESSAGE)
+            }
+            return
+        }
+        clearQueueOnError()
+    }
+
     private fun clearQueueOnError() {
         synchronized(ttsQueueLock) {
             activeBatchId = 0L
@@ -367,12 +698,11 @@ class AudioPlayerManager(
         }
         _playingKey.value = null
         _ttsProgress.value = null
-        emitNoAudioAvailable()
+        emitMessage(NO_AUDIO_MESSAGE)
     }
 
-    private fun configureBestEnglishVoice(): Boolean {
+    private fun configureBestEnglishVoice(preferredAccent: Accent): Boolean {
         val engine = tts ?: return false
-        val preferredAccent = settingsPreferences.sentenceAccent.value
         val preferredLocale = if (preferredAccent == Accent.UK) Locale.UK else Locale.US
         val preferredCountry = preferredLocale.country
 
@@ -382,33 +712,60 @@ class AudioPlayerManager(
                 !v.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
         }
 
-        val bestVoice = pickBestEnglishVoice(installedEnVoices, preferredCountry)
-        if (bestVoice != null) {
-            val langCheck = runCatching { engine.setLanguage(bestVoice.locale ?: preferredLocale) }
+        val exactVoices = installedEnVoices.filter {
+            it.locale?.country.equals(preferredCountry, ignoreCase = true)
+        }
+        val bestExact = pickBestEnglishVoice(exactVoices, preferredCountry)
+        if (bestExact != null) {
+            val langCheck = runCatching { engine.setLanguage(bestExact.locale ?: preferredLocale) }
                 .getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
             if (langCheck >= TextToSpeech.LANG_AVAILABLE) {
-                runCatching { engine.voice = bestVoice }
+                runCatching { engine.voice = bestExact }
                 _ttsMissingEnglishVoice.value = false
+                _ttsMissingAccentLabel.value = null
                 return true
             }
-            Log.w(TAG, "Selected English voice locale check returned $langCheck (${bestVoice.locale})")
         }
 
-        val langStatus = runCatching { engine.setLanguage(preferredLocale) }
+        val exactLangStatus = runCatching { engine.setLanguage(preferredLocale) }
             .getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
-        if (langStatus >= TextToSpeech.LANG_AVAILABLE) {
+        if (exactLangStatus == TextToSpeech.LANG_COUNTRY_AVAILABLE ||
+            exactLangStatus == TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE
+        ) {
             _ttsMissingEnglishVoice.value = false
+            _ttsMissingAccentLabel.value = null
             return true
         }
-        Log.e(TAG, "English TTS setLanguage($preferredLocale) failed status=$langStatus")
+
+        // Preferred regional voice is missing — flag helpful banner & fallback to any English voice
+        val missingLabel = if (preferredAccent == Accent.UK) "البريطاني (UK)" else "الأمريكي (US)"
+
+        val fallbackVoice = pickBestEnglishVoice(installedEnVoices, preferredCountry)
+        if (fallbackVoice != null) {
+            val check = runCatching { engine.setLanguage(fallbackVoice.locale ?: Locale.ENGLISH) }
+                .getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+            if (check >= TextToSpeech.LANG_AVAILABLE) {
+                runCatching { engine.voice = fallbackVoice }
+                _ttsMissingEnglishVoice.value = true
+                _ttsMissingAccentLabel.value = missingLabel
+                return true
+            }
+        }
+
+        if (exactLangStatus >= TextToSpeech.LANG_AVAILABLE) {
+            _ttsMissingEnglishVoice.value = false
+            _ttsMissingAccentLabel.value = null
+            return true
+        }
 
         val fallbackEn = runCatching { engine.setLanguage(Locale.ENGLISH) }
             .getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
         val ok = fallbackEn >= TextToSpeech.LANG_AVAILABLE
+        _ttsMissingEnglishVoice.value = true
+        _ttsMissingAccentLabel.value = if (ok) missingLabel else null
         if (!ok) {
-            Log.e(TAG, "Fallback Locale.ENGLISH setLanguage failed status=$fallbackEn")
+            Log.e(TAG, "No English TTS language/voice installed (status=$fallbackEn)")
         }
-        _ttsMissingEnglishVoice.value = !ok
         return ok
     }
 
@@ -453,7 +810,7 @@ class AudioPlayerManager(
         val engine = tts ?: run {
             _playingKey.value = null
             _ttsProgress.value = null
-            emitNoAudioAvailable()
+            emitMessage(NO_AUDIO_MESSAGE)
             return
         }
         val speed = settingsPreferences.audioSpeed.value
@@ -467,7 +824,7 @@ class AudioPlayerManager(
         if (chunks.isEmpty()) {
             _playingKey.value = null
             _ttsProgress.value = null
-            emitNoAudioAvailable()
+            emitMessage(NO_AUDIO_MESSAGE)
             return
         }
 
@@ -508,13 +865,13 @@ class AudioPlayerManager(
         scope.launch(Dispatchers.IO) {
             runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
             if (usUrl != null) {
-                val usFile = cacheFileFor(word, Accent.US)
+                val usFile = cacheFileFor(word, Accent.US, usUrl)
                 if (!usFile.exists() || usFile.length() == 0L) {
                     runCatching { downloadToCache(usUrl, usFile) }
                 }
             }
             if (ukUrl != null) {
-                val ukFile = cacheFileFor(word, Accent.UK)
+                val ukFile = cacheFileFor(word, Accent.UK, ukUrl)
                 if (!ukFile.exists() || ukFile.length() == 0L) {
                     runCatching { downloadToCache(ukUrl, ukFile) }
                 }
@@ -524,15 +881,21 @@ class AudioPlayerManager(
 
     fun hasAudioOrCache(word: String, accent: Accent, audioUrl: String?): Boolean {
         if (normalizeAudioUrl(audioUrl) != null) return true
-        val file = cacheFileFor(word, accent)
-        return file.exists() && file.length() > 0L
+        return findExistingWordCacheFile(word, accent) != null
     }
 
-    private fun playLocalFile(file: File) {
+    private fun playLocalFile(
+        file: File,
+        onCodecOrPlayErrorFallback: (() -> Unit)? = null
+    ) {
         if (!file.exists() || file.length() == 0L) {
             Log.e(TAG, "Audio file missing or empty: ${file.absolutePath}")
-            _playingKey.value = null
-            emitNoAudioAvailable()
+            if (onCodecOrPlayErrorFallback != null) {
+                onCodecOrPlayErrorFallback()
+            } else {
+                _playingKey.value = null
+                emitMessage(NO_AUDIO_MESSAGE)
+            }
             return
         }
         try {
@@ -560,8 +923,12 @@ class AudioPlayerManager(
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "MediaPlayer start failed for ${file.name}", e)
-                        _playingKey.value = null
-                        emitNoAudioAvailable()
+                        if (onCodecOrPlayErrorFallback != null) {
+                            onCodecOrPlayErrorFallback()
+                        } else {
+                            _playingKey.value = null
+                            emitMessage(NO_AUDIO_MESSAGE)
+                        }
                     }
                 }
                 setOnCompletionListener {
@@ -570,8 +937,12 @@ class AudioPlayerManager(
                 setOnErrorListener { _, what, extra ->
                     Log.e(TAG, "MediaPlayer OnError what=$what extra=$extra file=${file.name}")
                     runCatching { file.delete() }
-                    _playingKey.value = null
-                    emitNoAudioAvailable()
+                    if (onCodecOrPlayErrorFallback != null) {
+                        onCodecOrPlayErrorFallback()
+                    } else {
+                        _playingKey.value = null
+                        emitMessage(NO_AUDIO_MESSAGE)
+                    }
                     true
                 }
                 prepareAsync()
@@ -579,8 +950,12 @@ class AudioPlayerManager(
         } catch (e: Exception) {
             Log.e(TAG, "MediaPlayer setup failed for file ${file.name}", e)
             runCatching { file.delete() }
-            _playingKey.value = null
-            emitNoAudioAvailable()
+            if (onCodecOrPlayErrorFallback != null) {
+                onCodecOrPlayErrorFallback()
+            } else {
+                _playingKey.value = null
+                emitMessage(NO_AUDIO_MESSAGE)
+            }
         }
     }
 
@@ -650,19 +1025,44 @@ class AudioPlayerManager(
         }
     }
 
-    private fun emitNoAudioAvailable() {
-        _audioMessage.tryEmit(NO_AUDIO_MESSAGE)
+    private fun emitMessage(message: String) {
+        _audioMessage.tryEmit(message)
     }
 
-    private fun cacheFileFor(word: String, accent: Accent): File {
+    private fun findExistingWordCacheFile(word: String, accent: Accent): File? {
+        val digest = sha256Short(word.trim().lowercase(Locale.US))
+        for (ext in SUPPORTED_CACHE_EXTENSIONS) {
+            val candidate = File(audioCacheDir, "${digest}_${accent.code}.$ext")
+            if (candidate.exists() && candidate.length() > 0L) {
+                return candidate
+            }
+        }
+        return null
+    }
+
+    private fun cacheFileFor(word: String, accent: Accent, sourceUrl: String? = null): File {
         val normalized = word.trim().lowercase(Locale.US)
         val digest = sha256Short(normalized)
-        return File(audioCacheDir, "${digest}_${accent.code}.mp3")
+        val ext = inferAudioExtension(sourceUrl)
+        return File(audioCacheDir, "${digest}_${accent.code}.$ext")
     }
 
     private fun sentenceCacheFileFor(url: String): File {
         val digest = sha256Short(url.trim())
-        return File(audioCacheDir, "sent_${digest}.mp3")
+        val ext = inferAudioExtension(url)
+        return File(audioCacheDir, "sent_${digest}.$ext")
+    }
+
+    private fun inferAudioExtension(url: String?): String {
+        val path = url?.substringBefore('?')?.substringBefore('#')?.lowercase(Locale.US).orEmpty()
+        return when {
+            path.endsWith(".ogg") -> "ogg"
+            path.endsWith(".oga") -> "oga"
+            path.endsWith(".wav") -> "wav"
+            path.endsWith(".flac") -> "flac"
+            path.endsWith(".m4a") -> "m4a"
+            else -> "mp3"
+        }
     }
 
     private fun sha256Short(input: String): String {
@@ -690,7 +1090,11 @@ class AudioPlayerManager(
     }
 
     companion object {
+        private val SUPPORTED_CACHE_EXTENSIONS = listOf("mp3", "ogg", "oga", "wav", "flac", "m4a")
+
         private fun formatUtteranceId(batchId: Long, index: Int): String = "utt_${batchId}_$index"
+
+        private fun formatReaderUtteranceId(sessionId: Long, index: Int): String = "rdr_${sessionId}_$index"
 
         private fun parseUtteranceId(utteranceId: String?): Pair<Long, Int>? {
             if (utteranceId.isNullOrBlank() || !utteranceId.startsWith("utt_")) return null
@@ -699,6 +1103,15 @@ class AudioPlayerManager(
             val batchId = parts[1].toLongOrNull() ?: return null
             val idx = parts[2].toIntOrNull() ?: return null
             return batchId to idx
+        }
+
+        private fun parseReaderUtteranceId(utteranceId: String?): Pair<Long, Int>? {
+            if (utteranceId.isNullOrBlank() || !utteranceId.startsWith("rdr_")) return null
+            val parts = utteranceId.split('_')
+            if (parts.size != 3) return null
+            val sessionId = parts[1].toLongOrNull() ?: return null
+            val idx = parts[2].toIntOrNull() ?: return null
+            return sessionId to idx
         }
 
         internal fun splitTextSafelyForTts(text: String, maxChunkLength: Int = 3800): List<String> {
@@ -753,4 +1166,3 @@ class AudioPlayerManager(
         }
     }
 }
-

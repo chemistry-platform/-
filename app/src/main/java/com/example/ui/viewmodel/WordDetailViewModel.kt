@@ -216,7 +216,9 @@ class WordDetailViewModel(
                                 confusablePrefetchedForWord = state.entry.word
                                 prefetchFirstConfusablesPage(state.entry)
                             }
-                            if (state.entry.prepositionsAndPhrases.isNotEmpty() &&
+                            if ((state.entry.prepositionsAndPhrases.isNotEmpty() ||
+                                    state.entry.compoundExpressions.isNotEmpty() ||
+                                    state.entry.phrasalVerbsAndIdioms.isNotEmpty()) &&
                                 phrasalsLoadedForWord != state.entry.word
                             ) {
                                 phrasalsLoadedForWord = state.entry.word
@@ -235,6 +237,15 @@ class WordDetailViewModel(
                                     if (fbState is WordLoadState.Success) {
                                         _activeEntryWord.value = fbState.entry.displayWord
                                         populateChipMeanings(fbState.entry, fetchMissing = !fbState.isUpdating)
+                                        if (!fbState.isUpdating &&
+                                            (fbState.entry.prepositionsAndPhrases.isNotEmpty() ||
+                                                fbState.entry.compoundExpressions.isNotEmpty() ||
+                                                fbState.entry.phrasalVerbsAndIdioms.isNotEmpty()) &&
+                                            phrasalsLoadedForWord != fbState.entry.word
+                                        ) {
+                                            phrasalsLoadedForWord = fbState.entry.word
+                                            loadPhrasalsForEntry(fbState.entry)
+                                        }
                                     }
                                     _uiState.value = fbState
                                 }
@@ -252,6 +263,7 @@ class WordDetailViewModel(
             addAll(entry.synonyms)
             addAll(entry.antonyms)
             addAll(entry.collocations)
+            addAll(entry.compoundExpressions)
             addAll(entry.prepositionsAndPhrases)
             addAll(entry.wordFamily.map { it.word })
             addAll(entry.generalTerms)
@@ -292,14 +304,40 @@ class WordDetailViewModel(
     }
 
     private fun loadPhrasalsForEntry(entry: WordEntry) {
-        val phrases = entry.prepositionsAndPhrases.filter { it.contains(" ") }
-        if (phrases.isEmpty()) return
+        if (entry.isArabicWord) {
+            if (entry.phrasalVerbsAndIdioms.isNotEmpty()) {
+                _phrasalDetails.value = entry.phrasalVerbsAndIdioms
+            }
+            return
+        }
+        val phrases = (entry.prepositionsAndPhrases + entry.compoundExpressions)
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.contains(" ") }
+            .distinctBy { it.lowercase(Locale.US) }
+        if (phrases.isEmpty()) {
+            if (entry.phrasalVerbsAndIdioms.isNotEmpty()) {
+                _phrasalDetails.value = entry.phrasalVerbsAndIdioms
+            }
+            return
+        }
+        val compoundSet = entry.compoundExpressions
+            .map { it.trim().lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+            .toSet()
+
         phrasalsJob?.cancel()
         phrasalsJob = viewModelScope.launch {
             _isLoadingPhrasals.value = true
             try {
-                val loaded = repository.loadPhrasalAndIdiomDetails(phrases, maxCount = 10)
-                _phrasalDetails.value = loaded
+                val loaded = repository.loadPhrasalAndIdiomDetails(
+                    phrases = phrases,
+                    baseWord = entry.word,
+                    compoundSet = compoundSet,
+                    maxCount = 18
+                )
+                val merged = (loaded + entry.phrasalVerbsAndIdioms)
+                    .distinctBy { it.phrase.trim().lowercase(Locale.US) }
+                _phrasalDetails.value = merged
             } finally {
                 _isLoadingPhrasals.value = false
             }

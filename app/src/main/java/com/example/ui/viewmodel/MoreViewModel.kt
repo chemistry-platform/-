@@ -59,6 +59,7 @@ class MoreViewModel(
     val sentenceAccent: StateFlow<Accent> = settingsPreferences.sentenceAccent
     val showArabicTranslations: StateFlow<Boolean> = settingsPreferences.showArabicTranslations
     val showMachineTranslationLabel: StateFlow<Boolean> = settingsPreferences.showMachineTranslationLabel
+    val literalTranslation: StateFlow<Boolean> = settingsPreferences.literalTranslation
 
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
@@ -81,6 +82,10 @@ class MoreViewModel(
 
     fun setShowMachineTranslationLabel(show: Boolean) {
         settingsPreferences.setShowMachineTranslationLabel(show)
+    }
+
+    fun setLiteralTranslation(literal: Boolean) {
+        settingsPreferences.setLiteralTranslation(literal)
     }
 
     fun checkForUpdateNow() {

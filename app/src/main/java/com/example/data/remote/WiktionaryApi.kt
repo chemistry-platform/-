@@ -30,4 +30,19 @@ interface WiktionaryApi {
         @Header("User-Agent") userAgent: String = WIKTIONARY_UA,
         @Header("Accept") accept: String = "application/json"
     ): ResponseBody
+
+    @GET("w/api.php?action=parse&prop=text&disablelimitreport=1&format=json&redirects=1")
+    suspend fun getSectionHtmlRaw(
+        @Query("page") page: String,
+        @Query("section") sectionIndex: String,
+        @Header("User-Agent") userAgent: String = WIKTIONARY_UA,
+        @Header("Accept") accept: String = "application/json"
+    ): ResponseBody
+
+    @GET("w/api.php?action=parse&prop=text&disablelimitreport=1&format=json&redirects=1")
+    suspend fun getPageHtmlRaw(
+        @Query("page") page: String,
+        @Header("User-Agent") userAgent: String = WIKTIONARY_UA,
+        @Header("Accept") accept: String = "application/json"
+    ): ResponseBody
 }

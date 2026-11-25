@@ -6,12 +6,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object AudioSpeedOptions {
-    val ALL = listOf(0.75f, 1.0f, 1.25f, 1.5f)
+    val ALL = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
 
-    fun formatLabel(speed: Float): String = when (speed) {
-        0.75f -> "0.75x"
-        1.25f -> "1.25x"
-        1.5f -> "1.5x"
+    fun formatLabel(speed: Float): String = when {
+        kotlin.math.abs(speed - 0.5f) < 0.01f -> "0.5x"
+        kotlin.math.abs(speed - 0.75f) < 0.01f -> "0.75x"
+        kotlin.math.abs(speed - 1.25f) < 0.01f -> "1.25x"
+        kotlin.math.abs(speed - 1.5f) < 0.01f -> "1.5x"
+        kotlin.math.abs(speed - 1.75f) < 0.01f -> "1.75x"
+        kotlin.math.abs(speed - 2.0f) < 0.01f -> "2x"
         else -> "1x"
     }
 
@@ -49,6 +52,11 @@ class UserSettingsPreferences(context: Context) {
     )
     val showMachineTranslationLabel: StateFlow<Boolean> = _showMachineTranslationLabel.asStateFlow()
 
+    private val _literalTranslation = MutableStateFlow(
+        prefs.getBoolean(KEY_LITERAL_TRANSLATION, false)
+    )
+    val literalTranslation: StateFlow<Boolean> = _literalTranslation.asStateFlow()
+
     fun setAudioSpeed(speed: Float) {
         val valid = AudioSpeedOptions.sanitize(speed)
         prefs.edit().putFloat(KEY_AUDIO_SPEED, valid).apply()
@@ -70,10 +78,16 @@ class UserSettingsPreferences(context: Context) {
         _showMachineTranslationLabel.value = show
     }
 
+    fun setLiteralTranslation(literal: Boolean) {
+        prefs.edit().putBoolean(KEY_LITERAL_TRANSLATION, literal).apply()
+        _literalTranslation.value = literal
+    }
+
     private companion object {
         const val KEY_AUDIO_SPEED = "audio_speed"
         const val KEY_SENTENCE_ACCENT = "sentence_accent"
         const val KEY_SHOW_ARABIC_TRANSLATIONS = "show_arabic_translations"
         const val KEY_SHOW_MACHINE_LABEL = "show_machine_translation_label"
+        const val KEY_LITERAL_TRANSLATION = "literal_translation"
     }
 }

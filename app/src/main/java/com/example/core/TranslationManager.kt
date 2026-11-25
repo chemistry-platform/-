@@ -63,20 +63,41 @@ data class ChunkSlice(
 
 class TranslationManager(
     context: Context,
-    private val networkMonitor: NetworkMonitor
+    private val networkMonitor: NetworkMonitor,
+    private val settingsPreferences: UserSettingsPreferences? = null
 ) {
     private val appContext = context.applicationContext
     private val modelManager: RemoteModelManager by lazy { RemoteModelManager.getInstance() }
     private val translators = ConcurrentHashMap<Pair<String, String>, Translator>()
     private val shortCache = object : LruCache<String, String>(500) {}
+    private val literalCache = object : LruCache<String, String>(500) {}
     private val downloadMutex = Mutex()
+    private val languageLoadMutex = Mutex()
 
-    private val _languages = MutableStateFlow<List<LanguagePackInfo>>(buildInitialLanguages())
+    private val _languages = MutableStateFlow<List<LanguagePackInfo>>(emptyList())
     val languages: StateFlow<List<LanguagePackInfo>> = _languages.asStateFlow()
 
     private val _downloadingCodes = MutableStateFlow<Set<String>>(emptySet())
 
     private val streamOutputFile = File(appContext.cacheDir, "streamed_translation_output.txt")
+
+    fun isLiteralTranslationEnabled(): Boolean =
+        settingsPreferences?.literalTranslation?.value == true
+
+    suspend fun ensureLanguagesLoaded() {
+        if (_languages.value.isNotEmpty()) return
+        languageLoadMutex.withLock {
+            if (_languages.value.isNotEmpty()) return@withLock
+            val built = withContext(Dispatchers.Default) {
+                runCatching { buildInitialLanguages() }
+                    .onFailure { Log.w(TAG, "Failed loading ML Kit language list", it) }
+                    .getOrDefault(emptyList())
+            }
+            if (built.isNotEmpty()) {
+                _languages.value = built
+            }
+        }
+    }
 
     private fun buildInitialLanguages(): List<LanguagePackInfo> {
         val arabicLocale = Locale("ar")
@@ -102,6 +123,7 @@ class TranslationManager(
 
     suspend fun refreshDownloadedLanguages() {
         try {
+            ensureLanguagesLoaded()
             val downloaded = withContext(Dispatchers.IO) {
                 modelManager.getDownloadedModels(TranslateRemoteModel::class.java).awaitTask()
                     .map { it.language }
@@ -223,10 +245,12 @@ class TranslationManager(
         if (trimmed.isEmpty()) return Result.success("")
         if (sourceCode == targetCode) return Result.success(trimmed)
 
-        val cacheKey = "$sourceCode|$targetCode|$trimmed"
+        val literalMode = isLiteralTranslationEnabled()
+        val cache = if (literalMode) literalCache else shortCache
+        val cacheKey = "${if (literalMode) "lit" else "ctx"}|$sourceCode|$targetCode|$trimmed"
         if (trimmed.length <= SHORT_CACHE_MAX_LEN) {
-            synchronized(shortCache) {
-                shortCache.get(cacheKey)?.let { return Result.success(it) }
+            synchronized(cache) {
+                cache.get(cacheKey)?.let { return Result.success(it) }
             }
         }
 
@@ -235,13 +259,23 @@ class TranslationManager(
         }
 
         return try {
-            val translator = getOrCreateTranslator(sourceCode, targetCode)
-            val translated = withTimeout(15_000L) {
-                translator.translate(trimmed).awaitTask().trim()
+            if (!literalMode) {
+                ContextualTranslationAnalyzer.findDirectContextualOverride(trimmed, sourceCode, targetCode)?.let { direct ->
+                    if (trimmed.length <= SHORT_CACHE_MAX_LEN) {
+                        synchronized(cache) { cache.put(cacheKey, direct) }
+                    }
+                    return Result.success(direct)
+                }
             }
+            val translator = getOrCreateTranslator(sourceCode, targetCode)
+            val translated = if (literalMode) {
+                translateLiteralWordByWord(trimmed, translator, sourceCode, targetCode)
+            } else {
+                translateContextualText(trimmed, translator, sourceCode, targetCode)
+            }.trim()
             if (trimmed.length <= SHORT_CACHE_MAX_LEN && translated.isNotEmpty()) {
-                synchronized(shortCache) {
-                    shortCache.put(cacheKey, translated)
+                synchronized(cache) {
+                    cache.put(cacheKey, translated)
                 }
             }
             Result.success(translated)
@@ -281,9 +315,12 @@ class TranslationManager(
                     }
                     semaphore.withPermit {
                         ensureActive()
-                        val translated = runCatching {
+                        val direct = ContextualTranslationAnalyzer.findDirectContextualOverride(item, sourceCode, targetCode)
+                        val translated = direct ?: runCatching {
+                            val prepared = prepareForContextualInference(item, sourceCode, targetCode)
                             withTimeout(15_000L) {
-                                translator.translate(item).awaitTask().trim()
+                                val raw = translator.translate(prepared).awaitTask().trim()
+                                refineContextualOutput(item, raw, sourceCode, targetCode)
                             }
                         }.getOrNull()
                         if (!translated.isNullOrBlank()) {
@@ -650,27 +687,205 @@ class TranslationManager(
         val core = chunk.trim('\n', '\r')
         if (core.isBlank()) return chunk
 
+        val literalMode = isLiteralTranslationEnabled()
+        val cache = if (literalMode) literalCache else shortCache
+
         val translatedCore = if (core.length <= SHORT_CACHE_MAX_LEN) {
-            val key = "$sourceCode|$targetCode|$core"
-            val cached = synchronized(shortCache) { shortCache.get(key) }
+            val key = "${if (literalMode) "lit" else "ctx"}|$sourceCode|$targetCode|$core"
+            val cached = synchronized(cache) { cache.get(key) }
             if (cached != null) {
                 cached
             } else {
-                val res = withTimeout(20_000L) {
-                    translator.translate(core).awaitTask().trim()
+                val res = if (literalMode) {
+                    translateLiteralWordByWord(core, translator, sourceCode, targetCode).trim()
+                } else {
+                    translateContextualText(core, translator, sourceCode, targetCode).trim()
                 }
                 if (res.isNotEmpty()) {
-                    synchronized(shortCache) { shortCache.put(key, res) }
+                    synchronized(cache) { cache.put(key, res) }
                 }
                 res
             }
         } else {
-            withTimeout(20_000L) {
-                translator.translate(core).awaitTask().trim()
+            if (literalMode) {
+                translateLiteralWordByWord(core, translator, sourceCode, targetCode).trim()
+            } else {
+                translateContextualText(core, translator, sourceCode, targetCode).trim()
             }
         }
         val sep = if (trailingNewlines.isEmpty() && !chunk.endsWith(' ')) " " else ""
         return leadingNewlines + translatedCore + trailingNewlines + sep
+    }
+
+    private suspend fun translateContextualText(
+        text: String,
+        translator: Translator,
+        sourceCode: String,
+        targetCode: String
+    ): String {
+        val paragraphs = text.split('\n')
+        if (paragraphs.size == 1) {
+            val sentences = splitIntoSentences(paragraphs[0])
+            if (sentences.size <= 1) {
+                return translateUnitCached(translator, sourceCode, targetCode, text)
+            }
+            return translateSentencesWithContext(sentences, translator, sourceCode, targetCode)
+                .joinToString(" ")
+        }
+        return paragraphs.map { paragraph ->
+            if (paragraph.isBlank()) {
+                ""
+            } else {
+                val sentences = splitIntoSentences(paragraph)
+                if (sentences.size <= 1) {
+                    translateUnitCached(translator, sourceCode, targetCode, paragraph)
+                } else {
+                    translateSentencesWithContext(sentences, translator, sourceCode, targetCode)
+                        .joinToString(" ")
+                }
+            }
+        }.joinToString("\n")
+    }
+
+    private suspend fun translateSentencesWithContext(
+        sentences: List<String>,
+        translator: Translator,
+        sourceCode: String,
+        targetCode: String
+    ): List<String> = coroutineScope {
+        val semaphore = Semaphore(CONCURRENT_TRANSLATION_CHUNKS)
+        sentences.indices.map { idx ->
+            async(Dispatchers.Default) {
+                semaphore.withPermit {
+                    ensureActive()
+                    val current = sentences[idx]
+                    val direct = ContextualTranslationAnalyzer.findDirectContextualOverride(current, sourceCode, targetCode)
+                    if (direct != null) {
+                        direct
+                    } else {
+                        val (windowText, targetLineIdx, expectedLines) = buildContextWindow(sentences, idx)
+                        if (expectedLines <= 1 || windowText.length > 650) {
+                            translateUnitCached(translator, sourceCode, targetCode, current)
+                        } else {
+                            val preparedWindow = windowText.split('\n')
+                                .joinToString("\n") { prepareForContextualInference(it, sourceCode, targetCode) }
+                            val rawWindowTranslated = runCatching {
+                                withTimeout(15_000L) { translator.translate(preparedWindow).awaitTask().trim() }
+                            }.getOrNull()
+                            val extracted = extractSentenceFromWindowTranslation(
+                                rawTranslated = rawWindowTranslated,
+                                targetLineOffset = targetLineIdx,
+                                expectedLines = expectedLines
+                            )
+                            if (extracted != null) {
+                                refineContextualOutput(current, extracted, sourceCode, targetCode)
+                            } else {
+                                translateUnitCached(translator, sourceCode, targetCode, current)
+                            }
+                        }
+                    }
+                }
+            }
+        }.awaitAll()
+    }
+
+    private suspend fun translateLiteralWordByWord(
+        text: String,
+        translator: Translator,
+        sourceCode: String,
+        targetCode: String
+    ): String = withContext(Dispatchers.Default) {
+        val tokens = tokenizeForLiteralTranslation(text)
+        val uniqueWords = tokens.filter { it.second }.map { it.first }.distinct()
+        if (uniqueWords.isEmpty()) return@withContext text
+
+        val translatedWords = ConcurrentHashMap<String, String>()
+        val semaphore = Semaphore(CONCURRENT_TRANSLATION_CHUNKS)
+        coroutineScope {
+            uniqueWords.map { word ->
+                async {
+                    val key = "tok|$sourceCode|$targetCode|$word"
+                    val cached = synchronized(literalCache) { literalCache.get(key) }
+                    if (cached != null) {
+                        translatedWords[word] = cached
+                    } else {
+                        semaphore.withPermit {
+                            ensureActive()
+                            val res = runCatching {
+                                withTimeout(10_000L) {
+                                    translator.translate(word).awaitTask().trim()
+                                }
+                            }.getOrNull()?.takeIf { it.isNotBlank() } ?: word
+                            synchronized(literalCache) { literalCache.put(key, res) }
+                            translatedWords[word] = res
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+
+        buildString(text.length) {
+            tokens.forEach { (part, isWord) ->
+                if (isWord) append(translatedWords[part] ?: part) else append(part)
+            }
+        }
+    }
+
+    private fun prepareForContextualInference(
+        text: String,
+        sourceCode: String,
+        targetCode: String
+    ): String = when {
+        sourceCode == TranslateLanguage.ENGLISH && targetCode == TranslateLanguage.ARABIC ->
+            ContextualTranslationAnalyzer.prepareEnglishForTranslation(text)
+        sourceCode == TranslateLanguage.ARABIC && targetCode == TranslateLanguage.ENGLISH ->
+            ContextualTranslationAnalyzer.prepareArabicForTranslation(text)
+        else -> text
+    }
+
+    private fun refineContextualOutput(
+        originalSource: String,
+        rawTranslated: String,
+        sourceCode: String,
+        targetCode: String
+    ): String = when {
+        sourceCode == TranslateLanguage.ENGLISH && targetCode == TranslateLanguage.ARABIC ->
+            ContextualTranslationAnalyzer.refineArabicTranslation(originalSource, rawTranslated)
+        sourceCode == TranslateLanguage.ARABIC && targetCode == TranslateLanguage.ENGLISH ->
+            ContextualTranslationAnalyzer.refineEnglishTranslation(originalSource, rawTranslated)
+        else -> rawTranslated
+    }
+
+    private suspend fun translateUnitCached(
+        translator: Translator,
+        sourceCode: String,
+        targetCode: String,
+        unit: String
+    ): String {
+        val trimmed = unit.trim()
+        if (trimmed.isEmpty()) return ""
+        ContextualTranslationAnalyzer.findDirectContextualOverride(trimmed, sourceCode, targetCode)?.let {
+            return it
+        }
+        val prepared = prepareForContextualInference(trimmed, sourceCode, targetCode)
+        if (trimmed.length <= SHORT_CACHE_MAX_LEN) {
+            val key = "unit_v2|$sourceCode|$targetCode|$trimmed"
+            synchronized(shortCache) {
+                shortCache.get(key)?.let { return it }
+            }
+            val rawTranslated = withTimeout(20_000L) {
+                translator.translate(prepared).awaitTask().trim()
+            }
+            val translated = refineContextualOutput(trimmed, rawTranslated, sourceCode, targetCode)
+            if (translated.isNotEmpty()) {
+                synchronized(shortCache) { shortCache.put(key, translated) }
+            }
+            return translated
+        }
+        val rawTranslated = withTimeout(20_000L) {
+            translator.translate(prepared).awaitTask().trim()
+        }
+        return refineContextualOutput(trimmed, rawTranslated, sourceCode, targetCode)
     }
 
     private fun readChunkBatchFromReader(reader: BufferedReader, batchSize: Int): List<String> {
@@ -720,6 +935,63 @@ class TranslationManager(
             runCatching { translator.close() }
         }
         translators.clear()
+    }
+
+    companion object {
+        internal data class ContextWindow(
+            val joinedText: String,
+            val targetLineIndex: Int,
+            val expectedLines: Int
+        )
+
+        internal fun buildContextWindow(sentences: List<String>, index: Int): ContextWindow {
+            val prev = sentences.getOrNull(index - 1)?.trim().orEmpty()
+            val cur = sentences[index].trim()
+            val next = sentences.getOrNull(index + 1)?.trim().orEmpty()
+            val lines = ArrayList<String>(3)
+            var targetIdx = 0
+            if (prev.isNotEmpty()) {
+                lines.add(prev)
+                targetIdx = 1
+            }
+            lines.add(cur)
+            if (next.isNotEmpty()) {
+                lines.add(next)
+            }
+            return ContextWindow(
+                joinedText = lines.joinToString("\n"),
+                targetLineIndex = targetIdx,
+                expectedLines = lines.size
+            )
+        }
+
+        internal fun extractSentenceFromWindowTranslation(
+            rawTranslated: String?,
+            targetLineOffset: Int,
+            expectedLines: Int
+        ): String? {
+            if (rawTranslated.isNullOrBlank()) return null
+            val outLines = rawTranslated.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+            if (outLines.size != expectedLines) return null
+            return outLines.getOrNull(targetLineOffset)?.takeIf { it.isNotBlank() }
+        }
+
+        internal fun tokenizeForLiteralTranslation(text: String): List<Pair<String, Boolean>> {
+            val tokens = ArrayList<Pair<String, Boolean>>()
+            val wordRegex = Regex("[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*")
+            var lastIdx = 0
+            wordRegex.findAll(text).forEach { match ->
+                if (match.range.first > lastIdx) {
+                    tokens.add(text.substring(lastIdx, match.range.first) to false)
+                }
+                tokens.add(match.value to true)
+                lastIdx = match.range.last + 1
+            }
+            if (lastIdx < text.length) {
+                tokens.add(text.substring(lastIdx) to false)
+            }
+            return tokens
+        }
     }
 }
 

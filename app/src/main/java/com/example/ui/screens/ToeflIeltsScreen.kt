@@ -363,29 +363,27 @@ private fun AwlWordRow(
                 }
             }
 
-            if (hasUs || hasUk) {
-                Spacer(modifier = Modifier.width(8.dp))
-                CompactWordAudioButtons(
-                    hasUsAudio = hasUs,
-                    hasUkAudio = hasUk,
-                    onPlayUs = {
-                        audioManager.playHumanPronunciation(
-                            word = item.word,
-                            accent = Accent.US,
-                            audioUrl = item.usAudioUrl,
-                            key = "awl_us_${item.word}"
-                        )
-                    },
-                    onPlayUk = {
-                        audioManager.playHumanPronunciation(
-                            word = item.word,
-                            accent = Accent.UK,
-                            audioUrl = item.ukAudioUrl,
-                            key = "awl_uk_${item.word}"
-                        )
-                    }
-                )
-            }
+            Spacer(modifier = Modifier.width(8.dp))
+            CompactWordAudioButtons(
+                hasUsAudio = true,
+                hasUkAudio = true,
+                onPlayUs = {
+                    audioManager.playHumanPronunciation(
+                        word = item.word,
+                        accent = Accent.US,
+                        audioUrl = item.usAudioUrl,
+                        key = "awl_us_${item.word}"
+                    )
+                },
+                onPlayUk = {
+                    audioManager.playHumanPronunciation(
+                        word = item.word,
+                        accent = Accent.UK,
+                        audioUrl = item.ukAudioUrl,
+                        key = "awl_uk_${item.word}"
+                    )
+                }
+            )
         }
     }
 }

@@ -62,11 +62,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.ui.components.ArabicTranslatedText
 import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.components.DirectionToggleChip
+import com.example.ui.components.HighlightableSentencesText
 import com.example.ui.components.HighlightedEnglishText
 import com.example.ui.components.HighlightedSentenceWithIdioms
 import com.example.ui.components.InstantTranslationCard
@@ -75,6 +77,7 @@ import com.example.ui.components.LongTextAudioBar
 import com.example.ui.components.MissingArabicPackTopBanner
 import com.example.ui.components.MissingEnglishTtsVoiceBanner
 import com.example.ui.components.PhraseFallbackBottomSheet
+import com.example.ui.components.SentenceDualSpeakerButtons
 import com.example.ui.components.SentenceSpeakerButton
 import com.example.ui.components.UsageLabelChip
 import com.example.ui.viewmodel.SentenceLookupViewModel
@@ -109,7 +112,9 @@ fun SentenceLookupScreen(
     val packDownloadMessage by viewModel.packDownloadMessage.collectAsStateWithLifecycle()
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
     val ttsProgress by audioManager.ttsProgress.collectAsStateWithLifecycle()
+    val readerState by audioManager.readerState.collectAsStateWithLifecycle()
     val ttsMissingEnglishVoice by audioManager.ttsMissingEnglishVoice.collectAsStateWithLifecycle()
+    val ttsMissingAccentLabel by audioManager.ttsMissingAccentLabel.collectAsStateWithLifecycle()
 
     var inlineQuery by remember(query) { mutableStateOf(query) }
 
@@ -282,6 +287,7 @@ fun SentenceLookupScreen(
                 if (ttsMissingEnglishVoice) {
                     item(key = "sentence_missing_tts_voice", contentType = "banner") {
                         MissingEnglishTtsVoiceBanner(
+                            missingAccentLabel = ttsMissingAccentLabel,
                             onInstallVoiceClick = {
                                 runCatching {
                                     context.startActivity(audioManager.buildInstallTtsDataIntent())
@@ -310,6 +316,7 @@ fun SentenceLookupScreen(
                             )
 
                             val origAudioKey = if (state.isArabicInput) "sent_original_ar" else "sent_original_en"
+                            val isOrigReading = playingKey == origAudioKey && readerState.isActive
                             val isOrigLong = state.originalText.length > 250 || playingKey == origAudioKey
                             if (state.isArabicInput) {
                                 Row(
@@ -317,13 +324,25 @@ fun SentenceLookupScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                                        Text(
+                                    if (isOrigReading) {
+                                        HighlightableSentencesText(
                                             text = state.originalText,
+                                            isArabic = true,
+                                            isActiveReader = true,
+                                            activeSentenceIndex = readerState.currentIndex,
                                             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
                                             color = colors.onSurface,
                                             modifier = Modifier.weight(1f)
                                         )
+                                    } else {
+                                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                                            Text(
+                                                text = state.originalText,
+                                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                                                color = colors.onSurface,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
                                     }
                                     SentenceSpeakerButton(
                                         isPlaying = playingKey == origAudioKey,
@@ -331,10 +350,9 @@ fun SentenceLookupScreen(
                                             if (playingKey == origAudioKey) {
                                                 audioManager.stopPlayback()
                                             } else {
-                                                audioManager.playSentenceAudio(
-                                                    sentence = state.originalText,
-                                                    audioUrl = null,
-                                                    key = origAudioKey
+                                                audioManager.startLongReading(
+                                                    key = origAudioKey,
+                                                    text = state.originalText
                                                 )
                                             }
                                         },
@@ -347,25 +365,43 @@ fun SentenceLookupScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    HighlightedSentenceWithIdioms(
-                                        sentence = state.originalText,
-                                        idiomPhrases = state.detectedIdioms.map { it.phrase },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    SentenceSpeakerButton(
-                                        isPlaying = playingKey == origAudioKey,
-                                        onClick = {
-                                            if (playingKey == origAudioKey) {
-                                                audioManager.stopPlayback()
-                                            } else {
-                                                audioManager.playSentenceAudio(
-                                                    sentence = state.originalText,
-                                                    audioUrl = null,
-                                                    key = origAudioKey
-                                                )
-                                            }
+                                    if (isOrigReading) {
+                                        HighlightableSentencesText(
+                                            text = state.originalText,
+                                            isArabic = false,
+                                            isActiveReader = true,
+                                            activeSentenceIndex = readerState.currentIndex,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = colors.onSurface,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    } else {
+                                        HighlightedSentenceWithIdioms(
+                                            sentence = state.originalText,
+                                            idiomPhrases = state.detectedIdioms.map { it.phrase },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    SentenceDualSpeakerButtons(
+                                        playingKey = playingKey,
+                                        keyPrefix = origAudioKey,
+                                        onPlayUs = {
+                                            audioManager.playSentenceAudio(
+                                                sentence = state.originalText,
+                                                audioUrl = null,
+                                                key = "${origAudioKey}_us",
+                                                accentOverride = Accent.US
+                                            )
                                         },
-                                        modifier = Modifier.testTag("speaker_sent_original")
+                                        onPlayUk = {
+                                            audioManager.playSentenceAudio(
+                                                sentence = state.originalText,
+                                                audioUrl = null,
+                                                key = "${origAudioKey}_uk",
+                                                accentOverride = Accent.UK
+                                            )
+                                        },
+                                        onStop = { audioManager.stopPlayback() }
                                     )
                                 }
                             }
@@ -376,15 +412,21 @@ fun SentenceLookupScreen(
                                     isPlaying = playingKey == origAudioKey,
                                     ttsProgress = ttsProgress,
                                     onPlayClick = {
-                                        audioManager.playSentenceAudio(
-                                            sentence = state.originalText,
-                                            audioUrl = null,
-                                            key = origAudioKey
+                                        audioManager.startLongReading(
+                                            key = origAudioKey,
+                                            text = state.originalText
                                         )
                                     },
                                     onStopClick = { audioManager.stopPlayback() },
                                     playTag = "sent_original_long_play",
-                                    stopTag = "sent_original_long_stop"
+                                    stopTag = "sent_original_long_stop",
+                                    readerState = readerState,
+                                    onPauseClick = { audioManager.pauseLongReading() },
+                                    onResumeClick = { audioManager.resumeLongReading() },
+                                    onSkipPreviousClick = { audioManager.skipPrevious() },
+                                    onSkipNextClick = { audioManager.skipNext() },
+                                    onSelectAccent = { audioManager.switchReaderAccent(it) },
+                                    isEnglishContent = !state.isArabicInput
                                 )
                             }
 
@@ -400,6 +442,7 @@ fun SentenceLookupScreen(
                                 val mt = state.machineTranslation
                                 if (!mt.isNullOrBlank()) {
                                     val transAudioKey = if (state.isArabicInput) "sent_translated_en" else "sent_translated_ar"
+                                    val isTransReading = playingKey == transAudioKey && readerState.isActive
                                     val isTransLong = mt.length > 250 || playingKey == transAudioKey
                                     if (state.isArabicInput) {
                                         Row(
@@ -407,9 +450,62 @@ fun SentenceLookupScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                                Text(
+                                            HighlightableSentencesText(
+                                                text = mt,
+                                                isArabic = false,
+                                                isActiveReader = isTransReading,
+                                                activeSentenceIndex = readerState.currentIndex,
+                                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                                                color = colors.primary,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("sentence_machine_translation")
+                                            )
+                                            SentenceDualSpeakerButtons(
+                                                playingKey = playingKey,
+                                                keyPrefix = transAudioKey,
+                                                onPlayUs = {
+                                                    audioManager.playSentenceAudio(
+                                                        sentence = mt,
+                                                        audioUrl = null,
+                                                        key = "${transAudioKey}_us",
+                                                        accentOverride = Accent.US
+                                                    )
+                                                },
+                                                onPlayUk = {
+                                                    audioManager.playSentenceAudio(
+                                                        sentence = mt,
+                                                        audioUrl = null,
+                                                        key = "${transAudioKey}_uk",
+                                                        accentOverride = Accent.UK
+                                                    )
+                                                },
+                                                onStop = { audioManager.stopPlayback() }
+                                            )
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            if (isTransReading) {
+                                                HighlightableSentencesText(
                                                     text = mt,
+                                                    isArabic = true,
+                                                    isActiveReader = true,
+                                                    activeSentenceIndex = readerState.currentIndex,
+                                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                                                    color = colors.primary,
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("sentence_machine_translation")
+                                                )
+                                            } else {
+                                                ArabicTranslatedText(
+                                                    text = mt,
+                                                    isMachineTranslated = true,
+                                                    showMachineLabel = showMachineLabel,
                                                     style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                                                     color = colors.primary,
                                                     modifier = Modifier
@@ -423,42 +519,9 @@ fun SentenceLookupScreen(
                                                     if (playingKey == transAudioKey) {
                                                         audioManager.stopPlayback()
                                                     } else {
-                                                        audioManager.playSentenceAudio(
-                                                            sentence = mt,
-                                                            audioUrl = null,
-                                                            key = transAudioKey
-                                                        )
-                                                    }
-                                                },
-                                                modifier = Modifier.testTag("speaker_sent_translated")
-                                            )
-                                        }
-                                    } else {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            ArabicTranslatedText(
-                                                text = mt,
-                                                isMachineTranslated = true,
-                                                showMachineLabel = showMachineLabel,
-                                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                                                color = colors.primary,
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .testTag("sentence_machine_translation")
-                                            )
-                                            SentenceSpeakerButton(
-                                                isPlaying = playingKey == transAudioKey,
-                                                onClick = {
-                                                    if (playingKey == transAudioKey) {
-                                                        audioManager.stopPlayback()
-                                                    } else {
-                                                        audioManager.playSentenceAudio(
-                                                            sentence = mt,
-                                                            audioUrl = null,
-                                                            key = transAudioKey
+                                                        audioManager.startLongReading(
+                                                            key = transAudioKey,
+                                                            text = mt
                                                         )
                                                     }
                                                 },
@@ -473,15 +536,21 @@ fun SentenceLookupScreen(
                                             isPlaying = playingKey == transAudioKey,
                                             ttsProgress = ttsProgress,
                                             onPlayClick = {
-                                                audioManager.playSentenceAudio(
-                                                    sentence = mt,
-                                                    audioUrl = null,
-                                                    key = transAudioKey
+                                                audioManager.startLongReading(
+                                                    key = transAudioKey,
+                                                    text = mt
                                                 )
                                             },
                                             onStopClick = { audioManager.stopPlayback() },
                                             playTag = "sent_trans_long_play",
-                                            stopTag = "sent_trans_long_stop"
+                                            stopTag = "sent_trans_long_stop",
+                                            readerState = readerState,
+                                            onPauseClick = { audioManager.pauseLongReading() },
+                                            onResumeClick = { audioManager.resumeLongReading() },
+                                            onSkipPreviousClick = { audioManager.skipPrevious() },
+                                            onSkipNextClick = { audioManager.skipNext() },
+                                            onSelectAccent = { audioManager.switchReaderAccent(it) },
+                                            isEnglishContent = state.isArabicInput
                                         )
                                     }
                                 } else if (!state.missingTranslationPack) {
@@ -532,6 +601,7 @@ fun SentenceLookupScreen(
                                 )
                                 state.detectedIdioms.forEachIndexed { idx, idiom ->
                                     val idiomKey = "sent_idiom_${idiom.phrase.hashCode()}"
+                                    val phraseIsArabic = ArabicTextUtils.containsArabicLetters(idiom.phrase)
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -547,29 +617,53 @@ fun SentenceLookupScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
-                                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                CompositionLocalProvider(
+                                                    LocalLayoutDirection provides if (phraseIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                                                ) {
                                                     Text(
                                                         text = idiom.phrase,
                                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                                         color = colors.secondary
                                                     )
                                                 }
-                                                UsageLabelChip(text = "تعبير اصطلاحي")
+                                                UsageLabelChip(text = if (idiom.isPhrasalVerb) "فعل مركب" else "تعبير اصطلاحي")
                                             }
-                                            SentenceSpeakerButton(
-                                                isPlaying = playingKey == idiomKey,
-                                                onClick = {
-                                                    if (playingKey == idiomKey) audioManager.stopPlayback()
-                                                    else audioManager.playSentenceAudio(idiom.phrase, null, idiomKey)
-                                                }
-                                            )
-                                        }
-                                        if (idiom.englishMeaning.isNotBlank()) {
-                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                                Text(
-                                                    text = idiom.englishMeaning,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = colors.onSurface
+                                            if (phraseIsArabic) {
+                                                SentenceSpeakerButton(
+                                                    isPlaying = playingKey == "${idiomKey}_ar",
+                                                    onClick = {
+                                                        if (playingKey == "${idiomKey}_ar") {
+                                                            audioManager.stopPlayback()
+                                                        } else {
+                                                            audioManager.playSentenceAudio(
+                                                                sentence = idiom.phrase,
+                                                                audioUrl = null,
+                                                                key = "${idiomKey}_ar"
+                                                            )
+                                                        }
+                                                    }
+                                                )
+                                            } else {
+                                                SentenceDualSpeakerButtons(
+                                                    playingKey = playingKey,
+                                                    keyPrefix = idiomKey,
+                                                    onPlayUs = {
+                                                        audioManager.playSentenceAudio(
+                                                            sentence = idiom.phrase,
+                                                            audioUrl = null,
+                                                            key = "${idiomKey}_us",
+                                                            accentOverride = Accent.US
+                                                        )
+                                                    },
+                                                    onPlayUk = {
+                                                        audioManager.playSentenceAudio(
+                                                            sentence = idiom.phrase,
+                                                            audioUrl = null,
+                                                            key = "${idiomKey}_uk",
+                                                            accentOverride = Accent.UK
+                                                        )
+                                                    },
+                                                    onStop = { audioManager.stopPlayback() }
                                                 )
                                             }
                                         }
@@ -583,11 +677,37 @@ fun SentenceLookupScreen(
                                                 modifier = Modifier.fillMaxWidth()
                                             )
                                         }
-                                        if (idiom.example.isNotBlank()) {
-                                            HighlightedEnglishText(
-                                                sentence = idiom.example,
-                                                targetWord = idiom.phrase
+                                        if (idiom.englishMeaning.isNotBlank()) {
+                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                Text(
+                                                    text = idiom.englishMeaning,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = colors.onSurface
+                                                )
+                                            }
+                                        }
+                                        if (!idiom.usageNote.isNullOrBlank()) {
+                                            Text(
+                                                text = idiom.usageNote,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = colors.onSurfaceVariant,
+                                                modifier = Modifier.fillMaxWidth()
                                             )
+                                        }
+                                        if (idiom.example.isNotBlank()) {
+                                            if (ArabicTextUtils.containsArabicLetters(idiom.example)) {
+                                                Text(
+                                                    text = idiom.example,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = colors.onSurfaceVariant,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            } else {
+                                                HighlightedEnglishText(
+                                                    sentence = idiom.example,
+                                                    targetWord = idiom.phrase
+                                                )
+                                            }
                                         }
                                     }
                                     if (idx < state.detectedIdioms.lastIndex) {
@@ -699,16 +819,26 @@ fun SentenceLookupScreen(
                                                         modifier = Modifier.weight(1f)
                                                     )
                                                 }
-                                                SentenceSpeakerButton(
-                                                    isPlaying = playingKey == exKey,
-                                                    onClick = {
-                                                        if (playingKey == exKey) audioManager.stopPlayback()
-                                                        else audioManager.playSentenceAudio(
+                                                SentenceDualSpeakerButtons(
+                                                    playingKey = playingKey,
+                                                    keyPrefix = exKey,
+                                                    onPlayUs = {
+                                                        audioManager.playSentenceAudio(
                                                             sentence = pair.english,
                                                             audioUrl = pair.audioUrl,
-                                                            key = exKey
+                                                            key = "${exKey}_us",
+                                                            accentOverride = Accent.US
                                                         )
-                                                    }
+                                                    },
+                                                    onPlayUk = {
+                                                        audioManager.playSentenceAudio(
+                                                            sentence = pair.english,
+                                                            audioUrl = pair.audioUrl,
+                                                            key = "${exKey}_uk",
+                                                            accentOverride = Accent.UK
+                                                        )
+                                                    },
+                                                    onStop = { audioManager.stopPlayback() }
                                                 )
                                             }
                                         } else {
@@ -722,16 +852,26 @@ fun SentenceLookupScreen(
                                                     targetWord = state.wordChips.firstOrNull().orEmpty(),
                                                     modifier = Modifier.weight(1f)
                                                 )
-                                                SentenceSpeakerButton(
-                                                    isPlaying = playingKey == exKey,
-                                                    onClick = {
-                                                        if (playingKey == exKey) audioManager.stopPlayback()
-                                                        else audioManager.playSentenceAudio(
+                                                SentenceDualSpeakerButtons(
+                                                    playingKey = playingKey,
+                                                    keyPrefix = exKey,
+                                                    onPlayUs = {
+                                                        audioManager.playSentenceAudio(
                                                             sentence = pair.english,
                                                             audioUrl = pair.audioUrl,
-                                                            key = exKey
+                                                            key = "${exKey}_us",
+                                                            accentOverride = Accent.US
                                                         )
-                                                    }
+                                                    },
+                                                    onPlayUk = {
+                                                        audioManager.playSentenceAudio(
+                                                            sentence = pair.english,
+                                                            audioUrl = pair.audioUrl,
+                                                            key = "${exKey}_uk",
+                                                            accentOverride = Accent.UK
+                                                        )
+                                                    },
+                                                    onStop = { audioManager.stopPlayback() }
                                                 )
                                             }
                                             Text(

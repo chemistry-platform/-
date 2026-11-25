@@ -1,5 +1,10 @@
 package com.example.ui.components
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -54,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -66,6 +73,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.R
 import com.example.core.Accent
 import com.example.core.ArabicTextUtils
@@ -196,41 +204,63 @@ fun PronunciationPillButton(
 }
 
 /**
- * Standalone US / UK buttons next to words in search results & confusable cards.
- * Only renders buttons for accents that have real human recordings, with optional unavailable notice.
+ * Dual US / UK speaker buttons next to English words (uses human recording when present, TTS otherwise).
  */
 @Composable
 fun CompactWordAudioButtons(
-    hasUsAudio: Boolean,
-    hasUkAudio: Boolean,
+    hasUsAudio: Boolean = true,
+    hasUkAudio: Boolean = true,
     onPlayUs: () -> Unit,
     onPlayUk: () -> Unit,
     showUnavailableLabel: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    if (!hasUsAudio && !hasUkAudio) {
-        if (showUnavailableLabel) {
-            Text(
-                text = "لا يوجد صوت متاح",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = modifier
-            )
-        }
-        return
-    }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Row(
             modifier = modifier,
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (hasUsAudio) {
-                MiniSpeakerButton(label = "US", onClick = onPlayUs, testTag = "audio_btn_us")
-            }
-            if (hasUkAudio) {
-                MiniSpeakerButton(label = "UK", onClick = onPlayUk, testTag = "audio_btn_uk")
-            }
+            MiniSpeakerButton(label = "US", onClick = onPlayUs, testTag = "audio_btn_us")
+            MiniSpeakerButton(label = "UK", onClick = onPlayUk, testTag = "audio_btn_uk")
+        }
+    }
+}
+
+/**
+ * Dual US / UK speaker buttons next to English sentences, examples, phrases, and idioms.
+ */
+@Composable
+fun SentenceDualSpeakerButtons(
+    playingKey: String?,
+    keyPrefix: String,
+    onPlayUs: () -> Unit,
+    onPlayUk: () -> Unit,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val usKey = "${keyPrefix}_us"
+    val ukKey = "${keyPrefix}_uk"
+    val isUsPlaying = playingKey == usKey
+    val isUkPlaying = playingKey == ukKey
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            MiniSpeakerButton(
+                label = "US",
+                isPlaying = isUsPlaying,
+                onClick = { if (isUsPlaying) onStop() else onPlayUs() },
+                testTag = "speaker_$usKey"
+            )
+            MiniSpeakerButton(
+                label = "UK",
+                isPlaying = isUkPlaying,
+                onClick = { if (isUkPlaying) onStop() else onPlayUk() },
+                testTag = "speaker_$ukKey"
+            )
         }
     }
 }
@@ -239,7 +269,8 @@ fun CompactWordAudioButtons(
 private fun MiniSpeakerButton(
     label: String,
     onClick: () -> Unit,
-    testTag: String
+    testTag: String,
+    isPlaying: Boolean = false
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(
@@ -248,17 +279,17 @@ private fun MiniSpeakerButton(
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .testTag(testTag),
-        color = colors.surfaceVariant,
+        color = if (isPlaying) colors.primaryContainer else colors.surfaceVariant,
         shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, colors.outline)
+        border = BorderStroke(1.dp, if (isPlaying) colors.primary else colors.outline)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = AppIcons.VolumeUp,
-                contentDescription = label,
+                imageVector = if (isPlaying) AppIcons.Stop else AppIcons.VolumeUp,
+                contentDescription = if (isPlaying) "إيقاف $label" else "نطق $label",
                 tint = colors.primary,
                 modifier = Modifier.size(16.dp)
             )
@@ -267,7 +298,7 @@ private fun MiniSpeakerButton(
                 fontSize = 9.sp,
                 lineHeight = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = colors.onSurfaceVariant
+                color = if (isPlaying) colors.primary else colors.onSurfaceVariant
             )
         }
     }
@@ -731,7 +762,8 @@ fun SentenceSpeakerButton(
 }
 
 /**
- * BUG 7: Compact long-text audio playback bar with Stop button + live progress indicator.
+ * Long-text audio playback bar with Pause/Resume, Prev/Next sentence navigation,
+ * Stop button, US/UK accent switch, and live sentence progress indicator.
  */
 @Composable
 fun LongTextAudioBar(
@@ -742,82 +774,301 @@ fun LongTextAudioBar(
     onStopClick: () -> Unit,
     modifier: Modifier = Modifier,
     playTag: String = "long_audio_play",
-    stopTag: String = "long_audio_stop"
+    stopTag: String = "long_audio_stop",
+    readerState: AudioPlayerManager.ReaderState? = null,
+    onPauseClick: (() -> Unit)? = null,
+    onResumeClick: (() -> Unit)? = null,
+    onSkipPreviousClick: (() -> Unit)? = null,
+    onSkipNextClick: (() -> Unit)? = null,
+    onSelectAccent: ((Accent) -> Unit)? = null,
+    isEnglishContent: Boolean = false
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+    val context = LocalContext.current
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        onPlayClick()
+    }
+    val triggerPlayWithNotifCheck = remember(context, onPlayClick) {
+        {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                onPlayClick()
+            }
+        }
+    }
+
+    val activeReader = readerState?.takeIf { isPlaying && it.isActive && it.sentences.isNotEmpty() }
+    val currentStep = activeReader?.let { it.currentIndex + 1 } ?: ttsProgress?.currentChunk ?: 0
+    val totalSteps = activeReader?.sentences?.size ?: ttsProgress?.totalChunks ?: 0
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = if (isPlaying) colors.primaryContainer.copy(alpha = 0.25f) else colors.surfaceVariant.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, if (isPlaying) colors.primary.copy(alpha = 0.45f) else colors.outline)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SentenceSpeakerButton(
-                isPlaying = isPlaying,
-                onClick = { if (isPlaying) onStopClick() else onPlayClick() },
-                contentDescription = title,
-                modifier = Modifier.testTag(playTag)
-            )
-            Text(
-                text = if (isPlaying) {
-                    if (ttsProgress != null && ttsProgress.totalChunks > 1) {
-                        "جاري القراءة: مقطع ${ttsProgress.currentChunk} من ${ttsProgress.totalChunks}"
-                    } else {
-                        "جاري القراءة..."
-                    }
-                } else {
-                    title
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = if (isPlaying) colors.primary else colors.secondary,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (isPlaying) {
-                Surface(
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClick = onStopClick)
-                        .testTag(stopTag),
-                    color = colors.errorContainer,
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, colors.error.copy(alpha = 0.4f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "إيقاف القراءة",
-                            tint = colors.error,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "إيقاف",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = colors.error
-                        )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SentenceSpeakerButton(
+                    isPlaying = isPlaying && activeReader == null,
+                    onClick = {
+                        when {
+                            !isPlaying -> triggerPlayWithNotifCheck()
+                            activeReader != null && activeReader.isPaused -> onResumeClick?.invoke() ?: triggerPlayWithNotifCheck()
+                            activeReader != null && onPauseClick != null -> onPauseClick()
+                            else -> onStopClick()
+                        }
+                    },
+                    contentDescription = title,
+                    modifier = Modifier.testTag(playTag)
+                )
+
+                Text(
+                    text = when {
+                        activeReader != null -> {
+                            val prefix = if (activeReader.isPaused) "متوقف مؤقتاً" else "جاري القراءة"
+                            "$prefix: جملة $currentStep من $totalSteps"
+                        }
+                        isPlaying && totalSteps > 1 -> "جاري القراءة: مقطع $currentStep من $totalSteps"
+                        isPlaying -> "جاري القراءة..."
+                        else -> title
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isPlaying) colors.primary else colors.secondary,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (isEnglishContent && onSelectAccent != null) {
+                    val activeAccent = readerState?.accent ?: Accent.US
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(Accent.US to "US", Accent.UK to "UK").forEach { (acc, lbl) ->
+                                val selected = activeAccent == acc
+                                Surface(
+                                    modifier = Modifier
+                                        .height(30.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { onSelectAccent(acc) }
+                                        .testTag("${playTag}_accent_${acc.code}"),
+                                    color = if (selected) colors.primaryContainer else colors.surface,
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, if (selected) colors.primary else colors.outline)
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(horizontal = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = lbl,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = if (selected) colors.primary else colors.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
+
+            if (isPlaying) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (activeReader != null && onSkipPreviousClick != null) {
+                        IconButton(
+                            onClick = onSkipPreviousClick,
+                            enabled = activeReader.currentIndex > 0,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("${playTag}_prev")
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.SkipPrevious,
+                                contentDescription = "الجملة السابقة",
+                                tint = if (activeReader.currentIndex > 0) colors.onSurface else colors.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    if (activeReader != null && onPauseClick != null && onResumeClick != null) {
+                        Surface(
+                            modifier = Modifier
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (activeReader.isPaused) onResumeClick() else onPauseClick()
+                                }
+                                .testTag("${playTag}_pause_resume"),
+                            color = colors.primaryContainer,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (activeReader.isPaused) AppIcons.PlayArrow else AppIcons.Pause,
+                                    contentDescription = if (activeReader.isPaused) "استئناف القراءة" else "إيقاف مؤقت",
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (activeReader.isPaused) "استئناف" else "إيقاف مؤقت",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = colors.primary
+                                )
+                            }
+                        }
+                    }
+
+                    if (activeReader != null && onSkipNextClick != null) {
+                        IconButton(
+                            onClick = onSkipNextClick,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("${playTag}_next")
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.SkipNext,
+                                contentDescription = "الجملة التالية",
+                                tint = colors.onSurface,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    Surface(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onStopClick)
+                            .testTag(stopTag),
+                        color = colors.errorContainer,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, colors.error.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.Stop,
+                                contentDescription = "إيقاف القراءة",
+                                tint = colors.error,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "إيقاف",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = colors.error
+                            )
+                        }
+                    }
+                }
+
+                if (totalSteps > 1) {
+                    val fraction = (currentStep.toFloat() / totalSteps.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp),
+                        color = colors.primary,
+                        trackColor = colors.outline
+                    )
+                }
+            }
         }
-        if (isPlaying && ttsProgress != null && ttsProgress.totalChunks > 1) {
-            val fraction = (ttsProgress.currentChunk.toFloat() / ttsProgress.totalChunks.toFloat())
-                .coerceIn(0f, 1f)
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp),
-                color = colors.primary,
-                trackColor = colors.outline
+    }
+}
+
+/**
+ * Renders long text and highlights the currently spoken sentence during LongTextReader playback.
+ */
+@Composable
+fun HighlightableSentencesText(
+    text: String,
+    isArabic: Boolean,
+    isActiveReader: Boolean,
+    activeSentenceIndex: Int,
+    style: androidx.compose.ui.text.TextStyle,
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val layoutDir = if (isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+    CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
+        if (!isActiveReader) {
+            Text(
+                text = text,
+                style = style,
+                color = color,
+                modifier = modifier
             )
+        } else {
+            val sentences = remember(text) { AudioPlayerManager.splitTextSafelyForTts(text) }
+            if (sentences.isEmpty()) {
+                Text(
+                    text = text,
+                    style = style,
+                    color = color,
+                    modifier = modifier
+                )
+            } else {
+                val annotated = buildAnnotatedString {
+                    sentences.forEachIndexed { idx, sentence ->
+                        if (idx > 0) append(" ")
+                        if (idx == activeSentenceIndex) {
+                            withStyle(
+                                SpanStyle(
+                                    color = colors.primary,
+                                    background = colors.primaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            ) {
+                                append(sentence)
+                            }
+                        } else {
+                            append(sentence)
+                        }
+                    }
+                }
+                Text(
+                    text = annotated,
+                    style = style,
+                    color = color,
+                    modifier = modifier
+                )
+            }
         }
     }
 }
@@ -911,8 +1162,6 @@ fun InstantTranslationCard(
 ) {
     val colors = MaterialTheme.colorScheme
     val isSingleEnglishWord = !result.isArabicSource && !ArabicTextUtils.isMultiWordQuery(result.query)
-    val hasUs = isSingleEnglishWord && audioManager.hasAudioOrCache(result.query, Accent.US, result.usAudioUrl)
-    val hasUk = isSingleEnglishWord && audioManager.hasAudioOrCache(result.query, Accent.UK, result.ukAudioUrl)
 
     Surface(
         modifier = modifier
@@ -927,7 +1176,7 @@ fun InstantTranslationCard(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Row holding query & speaker buttons (US/UK for single English word; TTS for sentences/Arabic)
+            // Row holding query & speaker buttons (US/UK for English words or sentences; speaker for Arabic)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -948,44 +1197,70 @@ fun InstantTranslationCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                if (isSingleEnglishWord) {
-                    CompactWordAudioButtons(
-                        hasUsAudio = hasUs,
-                        hasUkAudio = hasUk,
-                        onPlayUs = {
-                            audioManager.playHumanPronunciation(
-                                word = result.query,
-                                accent = Accent.US,
-                                audioUrl = result.usAudioUrl,
-                                key = "inst_us_${result.query}"
-                            )
-                        },
-                        onPlayUk = {
-                            audioManager.playHumanPronunciation(
-                                word = result.query,
-                                accent = Accent.UK,
-                                audioUrl = result.ukAudioUrl,
-                                key = "inst_uk_${result.query}"
-                            )
-                        },
-                        showUnavailableLabel = true
-                    )
-                } else {
-                    val sentKey = "inst_sent_${result.query.hashCode()}"
-                    SentenceSpeakerButton(
-                        isPlaying = playingKey == sentKey,
-                        onClick = {
-                            if (playingKey == sentKey) {
-                                audioManager.stopPlayback()
-                            } else {
+                when {
+                    isSingleEnglishWord -> {
+                        CompactWordAudioButtons(
+                            hasUsAudio = true,
+                            hasUkAudio = true,
+                            onPlayUs = {
+                                audioManager.playHumanPronunciation(
+                                    word = result.query,
+                                    accent = Accent.US,
+                                    audioUrl = result.usAudioUrl,
+                                    key = "inst_us_${result.query}"
+                                )
+                            },
+                            onPlayUk = {
+                                audioManager.playHumanPronunciation(
+                                    word = result.query,
+                                    accent = Accent.UK,
+                                    audioUrl = result.ukAudioUrl,
+                                    key = "inst_uk_${result.query}"
+                                )
+                            }
+                        )
+                    }
+                    !result.isArabicSource -> {
+                        val prefix = "inst_sent_${result.query.hashCode()}"
+                        SentenceDualSpeakerButtons(
+                            playingKey = playingKey,
+                            keyPrefix = prefix,
+                            onPlayUs = {
                                 audioManager.playSentenceAudio(
                                     sentence = result.query,
                                     audioUrl = null,
-                                    key = sentKey
+                                    key = "${prefix}_us",
+                                    accentOverride = Accent.US
                                 )
+                            },
+                            onPlayUk = {
+                                audioManager.playSentenceAudio(
+                                    sentence = result.query,
+                                    audioUrl = null,
+                                    key = "${prefix}_uk",
+                                    accentOverride = Accent.UK
+                                )
+                            },
+                            onStop = { audioManager.stopPlayback() }
+                        )
+                    }
+                    else -> {
+                        val sentKey = "inst_sent_ar_${result.query.hashCode()}"
+                        SentenceSpeakerButton(
+                            isPlaying = playingKey == sentKey,
+                            onClick = {
+                                if (playingKey == sentKey) {
+                                    audioManager.stopPlayback()
+                                } else {
+                                    audioManager.playSentenceAudio(
+                                        sentence = result.query,
+                                        audioUrl = null,
+                                        key = sentKey
+                                    )
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
 
@@ -1025,16 +1300,28 @@ fun InstantTranslationCard(
                                     .testTag("instant_translation_text")
                             )
                         }
-                        if (ArabicTextUtils.isMultiWordQuery(result.translation)) {
-                            val transKey = "inst_trans_${result.translation.hashCode()}"
-                            SentenceSpeakerButton(
-                                isPlaying = playingKey == transKey,
-                                onClick = {
-                                    if (playingKey == transKey) audioManager.stopPlayback()
-                                    else audioManager.playSentenceAudio(result.translation, null, transKey)
-                                }
-                            )
-                        }
+                        val prefix = "inst_trans_${result.translation.hashCode()}"
+                        SentenceDualSpeakerButtons(
+                            playingKey = playingKey,
+                            keyPrefix = prefix,
+                            onPlayUs = {
+                                audioManager.playSentenceAudio(
+                                    sentence = result.translation,
+                                    audioUrl = null,
+                                    key = "${prefix}_us",
+                                    accentOverride = Accent.US
+                                )
+                            },
+                            onPlayUk = {
+                                audioManager.playSentenceAudio(
+                                    sentence = result.translation,
+                                    audioUrl = null,
+                                    key = "${prefix}_uk",
+                                    accentOverride = Accent.UK
+                                )
+                            },
+                            onStop = { audioManager.stopPlayback() }
+                        )
                     }
                 } else {
                     ArabicTranslatedText(
@@ -1083,8 +1370,6 @@ fun PhraseFallbackBottomSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val isArabicPhrase = ArabicTextUtils.containsArabicLetters(sheetData.phrase)
     val isSingleEnglishWord = !isArabicPhrase && !ArabicTextUtils.isMultiWordQuery(sheetData.phrase)
-    val hasUs = isSingleEnglishWord && audioManager.hasAudioOrCache(sheetData.phrase, Accent.US, sheetData.usAudioUrl)
-    val hasUk = isSingleEnglishWord && audioManager.hasAudioOrCache(sheetData.phrase, Accent.UK, sheetData.ukAudioUrl)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1116,37 +1401,63 @@ fun PhraseFallbackBottomSheet(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                if (isSingleEnglishWord) {
-                    CompactWordAudioButtons(
-                        hasUsAudio = hasUs,
-                        hasUkAudio = hasUk,
-                        onPlayUs = {
-                            audioManager.playHumanPronunciation(
-                                word = sheetData.phrase,
-                                accent = Accent.US,
-                                audioUrl = sheetData.usAudioUrl,
-                                key = "sheet_us_${sheetData.phrase}"
-                            )
-                        },
-                        onPlayUk = {
-                            audioManager.playHumanPronunciation(
-                                word = sheetData.phrase,
-                                accent = Accent.UK,
-                                audioUrl = sheetData.ukAudioUrl,
-                                key = "sheet_uk_${sheetData.phrase}"
-                            )
-                        },
-                        showUnavailableLabel = true
-                    )
-                } else {
-                    val sheetKey = "sheet_phrase_${sheetData.phrase.hashCode()}"
-                    SentenceSpeakerButton(
-                        isPlaying = playingKey == sheetKey,
-                        onClick = {
-                            if (playingKey == sheetKey) audioManager.stopPlayback()
-                            else audioManager.playSentenceAudio(sheetData.phrase, null, sheetKey)
-                        }
-                    )
+                when {
+                    isSingleEnglishWord -> {
+                        CompactWordAudioButtons(
+                            hasUsAudio = true,
+                            hasUkAudio = true,
+                            onPlayUs = {
+                                audioManager.playHumanPronunciation(
+                                    word = sheetData.phrase,
+                                    accent = Accent.US,
+                                    audioUrl = sheetData.usAudioUrl,
+                                    key = "sheet_us_${sheetData.phrase}"
+                                )
+                            },
+                            onPlayUk = {
+                                audioManager.playHumanPronunciation(
+                                    word = sheetData.phrase,
+                                    accent = Accent.UK,
+                                    audioUrl = sheetData.ukAudioUrl,
+                                    key = "sheet_uk_${sheetData.phrase}"
+                                )
+                            }
+                        )
+                    }
+                    !isArabicPhrase -> {
+                        val prefix = "sheet_phrase_${sheetData.phrase.hashCode()}"
+                        SentenceDualSpeakerButtons(
+                            playingKey = playingKey,
+                            keyPrefix = prefix,
+                            onPlayUs = {
+                                audioManager.playSentenceAudio(
+                                    sentence = sheetData.phrase,
+                                    audioUrl = null,
+                                    key = "${prefix}_us",
+                                    accentOverride = Accent.US
+                                )
+                            },
+                            onPlayUk = {
+                                audioManager.playSentenceAudio(
+                                    sentence = sheetData.phrase,
+                                    audioUrl = null,
+                                    key = "${prefix}_uk",
+                                    accentOverride = Accent.UK
+                                )
+                            },
+                            onStop = { audioManager.stopPlayback() }
+                        )
+                    }
+                    else -> {
+                        val sheetKey = "sheet_phrase_${sheetData.phrase.hashCode()}"
+                        SentenceSpeakerButton(
+                            isPlaying = playingKey == sheetKey,
+                            onClick = {
+                                if (playingKey == sheetKey) audioManager.stopPlayback()
+                                else audioManager.playSentenceAudio(sheetData.phrase, null, sheetKey)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -1212,7 +1523,7 @@ fun PhraseFallbackBottomSheet(
                             modifier = Modifier.padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            val exKey = "sheet_ex_${sheetData.phrase.hashCode()}"
+                            val exPrefix = "sheet_ex_${sheetData.phrase.hashCode()}"
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1223,16 +1534,26 @@ fun PhraseFallbackBottomSheet(
                                     targetWord = sheetData.phrase,
                                     modifier = Modifier.weight(1f)
                                 )
-                                SentenceSpeakerButton(
-                                    isPlaying = playingKey == exKey,
-                                    onClick = {
-                                        if (playingKey == exKey) audioManager.stopPlayback()
-                                        else audioManager.playSentenceAudio(
+                                SentenceDualSpeakerButtons(
+                                    playingKey = playingKey,
+                                    keyPrefix = exPrefix,
+                                    onPlayUs = {
+                                        audioManager.playSentenceAudio(
                                             sentence = sheetData.example,
                                             audioUrl = sheetData.exampleAudioUrl,
-                                            key = exKey
+                                            key = "${exPrefix}_us",
+                                            accentOverride = Accent.US
                                         )
-                                    }
+                                    },
+                                    onPlayUk = {
+                                        audioManager.playSentenceAudio(
+                                            sentence = sheetData.example,
+                                            audioUrl = sheetData.exampleAudioUrl,
+                                            key = "${exPrefix}_uk",
+                                            accentOverride = Accent.UK
+                                        )
+                                    },
+                                    onStop = { audioManager.stopPlayback() }
                                 )
                             }
                             if (!sheetData.exampleArabic.isNullOrBlank()) {
@@ -1358,9 +1679,15 @@ fun MissingArabicPackTopBanner(
 @Composable
 fun MissingEnglishTtsVoiceBanner(
     onInstallVoiceClick: () -> Unit,
+    missingAccentLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val message = if (!missingAccentLabel.isNullOrBlank()) {
+        "صوت النطق $missingAccentLabel غير مثبت؛ يتم النطق بالصوت البديل. ثبّت حزمة الصوت من إعدادات الجهاز"
+    } else {
+        "ثبّت صوتاً إنجليزياً من إعدادات الجهاز"
+    }
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = colors.surfaceVariant,
@@ -1375,7 +1702,7 @@ fun MissingEnglishTtsVoiceBanner(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "ثبّت صوتاً إنجليزياً من إعدادات الجهاز",
+                text = message,
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
                 modifier = Modifier.weight(1f)

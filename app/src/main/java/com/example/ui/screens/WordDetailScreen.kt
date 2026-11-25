@@ -102,6 +102,7 @@ import com.example.ui.components.MissingEnglishTtsVoiceBanner
 import com.example.ui.components.PhraseFallbackBottomSheet
 import com.example.ui.components.PosChip
 import com.example.ui.components.PronunciationPillButton
+import com.example.ui.components.SentenceDualSpeakerButtons
 import com.example.ui.components.SentenceSpeakerButton
 import com.example.ui.components.UsageLabelChip
 import com.example.ui.viewmodel.UsageFilterOption
@@ -143,6 +144,7 @@ fun WordDetailScreen(
     val packDownloadMessage by viewModel.packDownloadMessage.collectAsStateWithLifecycle()
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
     val ttsMissingEnglishVoice by audioManager.ttsMissingEnglishVoice.collectAsStateWithLifecycle()
+    val ttsMissingAccentLabel by audioManager.ttsMissingAccentLabel.collectAsStateWithLifecycle()
 
     var inlineQuery by remember(currentQuery) { mutableStateOf(currentQuery) }
     var showAwlDialog by remember { mutableStateOf(false) }
@@ -339,7 +341,9 @@ fun WordDetailScreen(
                     var synonymsExpanded by remember(entry.word) { mutableStateOf(true) }
                     var antonymsExpanded by remember(entry.word) { mutableStateOf(false) }
                     var collocationsExpanded by remember(entry.word) { mutableStateOf(false) }
-                    var phrasalDetailsExpanded by remember(entry.word) { mutableStateOf(true) }
+                    var phrasalVerbsExpanded by remember(entry.word) { mutableStateOf(true) }
+                    var idiomsExpanded by remember(entry.word) { mutableStateOf(true) }
+                    var compoundsExpanded by remember(entry.word) { mutableStateOf(false) }
                     var phrasesExpanded by remember(entry.word, highlightedChip) {
                         mutableStateOf(!highlightedChip.isNullOrBlank())
                     }
@@ -350,7 +354,25 @@ fun WordDetailScreen(
                     var tatoebaExpanded by remember(entry.word) { mutableStateOf(true) }
 
                     val displayPhrasals = remember(phrasalDetails, entry.phrasalVerbsAndIdioms) {
-                        phrasalDetails.ifEmpty { entry.phrasalVerbsAndIdioms }
+                        if (phrasalDetails.isEmpty()) {
+                            entry.phrasalVerbsAndIdioms
+                        } else {
+                            (phrasalDetails + entry.phrasalVerbsAndIdioms)
+                                .distinctBy { it.phrase.trim().lowercase(Locale.US) }
+                        }
+                    }
+                    val phrasalVerbItems = remember(displayPhrasals) {
+                        displayPhrasals.filter { !it.isIdiom && it.category != "IDIOM" && it.category != "COMPOUND" }
+                    }
+                    val idiomItems = remember(displayPhrasals) {
+                        displayPhrasals.filter { it.isIdiom || it.category == "IDIOM" }
+                    }
+                    val compoundDetailItems = remember(displayPhrasals) {
+                        displayPhrasals.filter { it.category == "COMPOUND" }
+                    }
+                    val remainingCompoundChips = remember(entry.compoundExpressions, compoundDetailItems) {
+                        val detailedKeys = compoundDetailItems.map { it.phrase.trim().lowercase(Locale.US) }.toSet()
+                        entry.compoundExpressions.filter { it.trim().lowercase(Locale.US) !in detailedKeys }
                     }
 
                     val hasAnyUsageLabels by remember(entry) {
@@ -416,10 +438,11 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Section 19.7: Missing English TTS voice prompt when sentences need TTS
+                        // Section 19.7: Missing English TTS voice prompt when needed
                         if (ttsMissingEnglishVoice && hasEnglishSentencesRequiringTts) {
                             item(key = "missing_tts_voice", contentType = "banner") {
                                 MissingEnglishTtsVoiceBanner(
+                                    missingAccentLabel = ttsMissingAccentLabel,
                                     onInstallVoiceClick = {
                                         runCatching {
                                             context.startActivity(audioManager.buildInstallTtsDataIntent())
@@ -442,7 +465,8 @@ fun WordDetailScreen(
                                 onSelectSpeed = { audioManager.setAudioSpeed(it) },
                                 onToggleFavorite = onToggleFavorite,
                                 onOpenAwlInfo = { showAwlDialog = true },
-                                onChipClick = { w -> viewModel.onChipTapped(w) }
+                                onChipClick = { w -> viewModel.onChipTapped(w) },
+                                onSelectVocalizedForm = { vocalized -> viewModel.loadWord(vocalized) }
                             )
                         }
 
@@ -504,8 +528,8 @@ fun WordDetailScreen(
                                     showMachineLabel = showMachineLabel,
                                     playingKey = playingKey,
                                     chipMeanings = chipMeanings,
-                                    onSpeakSentence = { sentence, url, key ->
-                                        audioManager.playSentenceAudio(sentence, url, key)
+                                    onSpeakSentence = { sentence, url, key, accentOverride ->
+                                        audioManager.playSentenceAudio(sentence, url, key, accentOverride)
                                     },
                                     onStopAudio = { audioManager.stopPlayback() },
                                     onChipClick = { viewModel.onChipTapped(it) },
@@ -524,16 +548,16 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // BUG 4: Phrasal verbs & idioms with English meaning, Arabic meaning below, and example
-                        if (displayPhrasals.isNotEmpty() || isLoadingPhrasals) {
-                            item(key = "sec_phrasal_idioms", contentType = "phrasals_section") {
+                        // Phrasal Verbs section
+                        if (phrasalVerbItems.isNotEmpty() || (isLoadingPhrasals && !entry.isArabicWord && displayPhrasals.isEmpty())) {
+                            item(key = "sec_phrasal_verbs", contentType = "phrasals_section") {
                                 CollapsibleSectionCard(
-                                    title = "الأفعال المركبة والتعابير الاصطلاحية",
-                                    count = displayPhrasals.size,
-                                    expanded = phrasalDetailsExpanded,
-                                    onToggle = { phrasalDetailsExpanded = !phrasalDetailsExpanded }
+                                    title = stringResource(R.string.phrasal_verbs_title),
+                                    count = phrasalVerbItems.size,
+                                    expanded = phrasalVerbsExpanded,
+                                    onToggle = { phrasalVerbsExpanded = !phrasalVerbsExpanded }
                                 ) {
-                                    if (isLoadingPhrasals && displayPhrasals.isEmpty()) {
+                                    if (isLoadingPhrasals && phrasalVerbItems.isEmpty()) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -548,29 +572,101 @@ fun WordDetailScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "جاري تحميل معاني الأفعال المركبة والتعابير...",
+                                                text = "جاري تحميل معاني الأفعال المركبة...",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = colors.onSurfaceVariant
                                             )
                                         }
                                     } else {
                                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            displayPhrasals.forEachIndexed { idx, item ->
+                                            phrasalVerbItems.forEachIndexed { idx, item ->
                                                 PhrasalIdiomDetailCard(
                                                     item = item,
                                                     showArabicTranslations = showArabicTranslations,
                                                     showMachineLabel = showMachineLabel,
                                                     playingKey = playingKey,
                                                     onTapPhrase = { viewModel.onChipTapped(item.phrase) },
-                                                    onSpeak = { text, url, key ->
+                                                    onSpeak = { text, url, key, accentOverride ->
                                                         if (playingKey == key) audioManager.stopPlayback()
-                                                        else audioManager.playSentenceAudio(text, url, key)
-                                                    }
+                                                        else audioManager.playSentenceAudio(text, url, key, accentOverride)
+                                                    },
+                                                    onStop = { audioManager.stopPlayback() }
                                                 )
-                                                if (idx < displayPhrasals.lastIndex) {
+                                                if (idx < phrasalVerbItems.lastIndex) {
                                                     HorizontalDivider(color = colors.outline, thickness = 1.dp)
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Idioms & Expressions section
+                        if (idiomItems.isNotEmpty()) {
+                            item(key = "sec_idioms", contentType = "idioms_section") {
+                                CollapsibleSectionCard(
+                                    title = stringResource(R.string.idioms_expressions_title),
+                                    count = idiomItems.size,
+                                    expanded = idiomsExpanded,
+                                    onToggle = { idiomsExpanded = !idiomsExpanded }
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        idiomItems.forEachIndexed { idx, item ->
+                                            PhrasalIdiomDetailCard(
+                                                item = item,
+                                                showArabicTranslations = showArabicTranslations,
+                                                showMachineLabel = showMachineLabel,
+                                                playingKey = playingKey,
+                                                onTapPhrase = { viewModel.onChipTapped(item.phrase) },
+                                                onSpeak = { text, url, key, accentOverride ->
+                                                    if (playingKey == key) audioManager.stopPlayback()
+                                                    else audioManager.playSentenceAudio(text, url, key, accentOverride)
+                                                },
+                                                onStop = { audioManager.stopPlayback() }
+                                            )
+                                            if (idx < idiomItems.lastIndex) {
+                                                HorizontalDivider(color = colors.outline, thickness = 1.dp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Compound Expressions section
+                        if (compoundDetailItems.isNotEmpty() || remainingCompoundChips.isNotEmpty()) {
+                            item(key = "sec_compounds", contentType = "compounds_section") {
+                                CollapsibleSectionCard(
+                                    title = stringResource(R.string.compound_expressions_title),
+                                    count = compoundDetailItems.size + remainingCompoundChips.size,
+                                    expanded = compoundsExpanded,
+                                    onToggle = { compoundsExpanded = !compoundsExpanded }
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        compoundDetailItems.forEachIndexed { idx, item ->
+                                            PhrasalIdiomDetailCard(
+                                                item = item,
+                                                showArabicTranslations = showArabicTranslations,
+                                                showMachineLabel = showMachineLabel,
+                                                playingKey = playingKey,
+                                                onTapPhrase = { viewModel.onChipTapped(item.phrase) },
+                                                onSpeak = { text, url, key, accentOverride ->
+                                                    if (playingKey == key) audioManager.stopPlayback()
+                                                    else audioManager.playSentenceAudio(text, url, key, accentOverride)
+                                                },
+                                                onStop = { audioManager.stopPlayback() }
+                                            )
+                                            if (idx < compoundDetailItems.lastIndex || remainingCompoundChips.isNotEmpty()) {
+                                                HorizontalDivider(color = colors.outline, thickness = 1.dp)
+                                            }
+                                        }
+                                        if (remainingCompoundChips.isNotEmpty()) {
+                                            ChipWrapRow(
+                                                items = remainingCompoundChips,
+                                                chipMeanings = chipMeanings,
+                                                onChipClick = { viewModel.onChipTapped(it) }
+                                            )
                                         }
                                     }
                                 }
@@ -855,20 +951,26 @@ fun WordDetailScreen(
                                                                 modifier = Modifier.weight(1f)
                                                             )
                                                         }
-                                                        SentenceSpeakerButton(
-                                                            isPlaying = playingKey == tatKey,
-                                                            onClick = {
-                                                                if (playingKey == tatKey) {
-                                                                    audioManager.stopPlayback()
-                                                                } else {
-                                                                    audioManager.playSentenceAudio(
-                                                                        sentence = pair.english,
-                                                                        audioUrl = pair.audioUrl,
-                                                                        key = tatKey
-                                                                    )
-                                                                }
+                                                        SentenceDualSpeakerButtons(
+                                                            playingKey = playingKey,
+                                                            keyPrefix = tatKey,
+                                                            onPlayUs = {
+                                                                audioManager.playSentenceAudio(
+                                                                    sentence = pair.english,
+                                                                    audioUrl = pair.audioUrl,
+                                                                    key = "${tatKey}_us",
+                                                                    accentOverride = Accent.US
+                                                                )
                                                             },
-                                                            modifier = Modifier.testTag("tatoeba_speak_$idx")
+                                                            onPlayUk = {
+                                                                audioManager.playSentenceAudio(
+                                                                    sentence = pair.english,
+                                                                    audioUrl = pair.audioUrl,
+                                                                    key = "${tatKey}_uk",
+                                                                    accentOverride = Accent.UK
+                                                                )
+                                                            },
+                                                            onStop = { audioManager.stopPlayback() }
                                                         )
                                                     }
                                                 } else {
@@ -882,20 +984,26 @@ fun WordDetailScreen(
                                                             targetWord = entry.word,
                                                             modifier = Modifier.weight(1f)
                                                         )
-                                                        SentenceSpeakerButton(
-                                                            isPlaying = playingKey == tatKey,
-                                                            onClick = {
-                                                                if (playingKey == tatKey) {
-                                                                    audioManager.stopPlayback()
-                                                                } else {
-                                                                    audioManager.playSentenceAudio(
-                                                                        sentence = pair.english,
-                                                                        audioUrl = pair.audioUrl,
-                                                                        key = tatKey
-                                                                    )
-                                                                }
+                                                        SentenceDualSpeakerButtons(
+                                                            playingKey = playingKey,
+                                                            keyPrefix = tatKey,
+                                                            onPlayUs = {
+                                                                audioManager.playSentenceAudio(
+                                                                    sentence = pair.english,
+                                                                    audioUrl = pair.audioUrl,
+                                                                    key = "${tatKey}_us",
+                                                                    accentOverride = Accent.US
+                                                                )
                                                             },
-                                                            modifier = Modifier.testTag("tatoeba_speak_$idx")
+                                                            onPlayUk = {
+                                                                audioManager.playSentenceAudio(
+                                                                    sentence = pair.english,
+                                                                    audioUrl = pair.audioUrl,
+                                                                    key = "${tatKey}_uk",
+                                                                    accentOverride = Accent.UK
+                                                                )
+                                                            },
+                                                            onStop = { audioManager.stopPlayback() }
                                                         )
                                                     }
                                                     Text(
@@ -998,7 +1106,8 @@ private fun HeadwordCard(
     onSelectSpeed: (Float) -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenAwlInfo: () -> Unit,
-    onChipClick: (String) -> Unit
+    onChipClick: (String) -> Unit,
+    onSelectVocalizedForm: (String) -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
     val hasUs = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.US, entry.usAudioUrl)
@@ -1077,6 +1186,50 @@ private fun HeadwordCard(
                 }
             }
 
+            if (entry.isArabicWord && entry.transliteration.isNotBlank()) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Text(
+                        text = entry.transliteration,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (entry.isArabicWord && entry.vocalizedForms.size > 1) {
+                val activeCanonical = ArabicTextUtils.canonicalizeArabicWithDiacritics(entry.displayWord)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "الصيغ المشكولة:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        entry.vocalizedForms.forEach { vocalized ->
+                            val isSelected = ArabicTextUtils.canonicalizeArabicWithDiacritics(vocalized) == activeCanonical
+                            Surface(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .clickable { onSelectVocalizedForm(vocalized) },
+                                color = if (isSelected) colors.primaryContainer else colors.surfaceVariant,
+                                shape = RoundedCornerShape(999.dp),
+                                border = BorderStroke(1.dp, if (isSelected) colors.primary else colors.outline)
+                            ) {
+                                Text(
+                                    text = vocalized,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (isSelected) colors.primary else colors.onSurface,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Section 12.3: Tappable AWL chip if offline pack tagged this word with "AWL"
             if (hasAwlTag) {
                 Surface(
@@ -1097,56 +1250,43 @@ private fun HeadwordCard(
                 }
             }
 
-            // Real human US / UK word pronunciations + Audio Speed Selector
+            // US / UK word pronunciations (human recording when available, TTS fallback otherwise)
             if (!entry.isArabicWord) {
-                if (hasUs || hasUk || entry.usIpa.isNotBlank() || entry.ukIpa.isNotBlank()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (hasUs || entry.usIpa.isNotBlank()) {
-                            PronunciationPillButton(
-                                regionLabel = "US",
-                                ipa = entry.usIpa,
-                                hasAudio = hasUs,
-                                onClick = {
-                                    audioManager.playHumanPronunciation(
-                                        word = entry.word,
-                                        accent = Accent.US,
-                                        audioUrl = entry.usAudioUrl,
-                                        key = "head_us_${entry.word}"
-                                    )
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("pronounce_us_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PronunciationPillButton(
+                        regionLabel = "US",
+                        ipa = entry.usIpa,
+                        hasAudio = true,
+                        onClick = {
+                            audioManager.playHumanPronunciation(
+                                word = entry.word,
+                                accent = Accent.US,
+                                audioUrl = entry.usAudioUrl,
+                                key = "head_us_${entry.word}"
                             )
-                        }
-                        if (hasUk || entry.ukIpa.isNotBlank()) {
-                            PronunciationPillButton(
-                                regionLabel = "UK",
-                                ipa = entry.ukIpa,
-                                hasAudio = hasUk,
-                                onClick = {
-                                    audioManager.playHumanPronunciation(
-                                        word = entry.word,
-                                        accent = Accent.UK,
-                                        audioUrl = entry.ukAudioUrl,
-                                        key = "head_uk_${entry.word}"
-                                    )
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("pronounce_uk_button")
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("pronounce_us_button")
+                    )
+                    PronunciationPillButton(
+                        regionLabel = "UK",
+                        ipa = entry.ukIpa,
+                        hasAudio = true,
+                        onClick = {
+                            audioManager.playHumanPronunciation(
+                                word = entry.word,
+                                accent = Accent.UK,
+                                audioUrl = entry.ukAudioUrl,
+                                key = "head_uk_${entry.word}"
                             )
-                        }
-                    }
-                }
-                if (!hasUs && !hasUk) {
-                    Text(
-                        text = "لا يوجد صوت متاح",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("pronounce_uk_button")
                     )
                 }
             }
@@ -1224,7 +1364,7 @@ private fun PosGroupCard(
     showMachineLabel: Boolean,
     playingKey: String?,
     chipMeanings: Map<String, String>,
-    onSpeakSentence: (sentence: String, audioUrl: String?, key: String) -> Unit,
+    onSpeakSentence: (sentence: String, audioUrl: String?, key: String, accentOverride: Accent?) -> Unit,
     onStopAudio: () -> Unit,
     onChipClick: (String) -> Unit,
     onOpenWord: (String) -> Unit
@@ -1302,7 +1442,7 @@ private fun SenseCardContent(
     showMachineLabel: Boolean,
     playingKey: String?,
     chipMeanings: Map<String, String>,
-    onSpeakSentence: (sentence: String, audioUrl: String?, key: String) -> Unit,
+    onSpeakSentence: (sentence: String, audioUrl: String?, key: String, accentOverride: Accent?) -> Unit,
     onStopAudio: () -> Unit,
     onChipClick: (String) -> Unit,
     onOpenWord: (String) -> Unit
@@ -1358,31 +1498,43 @@ private fun SenseCardContent(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // BUG 8: Source definition on TOP, target translation directly BELOW it
-                CompositionLocalProvider(
-                    LocalLayoutDirection provides if (defIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
-                ) {
-                    Text(
-                        text = sense.definition,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = colors.onSurface,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                if (translatedMeaning != null) {
-                    if (!defIsArabic && showArabicTranslations) {
+                if (!defIsArabic) {
+                    // EN -> AR: Arabic meaning ABOVE, English definition directly BELOW
+                    if (showArabicTranslations && translatedMeaning != null) {
                         ArabicTranslatedText(
                             text = translatedMeaning,
                             isMachineTranslated = sense.definitionArabicIsMachine,
                             showMachineLabel = showMachineLabel,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                             color = colors.primary,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("sense_arabic_def_${sense.partOfSpeech}_${sense.index}")
                         )
-                    } else if (defIsArabic) {
+                    }
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = sense.definition,
+                            style = if (showArabicTranslations && translatedMeaning != null) {
+                                MaterialTheme.typography.bodyMedium
+                            } else {
+                                MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                            },
+                            color = colors.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                } else {
+                    // AR -> EN: Arabic source ABOVE, English meaning directly BELOW
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Text(
+                            text = sense.definition,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = colors.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (translatedMeaning != null) {
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
                                 text = translatedMeaning,
@@ -1395,12 +1547,20 @@ private fun SenseCardContent(
                         }
                     }
                 }
+                if (!sense.usageNote.isNullOrBlank()) {
+                    Text(
+                        text = sense.usageNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
-        // BUG 1, BUG 5, BUG 8: Examples from the same sense with speaker button (EN & AR) + translation directly below
-        sense.examples.forEachIndexed { exIdx, example ->
-            val exKey = "ex_${sense.partOfSpeech}_${sense.index}_$exIdx"
+        // Concise example (1 per sense) with dual US/UK speakers (EN) or speaker (AR) + translation below
+        sense.examples.take(1).forEachIndexed { exIdx, example ->
+            val exPrefix = "ex_${sense.partOfSpeech}_${sense.index}_$exIdx"
             val exIsArabic = ArabicTextUtils.containsArabicLetters(example)
             val exTranslation = sense.exampleTranslations[example]?.takeIf { it.isNotBlank() }
             val exAudioUrl = sense.exampleAudioUrls[example]
@@ -1427,12 +1587,12 @@ private fun SenseCardContent(
                                 modifier = Modifier.weight(1f)
                             )
                             SentenceSpeakerButton(
-                                isPlaying = playingKey == exKey,
+                                isPlaying = playingKey == exPrefix,
                                 onClick = {
-                                    if (playingKey == exKey) onStopAudio()
-                                    else onSpeakSentence(example, exAudioUrl, exKey)
+                                    if (playingKey == exPrefix) onStopAudio()
+                                    else onSpeakSentence(example, exAudioUrl, exPrefix, null)
                                 },
-                                modifier = Modifier.testTag("speaker_$exKey")
+                                modifier = Modifier.testTag("speaker_$exPrefix")
                             )
                         }
                         if (exTranslation != null) {
@@ -1443,7 +1603,7 @@ private fun SenseCardContent(
                                     color = colors.onSurfaceVariant,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .testTag("arabic_$exKey")
+                                        .testTag("arabic_$exPrefix")
                                 )
                             }
                         }
@@ -1458,13 +1618,12 @@ private fun SenseCardContent(
                                 targetWord = word,
                                 modifier = Modifier.weight(1f)
                             )
-                            SentenceSpeakerButton(
-                                isPlaying = playingKey == exKey,
-                                onClick = {
-                                    if (playingKey == exKey) onStopAudio()
-                                    else onSpeakSentence(example, exAudioUrl, exKey)
-                                },
-                                modifier = Modifier.testTag("speaker_$exKey")
+                            SentenceDualSpeakerButtons(
+                                playingKey = playingKey,
+                                keyPrefix = exPrefix,
+                                onPlayUs = { onSpeakSentence(example, exAudioUrl, "${exPrefix}_us", Accent.US) },
+                                onPlayUk = { onSpeakSentence(example, exAudioUrl, "${exPrefix}_uk", Accent.UK) },
+                                onStop = onStopAudio
                             )
                         }
 
@@ -1477,7 +1636,7 @@ private fun SenseCardContent(
                                 color = colors.onSurfaceVariant,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("arabic_$exKey")
+                                    .testTag("arabic_$exPrefix")
                             )
                         }
                     }
@@ -1524,10 +1683,17 @@ private fun PhrasalIdiomDetailCard(
     showMachineLabel: Boolean,
     playingKey: String?,
     onTapPhrase: () -> Unit,
-    onSpeak: (text: String, audioUrl: String?, key: String) -> Unit
+    onSpeak: (text: String, audioUrl: String?, key: String, accentOverride: Accent?) -> Unit,
+    onStop: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val phraseKey = "phrasal_${item.phrase.hashCode()}"
+    val phrasePrefix = "phrasal_${item.phrase.hashCode()}"
+    val phraseIsArabic = ArabicTextUtils.containsArabicLetters(item.phrase)
+    val badgeText = when {
+        item.category == "COMPOUND" -> "تعبير مركب"
+        item.isIdiom || item.category == "IDIOM" -> "تعبير اصطلاحي"
+        else -> "فعل مركب"
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
@@ -1544,7 +1710,9 @@ private fun PhrasalIdiomDetailCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (phraseIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                ) {
                     Text(
                         text = item.phrase,
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
@@ -1554,21 +1722,31 @@ private fun PhrasalIdiomDetailCard(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                 }
-                UsageLabelChip(text = if (item.isIdiom) "تعبير اصطلاحي" else "فعل مركب")
+                UsageLabelChip(text = badgeText)
             }
 
-            SentenceSpeakerButton(
-                isPlaying = playingKey == phraseKey,
-                onClick = { onSpeak(item.phrase, null, phraseKey) }
-            )
+            if (phraseIsArabic) {
+                SentenceSpeakerButton(
+                    isPlaying = playingKey == "${phrasePrefix}_ar",
+                    onClick = { onSpeak(item.phrase, null, "${phrasePrefix}_ar", null) }
+                )
+            } else {
+                SentenceDualSpeakerButtons(
+                    playingKey = playingKey,
+                    keyPrefix = phrasePrefix,
+                    onPlayUs = { onSpeak(item.phrase, null, "${phrasePrefix}_us", Accent.US) },
+                    onPlayUk = { onSpeak(item.phrase, null, "${phrasePrefix}_uk", Accent.UK) },
+                    onStop = onStop
+                )
+            }
         }
 
-        if (item.englishMeaning.isNotBlank()) {
+        if (!item.grammarStructure.isNullOrBlank()) {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(
-                    text = item.englishMeaning,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurface,
+                    text = item.grammarStructure,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.secondary,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1585,8 +1763,29 @@ private fun PhrasalIdiomDetailCard(
             )
         }
 
+        if (item.englishMeaning.isNotBlank()) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = item.englishMeaning,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurface,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        if (!item.usageExplanation.isNullOrBlank()) {
+            Text(
+                text = item.usageExplanation,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
         if (item.example.isNotBlank()) {
-            val exKey = "phrasal_ex_${item.phrase.hashCode()}"
+            val exPrefix = "phrasal_ex_${item.phrase.hashCode()}"
+            val exIsArabic = ArabicTextUtils.containsArabicLetters(item.example)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = colors.surfaceVariant,
@@ -1601,15 +1800,31 @@ private fun PhrasalIdiomDetailCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        HighlightedEnglishText(
-                            sentence = item.example,
-                            targetWord = item.phrase,
-                            modifier = Modifier.weight(1f)
-                        )
-                        SentenceSpeakerButton(
-                            isPlaying = playingKey == exKey,
-                            onClick = { onSpeak(item.example, item.exampleAudioUrl, exKey) }
-                        )
+                        if (exIsArabic) {
+                            Text(
+                                text = item.example,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SentenceSpeakerButton(
+                                isPlaying = playingKey == "${exPrefix}_ar",
+                                onClick = { onSpeak(item.example, item.exampleAudioUrl, "${exPrefix}_ar", null) }
+                            )
+                        } else {
+                            HighlightedEnglishText(
+                                sentence = item.example,
+                                targetWord = item.phrase,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SentenceDualSpeakerButtons(
+                                playingKey = playingKey,
+                                keyPrefix = exPrefix,
+                                onPlayUs = { onSpeak(item.example, item.exampleAudioUrl, "${exPrefix}_us", Accent.US) },
+                                onPlayUk = { onSpeak(item.example, item.exampleAudioUrl, "${exPrefix}_uk", Accent.UK) },
+                                onStop = onStop
+                            )
+                        }
                     }
                     if (showArabicTranslations && !item.exampleArabic.isNullOrBlank()) {
                         ArabicTranslatedText(

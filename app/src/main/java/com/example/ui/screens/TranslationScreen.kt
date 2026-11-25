@@ -65,11 +65,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.ChunkSlice
 import com.example.core.LanguagePackInfo
 import com.example.ui.components.AppIcons
 import com.example.ui.components.AudioSpeedSelector
+import com.example.ui.components.HighlightableSentencesText
 import com.example.ui.components.LongTextAudioBar
 import com.example.ui.viewmodel.TranslationViewModel
 import kotlinx.coroutines.launch
@@ -90,6 +92,7 @@ fun TranslationScreen(
     val languages by viewModel.languages.collectAsStateWithLifecycle()
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
     val ttsProgress by audioManager.ttsProgress.collectAsStateWithLifecycle()
+    val readerState by audioManager.readerState.collectAsStateWithLifecycle()
     val audioSpeed by audioManager.audioSpeed.collectAsStateWithLifecycle()
 
     var selectingSource by remember { mutableStateOf(false) }
@@ -367,6 +370,7 @@ fun TranslationScreen(
 
                 if (state.inputText.isNotBlank()) {
                     item(key = "input_audio_controls") {
+                        val isEnglishInput = !ArabicTextUtils.containsArabicLetters(state.inputText)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -378,15 +382,21 @@ fun TranslationScreen(
                                     isPlaying = playingKey == "tr_input_text",
                                     ttsProgress = ttsProgress,
                                     onPlayClick = {
-                                        audioManager.playSentenceAudio(
-                                            sentence = state.inputText,
-                                            audioUrl = null,
-                                            key = "tr_input_text"
+                                        audioManager.startLongReading(
+                                            key = "tr_input_text",
+                                            text = state.inputText
                                         )
                                     },
                                     onStopClick = { audioManager.stopPlayback() },
                                     playTag = "tr_input_audio_play",
-                                    stopTag = "tr_input_audio_stop"
+                                    stopTag = "tr_input_audio_stop",
+                                    readerState = readerState,
+                                    onPauseClick = { audioManager.pauseLongReading() },
+                                    onResumeClick = { audioManager.resumeLongReading() },
+                                    onSkipPreviousClick = { audioManager.skipPrevious() },
+                                    onSkipNextClick = { audioManager.skipNext() },
+                                    onSelectAccent = { audioManager.switchReaderAccent(it) },
+                                    isEnglishContent = isEnglishInput
                                 )
                             }
                             AudioSpeedSelector(
@@ -466,25 +476,37 @@ fun TranslationScreen(
                                         }
                                     }
                                 }
-                                Text(
+                                val isOutputArabic = ArabicTextUtils.containsArabicLetters(state.shortOutput)
+                                val isOutputReading = playingKey == "tr_short_output" && readerState.isActive
+                                HighlightableSentencesText(
                                     text = state.shortOutput,
+                                    isArabic = isOutputArabic,
+                                    isActiveReader = isOutputReading,
+                                    activeSentenceIndex = readerState.currentIndex,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = colors.onSurface
+                                    color = colors.onSurface,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                                 LongTextAudioBar(
                                     title = "استماع للترجمة",
                                     isPlaying = playingKey == "tr_short_output",
                                     ttsProgress = ttsProgress,
                                     onPlayClick = {
-                                        audioManager.playSentenceAudio(
-                                            sentence = state.shortOutput,
-                                            audioUrl = null,
-                                            key = "tr_short_output"
+                                        audioManager.startLongReading(
+                                            key = "tr_short_output",
+                                            text = state.shortOutput
                                         )
                                     },
                                     onStopClick = { audioManager.stopPlayback() },
                                     playTag = "tr_short_audio_play",
-                                    stopTag = "tr_short_audio_stop"
+                                    stopTag = "tr_short_audio_stop",
+                                    readerState = readerState,
+                                    onPauseClick = { audioManager.pauseLongReading() },
+                                    onResumeClick = { audioManager.resumeLongReading() },
+                                    onSkipPreviousClick = { audioManager.skipPrevious() },
+                                    onSkipNextClick = { audioManager.skipNext() },
+                                    onSelectAccent = { audioManager.switchReaderAccent(it) },
+                                    isEnglishContent = !isOutputArabic
                                 )
                             }
                         }
@@ -543,17 +565,23 @@ fun TranslationScreen(
                                                 coroutineScope.launch {
                                                     val fullText = viewModel.readAllTranslatedText()
                                                     if (fullText.isNotBlank()) {
-                                                        audioManager.playSentenceAudio(
-                                                            sentence = fullText,
-                                                            audioUrl = null,
-                                                            key = "tr_streamed_out"
+                                                        audioManager.startLongReading(
+                                                            key = "tr_streamed_out",
+                                                            text = fullText
                                                         )
                                                     }
                                                 }
                                             },
                                             onStopClick = { audioManager.stopPlayback() },
                                             playTag = "tr_streamed_audio_play",
-                                            stopTag = "tr_streamed_audio_stop"
+                                            stopTag = "tr_streamed_audio_stop",
+                                            readerState = readerState,
+                                            onPauseClick = { audioManager.pauseLongReading() },
+                                            onResumeClick = { audioManager.resumeLongReading() },
+                                            onSkipPreviousClick = { audioManager.skipPrevious() },
+                                            onSkipNextClick = { audioManager.skipNext() },
+                                            onSelectAccent = { audioManager.switchReaderAccent(it) },
+                                            isEnglishContent = state.targetCode.equals("en", ignoreCase = true)
                                         )
                                     }
                                     AudioSpeedSelector(

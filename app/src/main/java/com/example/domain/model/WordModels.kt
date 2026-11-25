@@ -13,6 +13,7 @@ enum class LanguageDirection {
 enum class SenseSource {
     FREE_DICTIONARY,
     WIKTIONARY,
+    WORDNET,
     OFFLINE_PACK
 }
 
@@ -34,6 +35,10 @@ data class SenseItem(
     val usageLabels: List<String> = emptyList(),
     val spellingVariantLabel: String? = null,
     val otherSpellingWord: String? = null,
+    val usageNote: String? = null,
+    val headwordVariant: String? = null,
+    val isFigurative: Boolean = false,
+    val isTechnical: Boolean = false,
     val source: SenseSource = SenseSource.FREE_DICTIONARY
 )
 
@@ -93,7 +98,10 @@ data class PhraseDetailItem(
     val exampleArabic: String? = null,
     val exampleIsMachine: Boolean = false,
     val exampleAudioUrl: String? = null,
-    val isIdiom: Boolean = false
+    val isIdiom: Boolean = false,
+    val category: String = "",
+    val usageExplanation: String? = null,
+    val grammarStructure: String? = null
 )
 
 @Immutable
@@ -103,7 +111,9 @@ data class DetectedIdiom(
     val englishMeaning: String = "",
     val arabicMeaning: String? = null,
     val isArabicMachine: Boolean = false,
-    val example: String = ""
+    val example: String = "",
+    val isPhrasalVerb: Boolean = false,
+    val usageNote: String? = null
 )
 
 @Immutable
@@ -140,6 +150,8 @@ data class WordEntry(
     val displayWord: String = word,
     val isArabicWord: Boolean = false,
     val lang: String = "en",
+    val transliteration: String = "",
+    val vocalizedForms: List<String> = emptyList(),
     val usIpa: String = "",
     val ukIpa: String = "",
     val usAudioUrl: String? = null,
@@ -151,6 +163,7 @@ data class WordEntry(
     val synonyms: List<String> = emptyList(),
     val antonyms: List<String> = emptyList(),
     val collocations: List<String> = emptyList(),
+    val compoundExpressions: List<String> = emptyList(),
     val prepositionsAndPhrases: List<String> = emptyList(),
     val phrasalVerbsAndIdioms: List<PhraseDetailItem> = emptyList(),
     val wordFamily: List<WordFamilyItem> = emptyList(),
@@ -159,6 +172,7 @@ data class WordEntry(
     val generalTerms: List<String> = emptyList(),
     val specificTerms: List<String> = emptyList(),
     val relatedWords: List<String> = emptyList(),
+    val relatedExplanations: Map<String, String> = emptyMap(),
     val tatoebaSentences: List<TatoebaSentence> = emptyList(),
     val hasWiktionaryAttribution: Boolean = false,
     val hasTatoebaAttribution: Boolean = false,

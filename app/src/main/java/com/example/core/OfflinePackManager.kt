@@ -73,23 +73,32 @@ class OfflinePackManager(
 
     private var downloadJob: Job? = null
 
+    @Volatile
+    private var initialized = false
+
     val packDownloadUrl: String
         get() = "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/dictionary-pack/dictionary-pack.json.gz"
 
-    init {
-        scope.launch {
-            refreshStatus()
-        }
+    suspend fun ensureInitialized() {
+        if (initialized) return
+        initialized = true
+        refreshStatus()
     }
 
     suspend fun refreshStatus() {
-        val count = withContext(Dispatchers.IO) { dao.getOfflinePackCount() }
-        val diskBytes = if (count > 0) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
-        _state.value = OfflinePackState.Ready(
-            isInstalled = count > 0,
-            wordCount = count,
-            diskSizeBytes = diskBytes
-        )
+        try {
+            val count = withContext(Dispatchers.IO) { dao.getOfflinePackCount() }
+            val diskBytes = if (count > 0) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
+            _state.value = OfflinePackState.Ready(
+                isInstalled = count > 0,
+                wordCount = count,
+                diskSizeBytes = diskBytes
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed refreshing offline pack status", e)
+        }
     }
 
     fun startDownload() {

@@ -15,7 +15,10 @@
     <string name="synonyms_title">المترادفات</string>
     <string name="antonyms_title">المتضادات</string>
     <string name="collocations_title">المتلازمات اللفظية</string>
-    <string name="phrases_title">حروف الجر والأفعال المركبة</string>
+    <string name="phrases_title">حروف الجر والتراكيب</string>
+    <string name="phrasal_verbs_title">الأفعال المركبة</string>
+    <string name="idioms_expressions_title">التعابير الاصطلاحية والعبارات</string>
+    <string name="compound_expressions_title">التعابير المركبة والمتلازمات</string>
     <string name="similar_words_title">عائلة الكلمة</string>
     <string name="confusables_title">كلمات يسهل الخلط بينها</string>
     <string name="more_examples_title">أمثلة إضافية (ترجمة بشرية من Tatoeba)</string>

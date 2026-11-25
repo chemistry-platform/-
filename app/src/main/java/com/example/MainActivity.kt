@@ -19,8 +19,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -34,6 +36,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.example.core.CrashReporter
 import com.example.core.UpdateUiState
 import com.example.di.AppContainer
 import com.example.domain.model.LanguageDirection
@@ -53,6 +56,7 @@ import com.example.ui.navigation.SourcesCreditsRoute
 import com.example.ui.navigation.ToeflIeltsRoute
 import com.example.ui.navigation.TranslationRoute
 import com.example.ui.navigation.WordDetailRoute
+import com.example.ui.screens.CrashReportScreen
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.ExamInfoScreen
 import com.example.ui.screens.FavoritesScreen
@@ -86,7 +90,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        appContainer = AppContainer(this)
+        appContainer = (application as AlMakhzanjiApplication).appContainer
         enableEdgeToEdge()
 
         setContent {
@@ -112,15 +116,22 @@ class MainActivity : ComponentActivity() {
             }
 
             AlMakhzanjiTheme(themeMode = themeMode) {
-                AlMakhzanjiApp(appContainer = appContainer)
+                var pendingCrashReport by remember {
+                    mutableStateOf(CrashReporter.readLastCrash(this@MainActivity))
+                }
+                val reportText = pendingCrashReport
+                if (reportText != null) {
+                    CrashReportScreen(
+                        crashTrace = reportText,
+                        onContinueToApp = {
+                            CrashReporter.clearLastCrash(this@MainActivity)
+                            pendingCrashReport = null
+                        }
+                    )
+                } else {
+                    AlMakhzanjiApp(appContainer = appContainer)
+                }
             }
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::appContainer.isInitialized) {
-            appContainer.release()
         }
     }
 }
@@ -168,8 +179,11 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
         else -> null
     }
 
-    // Automatic background check on app launch and every time Home screen becomes active
+    // Deferred heavy warmups & update check after first frame
     LaunchedEffect(Unit) {
+        appContainer.translationManager.ensureLanguagesLoaded()
+        appContainer.offlinePackManager.ensureInitialized()
+        appContainer.audioPlayerManager.prepareTtsCheckIfNeeded()
         updateManager.checkForUpdate(force = false)
     }
 
