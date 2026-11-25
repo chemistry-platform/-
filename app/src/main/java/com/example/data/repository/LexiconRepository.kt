@@ -2014,6 +2014,125 @@ class LexiconRepository(
         }
     }
 
+    suspend fun loadArabicIdiomDetails(
+        phrases: List<String>,
+        baseWord: String = "",
+        maxCount: Int = 12
+    ): List<PhraseDetailItem> = withContext(Dispatchers.IO) {
+        val candidates = phrases.map { it.trim() }
+            .filter { it.isNotBlank() && it.contains(" ") }
+            .distinctBy { ArabicTextUtils.normalizeArabicForMatching(it) }
+            .take(maxCount)
+        if (candidates.isEmpty()) return@withContext emptyList()
+
+        val now = System.currentTimeMillis()
+        val semaphore = Semaphore(3)
+        val isOnline = networkMonitor.isOnline()
+        val packReady = translationManager.isPairDownloaded(TranslateLanguage.ARABIC, TranslateLanguage.ENGLISH)
+        val curatedByNorm = ContextualTranslationAnalyzer.getCuratedPhrasesForHeadword(baseWord, isArabic = true)
+            .associateBy { ArabicTextUtils.normalizeArabicForMatching(it.phrase) }
+
+        coroutineScope {
+            candidates.map { phrase ->
+                async {
+                    val normKey = ArabicTextUtils.normalizeArabicForMatching(phrase)
+                    val cacheKey = "ar_$normKey|$SRC_PHRASE_DETAIL"
+                    val cached = dao.getApiCache(cacheKey)
+                    if (cached != null && (now - cached.timestampMs) <= CACHE_STALE_MS) {
+                        val decoded = decodeOrNull<PhraseDetailItem>(cached.payloadJson)
+                        if (decoded != null && decoded.englishMeaning.isNotBlank()) {
+                            return@async decoded
+                        }
+                    }
+
+                    curatedByNorm[normKey]?.let { known ->
+                        val item = PhraseDetailItem(
+                            phrase = known.phrase,
+                            englishMeaning = known.englishMeaning,
+                            arabicMeaning = known.arabicMeaning,
+                            isArabicMachine = false,
+                            example = known.example,
+                            isIdiom = !known.isPhrasalVerb,
+                            category = if (known.isPhrasalVerb) "PHRASAL_VERB" else "IDIOM",
+                            usageExplanation = known.usageNote
+                        )
+                        saveSourceCache("ar_$normKey", SRC_PHRASE_DETAIL, json.encodeToString(item))
+                        return@async item
+                    }
+
+                    val directOverride = ContextualTranslationAnalyzer.findDirectContextualOverride(
+                        text = phrase,
+                        sourceCode = TranslateLanguage.ARABIC,
+                        targetCode = TranslateLanguage.ENGLISH
+                    )
+                    if (!directOverride.isNullOrBlank()) {
+                        val item = PhraseDetailItem(
+                            phrase = phrase,
+                            englishMeaning = directOverride,
+                            arabicMeaning = null,
+                            isArabicMachine = false,
+                            isIdiom = true,
+                            category = "IDIOM",
+                            usageExplanation = "تعبير اصطلاحي يُفهم معناه من السياق لا من الترجمة الحرفية"
+                        )
+                        saveSourceCache("ar_$normKey", SRC_PHRASE_DETAIL, json.encodeToString(item))
+                        return@async item
+                    }
+
+                    var engMeaning: String? = null
+                    var exArabic = ""
+                    var exEnglish: String? = null
+
+                    if (isOnline) {
+                        semaphore.withPermit {
+                            val wik = withTimeoutOrNull(4_500L) {
+                                fetchArabicWiktionarySource(
+                                    slugWithHamza = ArabicTextUtils.stripArabicDiacriticsKeepHamza(phrase),
+                                    normalizedArabic = normKey,
+                                    searchedDisplayWord = phrase
+                                )
+                            }
+                            val firstSense = wik?.takeIf { !it.notFound }?.senses?.firstOrNull()
+                            if (firstSense != null) {
+                                engMeaning = firstSense.definitionArabic?.takeIf { it.isNotBlank() }
+                                exArabic = firstSense.examples.firstOrNull().orEmpty()
+                                exEnglish = firstSense.exampleTranslations[exArabic]
+                            }
+                        }
+                    }
+
+                    if (engMeaning.isNullOrBlank() && packReady) {
+                        val prepared = ContextualTranslationAnalyzer.prepareArabicForTranslation(phrase)
+                        val translated = translationManager.translateShortIfReady(
+                            text = prepared,
+                            sourceCode = TranslateLanguage.ARABIC,
+                            targetCode = TranslateLanguage.ENGLISH
+                        ).getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+                        if (!translated.isNullOrBlank()) {
+                            engMeaning = ContextualTranslationAnalyzer.refineEnglishTranslation(phrase, translated)
+                        }
+                    }
+
+                    val finalEng = engMeaning?.takeIf { it.isNotBlank() } ?: return@async null
+                    val item = PhraseDetailItem(
+                        phrase = phrase,
+                        englishMeaning = finalEng,
+                        arabicMeaning = null,
+                        isArabicMachine = false,
+                        example = exArabic,
+                        exampleArabic = exEnglish,
+                        exampleIsMachine = false,
+                        isIdiom = true,
+                        category = "IDIOM",
+                        usageExplanation = "تعبير اصطلاحي عربي يُترجم حسب المعنى المقصود"
+                    )
+                    saveSourceCache("ar_$normKey", SRC_PHRASE_DETAIL, json.encodeToString(item))
+                    item
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
+
     // --- Source A: Free Dictionary API (with Section 13 explicit usage/spelling label parsing) ---
     private suspend fun fetchFreeDictionarySource(word: String): FreeDictCachedPayload? {
         return try {
@@ -2178,8 +2297,20 @@ class LexiconRepository(
             val arabicGlosses = mutableListOf<CachedArabicGloss>()
             val baseLower = baseWord.trim().lowercase(Locale.US)
 
-            val translationTargets = targets.filter { it.second == "translations" }.take(3)
-            val otherTargets = targets.filter { it.second != "translations" }.take(8)
+            val translationTargets = targets.filter { it.second == "translations" }.take(6)
+            val sectionPriority = mapOf(
+                "idiom" to 1,
+                "phrasal" to 2,
+                "collocation" to 3,
+                "compound" to 4,
+                "synonyms" to 5,
+                "antonyms" to 6,
+                "derived" to 7,
+                "related" to 8
+            )
+            val otherTargets = targets.filter { it.second != "translations" }
+                .sortedBy { sectionPriority[it.second] ?: 99 }
+                .take(16)
 
             coroutineScope {
                 val transDeferred = translationTargets.map { (idx, _) ->
@@ -2280,7 +2411,7 @@ class LexiconRepository(
                 antonyms = antonyms.distinctBy { it.lowercase(Locale.US) }.take(25),
                 derivedWords = derivedWords.distinctBy { it.lowercase(Locale.US) }.take(25),
                 relatedTerms = relatedTerms.distinctBy { it.lowercase(Locale.US) }.take(25),
-                arabicGlosses = arabicGlosses.take(40)
+                arabicGlosses = arabicGlosses.take(80)
             )
         } catch (e: CancellationException) {
             throw e
@@ -2884,6 +3015,9 @@ class LexiconRepository(
             offlinePack?.prepositionsAndPhrases.orEmpty() +
             curatedArPhrases.map { it.phrase })
             .map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25)
+        val allArIdioms = (wiktionary?.idioms.orEmpty() +
+            curatedArPhrases.filter { it.isIdiom }.map { it.phrase })
+            .map { it.trim() }.filter { it.isNotBlank() && it.contains(" ") }.distinct().take(25)
 
         val tatoebaList = tatoeba?.sentences.orEmpty().take(5)
         val hasAnyData = posGroups.isNotEmpty() ||
@@ -2918,6 +3052,7 @@ class LexiconRepository(
             antonyms = allAntonyms,
             collocations = offlinePack?.collocations.orEmpty(),
             prepositionsAndPhrases = allPhrases,
+            idioms = allArIdioms,
             phrasalVerbsAndIdioms = curatedArPhrases,
             wordFamily = allDerived,
             relatedWords = allRelated,
@@ -3061,6 +3196,12 @@ class LexiconRepository(
         val curatedPhrasals = curatedForWord.filter { it.isPhrasalVerb }.map { it.phrase }
         val curatedIdioms = curatedForWord.filter { !it.isPhrasalVerb }.map { it.phrase }
 
+        val allIdioms = (wiktionary?.idioms.orEmpty() + curatedIdioms)
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.contains(" ") && !it.equals(word, ignoreCase = true) }
+            .distinctBy { it.lowercase(Locale.US) }
+            .take(30)
+
         val compoundExpressions = (wiktionary?.compounds.orEmpty() +
             wiktionary?.collocations.orEmpty())
             .map { it.trim() }
@@ -3079,7 +3220,7 @@ class LexiconRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(40)
+            .take(45)
 
         val initialPhrasalAndIdiomItems = curatedForWord.map { k ->
             val cat = if (k.isPhrasalVerb) "PHRASAL_VERB" else "IDIOM"
@@ -3126,6 +3267,7 @@ class LexiconRepository(
             displayedTatoeba.isNotEmpty() ||
             relatedWords.isNotEmpty() ||
             prepositionsAndPhrases.isNotEmpty() ||
+            allIdioms.isNotEmpty() ||
             machineTranslations.isNotEmpty()
 
         if (!hasAnyData) return null
@@ -3153,6 +3295,7 @@ class LexiconRepository(
             collocations = collocations,
             compoundExpressions = compoundExpressions,
             prepositionsAndPhrases = prepositionsAndPhrases,
+            idioms = allIdioms,
             phrasalVerbsAndIdioms = initialPhrasalAndIdiomItems,
             wordFamily = wordFamily,
             confusableCandidates = confusableCandidates,

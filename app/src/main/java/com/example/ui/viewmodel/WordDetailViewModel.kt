@@ -308,12 +308,51 @@ class WordDetailViewModel(
             if (entry.phrasalVerbsAndIdioms.isNotEmpty()) {
                 _phrasalDetails.value = entry.phrasalVerbsAndIdioms
             }
+            val existingNorm = entry.phrasalVerbsAndIdioms
+                .map { ArabicTextUtils.normalizeArabicForMatching(it.phrase) }
+                .toSet()
+            val missingArIdioms = entry.idioms
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it.contains(" ") && ArabicTextUtils.normalizeArabicForMatching(it) !in existingNorm }
+            if (missingArIdioms.isEmpty()) return
+
+            phrasalsJob?.cancel()
+            phrasalsJob = viewModelScope.launch {
+                _isLoadingPhrasals.value = true
+                try {
+                    val loaded = repository.loadArabicIdiomDetails(
+                        phrases = missingArIdioms,
+                        baseWord = entry.word,
+                        maxCount = 10
+                    )
+                    val merged = (entry.phrasalVerbsAndIdioms + loaded)
+                        .distinctBy { ArabicTextUtils.normalizeArabicForMatching(it.phrase) }
+                    _phrasalDetails.value = merged
+                } finally {
+                    _isLoadingPhrasals.value = false
+                }
+            }
             return
         }
-        val phrases = (entry.prepositionsAndPhrases + entry.compoundExpressions)
+
+        val idiomList = entry.idioms
             .map { it.trim() }
             .filter { it.isNotBlank() && it.contains(" ") }
             .distinctBy { it.lowercase(Locale.US) }
+        val idiomSet = idiomList.map { it.lowercase(Locale.US) }.toSet()
+
+        val phrasalAndOther = entry.prepositionsAndPhrases
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.contains(" ") && it.lowercase(Locale.US) !in idiomSet }
+            .distinctBy { it.lowercase(Locale.US) }
+        val compoundList = entry.compoundExpressions
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.contains(" ") && it.lowercase(Locale.US) !in idiomSet }
+            .distinctBy { it.lowercase(Locale.US) }
+
+        val phrases = (idiomList.take(10) + phrasalAndOther.take(12) + compoundList.take(6))
+            .distinctBy { it.lowercase(Locale.US) }
+
         if (phrases.isEmpty()) {
             if (entry.phrasalVerbsAndIdioms.isNotEmpty()) {
                 _phrasalDetails.value = entry.phrasalVerbsAndIdioms
@@ -332,8 +371,9 @@ class WordDetailViewModel(
                 val loaded = repository.loadPhrasalAndIdiomDetails(
                     phrases = phrases,
                     baseWord = entry.word,
+                    idiomSet = idiomSet,
                     compoundSet = compoundSet,
-                    maxCount = 18
+                    maxCount = 24
                 )
                 val merged = (loaded + entry.phrasalVerbsAndIdioms)
                     .distinctBy { it.phrase.trim().lowercase(Locale.US) }

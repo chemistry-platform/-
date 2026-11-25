@@ -1,11 +1,14 @@
 package com.example
 
 import com.example.core.ArabicTextUtils
+import com.example.core.AudioPlayerManager
 import com.example.core.ContextualTranslationAnalyzer
 import com.example.core.LinguisticRanker
 import com.example.data.repository.WiktionaryHtmlParser
+import com.example.domain.model.PosSenseGroup
 import com.example.domain.model.SenseItem
 import com.example.domain.model.SenseSource
+import com.example.domain.model.WordEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -267,5 +270,164 @@ class LinguisticUpgradeTest {
             ArabicTextUtils.canonicalizeArabicWithDiacritics("مُرّ"),
             ArabicTextUtils.canonicalizeArabicWithDiacritics("مَرَّ")
         )
+    }
+
+    @Test
+    fun linguisticRanker_extractsMultiPosHeadwordMeaningsForEnglishAndArabic() {
+        assertEquals("فعل • Verb", LinguisticRanker.formatPosBadgeLabel("verb", "فعل"))
+        assertEquals("اسم • Noun", LinguisticRanker.formatPosBadgeLabel("noun", "اسم"))
+        assertEquals("صفة • Adjective", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة"))
+        assertEquals("ظرف • Adverb", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف"))
+
+        val enEntry = WordEntry(
+            word = "run",
+            isArabicWord = false,
+            machineTranslations = listOf("يجري", "يدير"),
+            posGroups = listOf(
+                PosSenseGroup(
+                    partOfSpeech = "verb",
+                    partOfSpeechArabic = "فعل",
+                    senses = listOf(
+                        SenseItem(
+                            index = 1,
+                            partOfSpeech = "verb",
+                            partOfSpeechArabic = "فعل",
+                            definition = "To move swiftly on foot",
+                            definitionArabic = "رَكَضَ؛ يَجْرِي",
+                            definitionArabicIsMachine = false
+                        ),
+                        SenseItem(
+                            index = 2,
+                            partOfSpeech = "verb",
+                            partOfSpeechArabic = "فعل",
+                            definition = "To control or manage",
+                            definitionArabic = "أَدَارَ؛ يُدِيرُ؛ شَغَّلَ",
+                            definitionArabicIsMachine = false
+                        ),
+                        SenseItem(
+                            index = 3,
+                            partOfSpeech = "verb",
+                            partOfSpeechArabic = "فعل",
+                            definition = "To flow",
+                            definitionArabic = "جرى؛ سال",
+                            definitionArabicIsMachine = true
+                        )
+                    )
+                ),
+                PosSenseGroup(
+                    partOfSpeech = "noun",
+                    partOfSpeechArabic = "اسم",
+                    senses = listOf(
+                        SenseItem(
+                            index = 1,
+                            partOfSpeech = "noun",
+                            partOfSpeechArabic = "اسم",
+                            definition = "An act of running",
+                            definitionArabic = "جَرْيٌ؛ سِبَاقٌ؛ شَوْطٌ",
+                            definitionArabicIsMachine = false
+                        )
+                    )
+                )
+            )
+        )
+
+        val enSummaries = LinguisticRanker.extractPosHeadwordMeanings(enEntry)
+        assertEquals(listOf("verb", "noun"), enSummaries.map { it.partOfSpeech })
+        assertEquals("فعل • Verb", enSummaries[0].posBadgeLabel)
+        assertTrue("رَكَضَ" in enSummaries[0].meanings)
+        assertTrue("أَدَارَ" in enSummaries[0].meanings)
+        assertTrue("شَغَّلَ" in enSummaries[0].meanings)
+        assertTrue("سال" in enSummaries[0].meanings)
+        // Machine translation "يجري" matches vocalized "يَجْرِي" and should not duplicate
+        assertEquals(1, enSummaries[0].meanings.count { ArabicTextUtils.normalizeArabicForMatching(it) == "يجري" })
+        // Machine translation "يدير" matches "يُدِيرُ" and should not duplicate
+        assertEquals(1, enSummaries[0].meanings.count { ArabicTextUtils.normalizeArabicForMatching(it) == "يدير" })
+        assertFalse(enSummaries[0].isMachineOnly)
+        assertEquals(listOf("جَرْيٌ", "سِبَاقٌ", "شَوْطٌ"), enSummaries[1].meanings)
+
+        val arEntry = WordEntry(
+            word = "مر",
+            displayWord = "مُرّ",
+            isArabicWord = true,
+            machineTranslations = listOf("bitter", "pass"),
+            posGroups = listOf(
+                PosSenseGroup(
+                    partOfSpeech = "adjective",
+                    partOfSpeechArabic = "صفة",
+                    senses = listOf(
+                        SenseItem(
+                            index = 1,
+                            partOfSpeech = "adjective",
+                            partOfSpeechArabic = "صفة",
+                            definition = "مُرّ",
+                            definitionArabic = "bitter (in taste, mood)",
+                            definitionArabicIsMachine = false
+                        )
+                    )
+                ),
+                PosSenseGroup(
+                    partOfSpeech = "verb",
+                    partOfSpeechArabic = "فعل",
+                    senses = listOf(
+                        SenseItem(
+                            index = 1,
+                            partOfSpeech = "verb",
+                            partOfSpeechArabic = "فعل",
+                            definition = "مَرَّ",
+                            definitionArabic = "to pass by, go past",
+                            definitionArabicIsMachine = false
+                        )
+                    )
+                )
+            )
+        )
+
+        val arSummaries = LinguisticRanker.extractPosHeadwordMeanings(arEntry)
+        assertEquals(listOf("adjective", "verb"), arSummaries.map { it.partOfSpeech })
+        assertEquals("صفة • Adjective", arSummaries[0].posBadgeLabel)
+        assertTrue("bitter (in taste, mood)" in arSummaries[0].meanings)
+        assertTrue("bitter" in arSummaries[0].meanings)
+        assertTrue("to pass by" in arSummaries[1].meanings)
+        assertTrue("go past" in arSummaries[1].meanings)
+        // "pass" from machineTranslations merged into primary group
+        assertTrue("pass" in arSummaries[0].meanings)
+    }
+
+    @Test
+    fun contextualAnalyzer_detectsExpandedEnglishAndArabicIdiomsAndClassifiesIdioms() {
+        val enDetected = ContextualTranslationAnalyzer.detectKnownIdiomsInSentence(
+            sentence = "After her imagination ran wild, he told a joke to break the ice.",
+            isArabic = false
+        ).map { it.phrase }
+        assertTrue("run wild" in enDetected)
+        assertTrue("break the ice" in enDetected)
+
+        assertEquals(
+            "أصاب كبد الحقيقة",
+            ContextualTranslationAnalyzer.findDirectContextualOverride("hit the nail on the head", "en", "ar")
+        )
+
+        val arDetected = ContextualTranslationAnalyzer.detectKnownIdiomsInSentence(
+            sentence = "نحن ننتظر النتيجة على أحر من الجمر وقد تغيرت الأمور في غمضة عين.",
+            isArabic = true
+        ).map { it.phrase }
+        assertTrue("على أحر من الجمر" in arDetected)
+        assertTrue("في غمضة عين" in arDetected)
+
+        assertEquals(
+            "IDIOM",
+            LinguisticRanker.classifyEnglishPhrase(
+                phrase = "dry run",
+                headword = "run",
+                explicitIdioms = setOf("dry run")
+            )
+        )
+    }
+
+    @Test
+    fun audioPlayerManager_splitTextSafelyPreservesSentencesForReaderAndHandlesLongParagraphs() {
+        val multiSentence = "First sentence here. Second sentence follows! Third sentence?"
+        val split = AudioPlayerManager.splitTextSafelyForTts(multiSentence, maxChunkLength = 3800)
+        assertEquals(listOf("First sentence here.", "Second sentence follows!", "Third sentence?"), split)
     }
 }

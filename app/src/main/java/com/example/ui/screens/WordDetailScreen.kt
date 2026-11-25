@@ -81,6 +81,7 @@ import com.example.R
 import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
+import com.example.core.LinguisticRanker
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.ConfusableWordDetail
 import com.example.domain.model.PhraseDetailItem
@@ -1291,43 +1292,127 @@ private fun HeadwordCard(
                 }
             }
 
-            // Quick translations directly under the word & US/UK speaker row (BUG 6 / BUG 8)
-            if (entry.machineTranslations.isNotEmpty() && (entry.isArabicWord || showArabicTranslations)) {
-                if (entry.isArabicWord) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (showMachineLabel) {
-                            Text(
-                                text = "ترجمة آلية",
-                                fontSize = 9.sp,
-                                lineHeight = 11.sp,
-                                color = colors.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
-                        }
-                        ChipWrapRow(
-                            items = entry.machineTranslations,
-                            chipMeanings = chipMeanings,
-                            onChipClick = onChipClick
-                        )
-                    }
+            // Comprehensive quick meanings grouped by Part of Speech directly under word & US/UK audio
+            val posSummaries = remember(entry) {
+                LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = 8)
+            }
+            if ((posSummaries.isNotEmpty() || entry.machineTranslations.isNotEmpty()) && (entry.isArabicWord || showArabicTranslations)) {
+                val allMachineOnly = if (posSummaries.isNotEmpty()) {
+                    posSummaries.all { it.isMachineOnly }
                 } else {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    true
+                }
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("headword_translations_box"),
+                    color = colors.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.75f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        entry.machineTranslations.forEach { arText ->
-                            Surface(
-                                color = colors.surfaceVariant,
-                                shape = RoundedCornerShape(999.dp),
-                                border = BorderStroke(1.dp, colors.outline)
-                            ) {
-                                ArabicTranslatedText(
-                                    text = arText,
-                                    isMachineTranslated = true,
-                                    showMachineLabel = showMachineLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = colors.primary,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "الترجمة",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                color = colors.primary
+                            )
+                            if (showMachineLabel && allMachineOnly) {
+                                Text(
+                                    text = "ترجمة آلية",
+                                    fontSize = 9.sp,
+                                    lineHeight = 11.sp,
+                                    color = colors.onSurfaceVariant.copy(alpha = 0.6f)
                                 )
+                            }
+                        }
+
+                        if (posSummaries.isNotEmpty()) {
+                            posSummaries.forEachIndexed { idx, posSummary ->
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Surface(
+                                        modifier = Modifier.testTag("headword_pos_${posSummary.partOfSpeech}"),
+                                        color = colors.primaryContainer,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = posSummary.posBadgeLabel,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                            color = colors.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+
+                                    CompositionLocalProvider(
+                                        LocalLayoutDirection provides if (entry.isArabicWord) LayoutDirection.Ltr else LayoutDirection.Rtl
+                                    ) {
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            posSummary.meanings.forEach { meaning ->
+                                                Surface(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(999.dp))
+                                                        .clickable { onChipClick(meaning) },
+                                                    color = colors.surface,
+                                                    shape = RoundedCornerShape(999.dp),
+                                                    border = BorderStroke(1.dp, colors.outline)
+                                                ) {
+                                                    Text(
+                                                        text = meaning,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = colors.onSurface,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (idx < posSummaries.lastIndex) {
+                                    HorizontalDivider(
+                                        color = colors.outline.copy(alpha = 0.5f),
+                                        thickness = 0.5.dp
+                                    )
+                                }
+                            }
+                        } else if (entry.isArabicWord) {
+                            ChipWrapRow(
+                                items = entry.machineTranslations,
+                                chipMeanings = chipMeanings,
+                                onChipClick = onChipClick
+                            )
+                        } else {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                entry.machineTranslations.forEach { arText ->
+                                    Surface(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .clickable { onChipClick(arText) },
+                                        color = colors.surface,
+                                        shape = RoundedCornerShape(999.dp),
+                                        border = BorderStroke(1.dp, colors.outline)
+                                    ) {
+                                        Text(
+                                            text = arText,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = colors.primary,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

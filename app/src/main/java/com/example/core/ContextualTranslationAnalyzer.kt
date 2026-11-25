@@ -89,6 +89,55 @@ object ContextualTranslationAnalyzer {
             usageNote = "فعل مركب متعدد السياقات حسب المفعول"
         ),
         IdiomKnowledge(
+            phrase = "run out of steam",
+            englishMeaning = "to lose energy, momentum, or enthusiasm before finishing",
+            arabicMeaning = "تَخُورُ قُوَاهُ؛ يَفْقِدُ حَمَاسَهُ أَوْ زَخَمَهُ",
+            example = "The campaign ran out of steam halfway through the month.",
+            usageNote = "تعبير اصطلاحي يعني التوقف أو الفتور بعد انطلاقة قوية"
+        ),
+        IdiomKnowledge(
+            phrase = "run wild",
+            englishMeaning = "to behave without control or restraint",
+            arabicMeaning = "يَنْفَلِتُ؛ يَسْرَحُ دُونَ رَقِيبٍ أَوْ قَيْدٍ",
+            example = "Her imagination ran wild after reading the story.",
+            usageNote = "تعبير اصطلاحي يدل على عدم الانضباط أو جموح الخيال"
+        ),
+        IdiomKnowledge(
+            phrase = "run the risk",
+            englishMeaning = "to do something that might result in a bad outcome or loss",
+            arabicMeaning = "يُخَاطِرُ بِـ؛ يُعَرِّضُ نَفْسَهُ لِخَطَرِ",
+            example = "If you skip backups, you run the risk of losing your files.",
+            usageNote = "تعبير اصطلاحي: run the risk of + [noun/-ing]"
+        ),
+        IdiomKnowledge(
+            phrase = "dry run",
+            englishMeaning = "a rehearsal or practice session before the actual event",
+            arabicMeaning = "تَجْرِبَةٌ تَمْهِيدِيَّةٌ؛ بَرُوفَا قَبْلَ التَّنْفِيذِ الفِعْلِيِّ",
+            example = "Let's do a dry run of the presentation before tomorrow.",
+            usageNote = "تعبير اصطلاحي عملي"
+        ),
+        IdiomKnowledge(
+            phrase = "hit and run",
+            englishMeaning = "a road accident in which the driver flees without stopping, or a brief sudden attack",
+            arabicMeaning = "حَادِثُ دَهْسٍ وَفِرَارٍ؛ هُجُومٌ خَاطِفٌ",
+            example = "Police are investigating a hit and run near the square.",
+            usageNote = "تعبير اصطلاحي قانوني وعام"
+        ),
+        IdiomKnowledge(
+            phrase = "cut and run",
+            englishMeaning = "to leave a difficult situation suddenly in order to escape trouble",
+            arabicMeaning = "يَلُوذُ بِالْفِرَارِ؛ يَنْسَحِبُ سَرِيعاً عِنْدَ الأَزْمَةِ",
+            example = "Instead of solving the crisis, the partner decided to cut and run.",
+            usageNote = "تعبير اصطلاحي يدل على الهروب من المسؤولية"
+        ),
+        IdiomKnowledge(
+            phrase = "in the running",
+            englishMeaning = "having a realistic chance of winning or being selected",
+            arabicMeaning = "فِي دَائِرَةِ الْمُنَافَسَةِ؛ مُرَشَّحٌ بِقُوَّةٍ",
+            example = "Three candidates are still in the running for the award.",
+            usageNote = "تعبير اصطلاحي في المنافسات والانتخابات"
+        ),
+        IdiomKnowledge(
             phrase = "spring into action",
             englishMeaning = "to suddenly become active and start working or responding quickly",
             arabicMeaning = "يَنْطَلِقُ لِلْعَمَلِ فَوْراً؛ يَتَحَرَّكُ بِسُرْعَةٍ",
@@ -231,6 +280,55 @@ object ContextualTranslationAnalyzer {
             example = "I look forward to hearing from you.",
             isPhrasalVerb = true,
             usageNote = "فعل مركب يتبعه اسم أو مصدر (-ing)"
+        ),
+        IdiomKnowledge(
+            phrase = "break the ice",
+            englishMeaning = "to say or do something to relieve awkwardness or tension and start conversation",
+            arabicMeaning = "يَكْسِرُ الجَلِيدَ؛ يُزِيلُ الحَوَاجِزَ فِي بَدْءِ الحَدِيثِ",
+            example = "He told a joke to break the ice at the meeting.",
+            usageNote = "تعبير اصطلاحي اجتماعي شائع"
+        ),
+        IdiomKnowledge(
+            phrase = "bite the bullet",
+            englishMeaning = "to force yourself to accept or do something difficult or unpleasant",
+            arabicMeaning = "يَتَجَرَّعُ الصَّعْبَ؛ يُوَاجِهُ الأَمْرَ الصَّعْبَ بِشَجَاعَةٍ",
+            example = "We have to bite the bullet and pay for the repair.",
+            usageNote = "تعبير اصطلاحي مجازي"
+        ),
+        IdiomKnowledge(
+            phrase = "hit the nail on the head",
+            englishMeaning = "to describe exactly what is causing a situation or problem",
+            arabicMeaning = "يُصِيبُ كَبِدَ الحَقِيقَةِ؛ يُصِيبُ المَعْنَى تَمَاماً",
+            example = "You hit the nail on the head with that analysis.",
+            usageNote = "تعبير اصطلاحي يدل على دقة الملاحظة"
+        ),
+        IdiomKnowledge(
+            phrase = "burn the midnight oil",
+            englishMeaning = "to work or study late into the night",
+            arabicMeaning = "يَسْهَرُ حَتَّى وَقْتٍ مُتَأَخِّرٍ فِي العَمَلِ أَوِ الدِّرَاسَةِ",
+            example = "Students often burn the midnight oil before final exams.",
+            usageNote = "تعبير اصطلاحي مجازي عن الاجتهاد والسهر"
+        ),
+        IdiomKnowledge(
+            phrase = "spill the beans",
+            englishMeaning = "to reveal a secret or surprise intentionally or by accident",
+            arabicMeaning = "يُفْشِي السِّرَّ؛ يَكْشِفُ المَسْتُورَ",
+            example = "Don't spill the beans about the surprise party.",
+            usageNote = "تعبير اصطلاحي غير رسمي"
+        ),
+        IdiomKnowledge(
+            phrase = "on the same page",
+            englishMeaning = "having the same understanding and agreement about how to proceed",
+            arabicMeaning = "عَلَى وِفَاقٍ تَامٍّ؛ مُتَّفِقُونَ فِي الفَهْمِ وَالتَّوَجُّهِ",
+            example = "Let's review the plan so everyone is on the same page.",
+            usageNote = "تعبير اصطلاحي عملي"
+        ),
+        IdiomKnowledge(
+            phrase = "get out of hand",
+            englishMeaning = "to become chaotic and impossible to control",
+            arabicMeaning = "يَخْرُجُ عَنِ السَّيْطَرَةِ",
+            example = "The argument quickly got out of hand.",
+            usageNote = "تعبير اصطلاحي يدل على فقدان السيطرة"
         )
     )
 
@@ -283,6 +381,41 @@ object ContextualTranslationAnalyzer {
             arabicMeaning = "يَتَوَلَّى إِدَارَةَ شَرِكَةٍ وَتَسْيِيرَ أَعْمَالِهَا",
             example = "هذا الرجل يدير شركة بنجاح.",
             usageNote = "تعبير سياقي (الإدارة وليس الجري)"
+        ),
+        IdiomKnowledge(
+            phrase = "على أحر من الجمر",
+            englishMeaning = "on tenterhooks; eagerly and anxiously waiting",
+            arabicMeaning = "فِي غَايَةِ الشَّوْقِ وَالتَّرَقُّبِ وَالقَلَقِ",
+            example = "ننتظر نتائج الاختبار على أحر من الجمر.",
+            usageNote = "تعبير اصطلاحي عربي بليغ يدل على شدة الانتظار"
+        ),
+        IdiomKnowledge(
+            phrase = "في غمضة عين",
+            englishMeaning = "in the blink of an eye; instantaneously",
+            arabicMeaning = "بِسُرْعَةٍ فَائِقَةٍ؛ فِي لَحْظَةٍ خَاطِفَةٍ",
+            example = "تغيّرت الأحوال في غمضة عين.",
+            usageNote = "تعبير اصطلاحي للسرعة الشديدة"
+        ),
+        IdiomKnowledge(
+            phrase = "لا يمت بصلة",
+            englishMeaning = "to have nothing to do with; completely unrelated",
+            arabicMeaning = "لَا عَلَاقَةَ لَهُ بِالأَمْرِ إِطْلَاقاً",
+            example = "هذا الادعاء لا يمت بصلة إلى الحقيقة.",
+            usageNote = "تعبير اصطلاحي فصيح لنفي أي صلة"
+        ),
+        IdiomKnowledge(
+            phrase = "يصب الزيت على النار",
+            englishMeaning = "to add fuel to the fire; worsen a conflict",
+            arabicMeaning = "يُزِيدُ الأَزْمَةَ اشْتِعَالاً وَتَفَاقُماً",
+            example = "تصريحاته لم تهدّئ الموقف بل صبّت الزيت على النار.",
+            usageNote = "تعبير اصطلاحي مجازي"
+        ),
+        IdiomKnowledge(
+            phrase = "من باب أولى",
+            englishMeaning = "all the more so; even more importantly",
+            arabicMeaning = "بِطَرِيقَةِ الأَحْرَى وَالأَجْدَرِ",
+            example = "إذا احترمت القوانين الصغيرة فمن باب أولى احترام الكبرى.",
+            usageNote = "تعبير فقهي وفصيح شائع"
         )
     )
 
@@ -290,7 +423,12 @@ object ContextualTranslationAnalyzer {
         "actions speak louder than words" to "الأفعال أبلغ من الأقوال.",
         "in the long run" to "على المدى الطويل",
         "spring into action" to "ينطلق للعمل فوراً",
-        "out of action" to "خارج الخدمة"
+        "out of action" to "خارج الخدمة",
+        "break the ice" to "يكسر الحاجز ويمهّد للحديث",
+        "bite the bullet" to "يتجرّع الصعب بشجاعة",
+        "hit the nail on the head" to "أصاب كبد الحقيقة",
+        "spill the beans" to "يفشي السر",
+        "burn the midnight oil" to "يسهر في العمل أو الدراسة"
     )
 
     private val AR_FULL_IDIOM_OVERRIDES: Map<String, String> = mapOf(
@@ -298,7 +436,10 @@ object ContextualTranslationAnalyzer {
         "ضرب عصفورين بحجر واحد" to "Kill two birds with one stone.",
         "على قدم وساق" to "In full swing.",
         "بين عشية وضحاها" to "Overnight.",
-        "في نهاية المطاف" to "In the long run."
+        "في نهاية المطاف" to "In the long run.",
+        "على احر من الجمر" to "Waiting eagerly on tenterhooks.",
+        "في غمضة عين" to "In the blink of an eye.",
+        "لا يمت بصلة" to "Has nothing to do with it."
     )
 
     private val MANAGEMENT_OBJECTS =
@@ -421,6 +562,58 @@ object ContextualTranslationAnalyzer {
         EnContextRewriteRule(
             regex = Regex("\\bbear\\s+in\\s+mind\\b", RegexOption.IGNORE_CASE),
             replacementBuilder = { "remember and consider" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bbreak(?:s|ing)?\\s+the\\s+ice\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "ease tension and start friendly conversation" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bbroke\\s+the\\s+ice\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "eased tension and started friendly conversation" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bbite\\s+the\\s+bullet\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "accept and endure a difficult situation" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bhit\\s+the\\s+nail\\s+on\\s+the\\s+head\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "state the exact truth about the issue" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bburn(?:s|ing|ed|t)?\\s+the\\s+midnight\\s+oil\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "work late into the night" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bspill(?:s|ing|ed|t)?\\s+the\\s+beans\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "reveal the secret" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bon\\s+the\\s+same\\s+page\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "in full agreement and understanding" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bget(?:s|ting)?\\s+out\\s+of\\s+hand\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "become out of control" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bgot\\s+out\\s+of\\s+hand\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "became out of control" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\brun(?:s|ning)?\\s+out\\s+of\\s+steam\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "lose momentum and energy" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bran\\s+out\\s+of\\s+steam\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "lost momentum and energy" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\brun(?:s|ning)?\\s+wild\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "go completely out of restraint" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bran\\s+wild\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "went completely out of restraint" }
         )
     )
 
@@ -448,6 +641,26 @@ object ContextualTranslationAnalyzer {
         ArContextRewriteRule(
             regex = Regex("ضرب\\s+عصفورين\\s+بحجر\\s+واحد"),
             englishEquivalent = "killed two birds with one stone"
+        ),
+        ArContextRewriteRule(
+            regex = Regex("على\\s+أحر\\s+من\\s+الجمر"),
+            englishEquivalent = "on tenterhooks with eager anticipation"
+        ),
+        ArContextRewriteRule(
+            regex = Regex("في\\s+غمضة\\s+عين"),
+            englishEquivalent = "in the blink of an eye"
+        ),
+        ArContextRewriteRule(
+            regex = Regex("لا\\s+يمت\\s+بصلة"),
+            englishEquivalent = "is completely unrelated"
+        ),
+        ArContextRewriteRule(
+            regex = Regex("يصب\\s+الزيت\\s+على\\s+النار"),
+            englishEquivalent = "adds fuel to the fire"
+        ),
+        ArContextRewriteRule(
+            regex = Regex("من\\s+باب\\s+أولى"),
+            englishEquivalent = "all the more reason"
         )
     )
 
@@ -634,6 +847,12 @@ object ContextualTranslationAnalyzer {
             "put" -> "(?:put|puts|putting)"
             "see" -> "(?:see|sees|seeing|saw|seen)"
             "figure" -> "(?:figure|figures|figuring|figured)"
+            "bite" -> "(?:bite|bites|biting|bit|bitten)"
+            "hit" -> "(?:hit|hits|hitting)"
+            "burn" -> "(?:burn|burns|burning|burned|burnt)"
+            "spill" -> "(?:spill|spills|spilling|spilled|spilt)"
+            "get" -> "(?:get|gets|getting|got|gotten)"
+            "cost" -> "(?:cost|costs|costing)"
             else -> Regex.escape(words[0])
         }
         val rest = words.drop(1).joinToString("\\s+") { tok ->

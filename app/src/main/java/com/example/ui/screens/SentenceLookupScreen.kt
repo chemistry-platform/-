@@ -317,7 +317,7 @@ fun SentenceLookupScreen(
 
                             val origAudioKey = if (state.isArabicInput) "sent_original_ar" else "sent_original_en"
                             val isOrigReading = playingKey == origAudioKey && readerState.isActive
-                            val isOrigLong = state.originalText.length > 250 || playingKey == origAudioKey
+                            val isOrigLong = state.originalText.length > 250 || isOrigReading
                             if (state.isArabicInput) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -349,10 +349,16 @@ fun SentenceLookupScreen(
                                         onClick = {
                                             if (playingKey == origAudioKey) {
                                                 audioManager.stopPlayback()
-                                            } else {
+                                            } else if (state.originalText.length > 250) {
                                                 audioManager.startLongReading(
                                                     key = origAudioKey,
                                                     text = state.originalText
+                                                )
+                                            } else {
+                                                audioManager.playSentenceAudio(
+                                                    sentence = state.originalText,
+                                                    audioUrl = null,
+                                                    key = origAudioKey
                                                 )
                                             }
                                         },
@@ -443,7 +449,7 @@ fun SentenceLookupScreen(
                                 if (!mt.isNullOrBlank()) {
                                     val transAudioKey = if (state.isArabicInput) "sent_translated_en" else "sent_translated_ar"
                                     val isTransReading = playingKey == transAudioKey && readerState.isActive
-                                    val isTransLong = mt.length > 250 || playingKey == transAudioKey
+                                    val isTransLong = mt.length > 250 || isTransReading
                                     if (state.isArabicInput) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -518,10 +524,16 @@ fun SentenceLookupScreen(
                                                 onClick = {
                                                     if (playingKey == transAudioKey) {
                                                         audioManager.stopPlayback()
-                                                    } else {
+                                                    } else if (mt.length > 250) {
                                                         audioManager.startLongReading(
                                                             key = transAudioKey,
                                                             text = mt
+                                                        )
+                                                    } else {
+                                                        audioManager.playSentenceAudio(
+                                                            sentence = mt,
+                                                            audioUrl = null,
+                                                            key = transAudioKey
                                                         )
                                                     }
                                                 },

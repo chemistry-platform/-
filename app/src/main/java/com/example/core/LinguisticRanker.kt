@@ -3,7 +3,16 @@ package com.example.core
 import com.example.domain.model.PosSenseGroup
 import com.example.domain.model.SenseItem
 import com.example.domain.model.SenseSource
+import com.example.domain.model.WordEntry
 import java.util.Locale
+
+data class PosHeadwordMeanings(
+    val partOfSpeech: String,
+    val partOfSpeechArabic: String,
+    val posBadgeLabel: String,
+    val meanings: List<String>,
+    val isMachineOnly: Boolean
+)
 
 /**
  * Prioritizes, deduplicates, classifies, and enriches dictionary senses and related expressions
@@ -333,6 +342,190 @@ object LinguisticRanker {
             words.last() in setOf("into", "across", "after", "against", "through") ->
                 "$lower + [شخص / شيء]"
             else -> "$lower (فعل مركب)"
+        }
+    }
+
+    fun formatPosBadgeLabel(partOfSpeech: String, partOfSpeechArabic: String): String {
+        val posKey = partOfSpeech.trim().lowercase(Locale.US)
+        val englishLabel = when (posKey) {
+            "verb" -> "Verb"
+            "noun" -> "Noun"
+            "adjective" -> "Adjective"
+            "adverb" -> "Adverb"
+            "preposition" -> "Preposition"
+            "pronoun" -> "Pronoun"
+            "conjunction" -> "Conjunction"
+            "interjection", "exclamation" -> "Interjection"
+            "determiner" -> "Determiner"
+            "particle" -> "Particle"
+            "numeral" -> "Numeral"
+            "idiom" -> "Idiom"
+            "phrase" -> "Phrase"
+            "proverb" -> "Proverb"
+            "word" -> "Word"
+            else -> posKey.replaceFirstChar { it.titlecase(Locale.US) }
+        }
+        val arabicLabel = partOfSpeechArabic.trim().ifBlank {
+            when (posKey) {
+                "verb" -> "فعل"
+                "noun" -> "اسم"
+                "adjective" -> "صفة"
+                "adverb" -> "ظرف"
+                "preposition" -> "حرف جر"
+                "pronoun" -> "ضمير"
+                "conjunction" -> "أداة ربط"
+                "interjection", "exclamation" -> "صيغة تعجب"
+                "determiner" -> "محدد"
+                "particle" -> "أداة"
+                "numeral" -> "عدد"
+                "idiom" -> "تعبير اصطلاحي"
+                "phrase" -> "عبارة"
+                "proverb" -> "مَثَل"
+                else -> "كلمة"
+            }
+        }
+        return when {
+            englishLabel.isBlank() -> arabicLabel
+            arabicLabel.equals(englishLabel, ignoreCase = true) -> englishLabel
+            else -> "$arabicLabel • $englishLabel"
+        }
+    }
+
+    /**
+     * Builds POS-grouped quick meanings for the top HeadwordCard (both EN->AR and AR->EN).
+     * Combines sense meanings per grammatical role and merges unique machine translations
+     * into the primary POS group without disturbing lower PosGroupCard sections.
+     */
+    fun extractPosHeadwordMeanings(
+        entry: WordEntry,
+        maxPerPos: Int = 8
+    ): List<PosHeadwordMeanings> {
+        if (entry.posGroups.isEmpty() || maxPerPos <= 0) return emptyList()
+        val isTargetArabic = !entry.isArabicWord
+
+        data class MutablePosBucket(
+            val partOfSpeech: String,
+            val partOfSpeechArabic: String,
+            val keyToValue: LinkedHashMap<String, String> = LinkedHashMap(),
+            var hasHuman: Boolean = false,
+            var hasMachine: Boolean = false
+        )
+
+        val buckets = ArrayList<MutablePosBucket>(entry.posGroups.size)
+
+        for (group in entry.posGroups) {
+            val bucket = MutablePosBucket(
+                partOfSpeech = group.partOfSpeech,
+                partOfSpeechArabic = group.partOfSpeechArabic
+            )
+            // First pass: human/dictionary meanings, second pass: machine-translated sense meanings
+            val orderedSenses = group.senses.sortedBy { if (it.definitionArabicIsMachine) 1 else 0 }
+            for (sense in orderedSenses) {
+                val rawGloss = sense.definitionArabic?.trim().orEmpty()
+                if (rawGloss.isEmpty()) continue
+                val pieces = splitConciseGlosses(rawGloss, isTargetArabic)
+                for (piece in pieces) {
+                    val key = meaningDedupKey(piece, isTargetArabic)
+                    if (key.isEmpty()) continue
+                    val existing = bucket.keyToValue[key]
+                    if (existing == null) {
+                        if (bucket.keyToValue.size >= maxPerPos) break
+                        bucket.keyToValue[key] = piece
+                    } else if (isTargetArabic &&
+                        !ArabicTextUtils.hasArabicDiacritics(existing) &&
+                        ArabicTextUtils.hasArabicDiacritics(piece)
+                    ) {
+                        bucket.keyToValue[key] = piece
+                    }
+                    if (sense.definitionArabicIsMachine) {
+                        bucket.hasMachine = true
+                    } else {
+                        bucket.hasHuman = true
+                    }
+                }
+                if (bucket.keyToValue.size >= maxPerPos) break
+            }
+            buckets.add(bucket)
+        }
+
+        // Merge machine translations into primary POS group (preserving exact translation if not already present)
+        val primaryBucket = buckets.firstOrNull { it.keyToValue.isNotEmpty() } ?: buckets.firstOrNull()
+        if (primaryBucket != null && entry.machineTranslations.isNotEmpty()) {
+            val allExistingKeys = buckets.flatMapTo(HashSet()) { it.keyToValue.keys }
+            for (mt in entry.machineTranslations) {
+                val pieces = splitConciseGlosses(mt, isTargetArabic)
+                for (piece in pieces) {
+                    val key = meaningDedupKey(piece, isTargetArabic)
+                    if (key.isNotEmpty() && key !in allExistingKeys && primaryBucket.keyToValue.size < maxPerPos + 2) {
+                        primaryBucket.keyToValue[key] = piece
+                        allExistingKeys.add(key)
+                        primaryBucket.hasMachine = true
+                    }
+                }
+            }
+        }
+
+        return buckets.mapNotNull { b ->
+            if (b.keyToValue.isEmpty()) return@mapNotNull null
+            PosHeadwordMeanings(
+                partOfSpeech = b.partOfSpeech,
+                partOfSpeechArabic = b.partOfSpeechArabic,
+                posBadgeLabel = formatPosBadgeLabel(b.partOfSpeech, b.partOfSpeechArabic),
+                meanings = b.keyToValue.values.toList(),
+                isMachineOnly = !b.hasHuman && b.hasMachine
+            )
+        }
+    }
+
+    private fun splitConciseGlosses(raw: String, isTargetArabic: Boolean): List<String> {
+        val trimmed = raw.replace(Regex("\\s+"), " ").trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val parts = ArrayList<String>()
+        val current = StringBuilder()
+        var parenDepth = 0
+        for (ch in trimmed) {
+            when (ch) {
+                '(', '（', '[' -> {
+                    parenDepth++
+                    current.append(ch)
+                }
+                ')', '）', ']' -> {
+                    if (parenDepth > 0) parenDepth--
+                    current.append(ch)
+                }
+                ';', '؛', '،' -> {
+                    if (parenDepth == 0) {
+                        val candidate = current.toString().trim().trim('.', ',', '،', ';', '؛')
+                        if (candidate.length >= 2) parts.add(candidate)
+                        current.setLength(0)
+                    } else {
+                        current.append(ch)
+                    }
+                }
+                ',' -> {
+                    if (parenDepth == 0 && !isTargetArabic) {
+                        val candidate = current.toString().trim().trim('.', ',', '،', ';', '؛')
+                        if (candidate.length >= 2) parts.add(candidate)
+                        current.setLength(0)
+                    } else {
+                        current.append(ch)
+                    }
+                }
+                else -> current.append(ch)
+            }
+        }
+        val tail = current.toString().trim().trim('.', ',', '،', ';', '؛')
+        if (tail.length >= 2) parts.add(tail)
+        return parts
+    }
+
+    private fun meaningDedupKey(text: String, isTargetArabic: Boolean): String {
+        val cleaned = text.replace(Regex("\\s+"), " ").trim()
+        if (cleaned.isEmpty()) return ""
+        return if (isTargetArabic) {
+            ArabicTextUtils.normalizeArabicForMatching(cleaned).lowercase(Locale.US)
+        } else {
+            cleaned.lowercase(Locale.US)
         }
     }
 }

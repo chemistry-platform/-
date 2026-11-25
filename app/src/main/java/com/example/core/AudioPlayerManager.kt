@@ -308,7 +308,8 @@ class AudioPlayerManager(
             return
         }
 
-        speakSentenceChunks(cleaned)
+        val continuousSentence = cleaned.replace(Regex("\\s+"), " ").trim()
+        speakSentenceChunks(continuousSentence, splitOnPunctuation = false)
     }
 
     /**
@@ -807,7 +808,10 @@ class AudioPlayerManager(
         return voices.sortedWith(comparator).firstOrNull()
     }
 
-    private suspend fun speakSentenceChunks(text: String) {
+    private suspend fun speakSentenceChunks(
+        text: String,
+        splitOnPunctuation: Boolean = true
+    ) {
         val engine = tts ?: run {
             _playingKey.value = null
             _ttsProgress.value = null
@@ -819,8 +823,13 @@ class AudioPlayerManager(
 
         val rawMax = runCatching { TextToSpeech.getMaxSpeechInputLength() }.getOrDefault(4000)
         val safeMaxLen = (if (rawMax > 0) rawMax else 4000).coerceAtMost(3800)
+        val cleaned = text.trim()
         val chunks = withContext(Dispatchers.Default) {
-            splitTextSafelyForTts(text, safeMaxLen)
+            if (!splitOnPunctuation && cleaned.isNotEmpty() && cleaned.length <= safeMaxLen) {
+                listOf(cleaned)
+            } else {
+                splitTextSafelyForTts(cleaned, safeMaxLen)
+            }
         }
         if (chunks.isEmpty()) {
             _playingKey.value = null

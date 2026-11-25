@@ -164,6 +164,7 @@ data class WordEntry(
     val antonyms: List<String> = emptyList(),
     val collocations: List<String> = emptyList(),
     val compoundExpressions: List<String> = emptyList(),
+    val idioms: List<String> = emptyList(),
     val prepositionsAndPhrases: List<String> = emptyList(),
     val phrasalVerbsAndIdioms: List<PhraseDetailItem> = emptyList(),
     val wordFamily: List<WordFamilyItem> = emptyList(),
