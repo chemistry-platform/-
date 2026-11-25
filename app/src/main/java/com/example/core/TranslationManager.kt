@@ -223,12 +223,15 @@ class TranslationManager(
 
     private fun getOrCreateTranslator(sourceCode: String, targetCode: String): Translator {
         val key = sourceCode to targetCode
-        return translators.getOrPut(key) {
-            val options = TranslatorOptions.Builder()
-                .setSourceLanguage(sourceCode)
-                .setTargetLanguage(targetCode)
-                .build()
-            Translation.getClient(options)
+        translators[key]?.let { return it }
+        return synchronized(translators) {
+            translators[key] ?: run {
+                val options = TranslatorOptions.Builder()
+                    .setSourceLanguage(sourceCode)
+                    .setTargetLanguage(targetCode)
+                    .build()
+                Translation.getClient(options).also { translators[key] = it }
+            }
         }
     }
 

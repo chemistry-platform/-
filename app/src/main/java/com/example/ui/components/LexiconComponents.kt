@@ -76,9 +76,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.R
 import com.example.core.Accent
+import com.example.core.AppLanguage
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.AudioSpeedOptions
+import com.example.core.LocalAppLanguage
+import com.example.core.tr
 import com.example.domain.model.InstantTranslationResult
 import com.example.domain.model.LanguageDirection
 import com.example.domain.model.PhraseSheetData
@@ -92,14 +95,14 @@ fun LanguageSwapBar(
 ) {
     val colors = MaterialTheme.colorScheme
     val sourceLabel = if (direction == LanguageDirection.EN_TO_AR) {
-        stringResource(R.string.lang_english)
+        tr("English", "الإنجليزية")
     } else {
-        stringResource(R.string.lang_arabic)
+        tr("Arabic", "العربية")
     }
     val targetLabel = if (direction == LanguageDirection.EN_TO_AR) {
-        stringResource(R.string.lang_arabic)
+        tr("Arabic", "العربية")
     } else {
-        stringResource(R.string.lang_english)
+        tr("English", "الإنجليزية")
     }
 
     Row(
@@ -127,7 +130,7 @@ fun LanguageSwapBar(
         ) {
             Icon(
                 imageVector = AppIcons.SwapHoriz,
-                contentDescription = stringResource(R.string.cd_swap_languages),
+                contentDescription = tr("Swap languages", "تبديل اللغات"),
                 tint = colors.secondary,
                 modifier = Modifier.size(22.dp)
             )
@@ -177,9 +180,9 @@ fun PronunciationPillButton(
                 Icon(
                     imageVector = AppIcons.VolumeUp,
                     contentDescription = if (regionLabel == "US") {
-                        stringResource(R.string.cd_speak_us)
+                        tr("Pronounce US accent", "نطق أمريكي")
                     } else {
-                        stringResource(R.string.cd_speak_uk)
+                        tr("Pronounce UK accent", "نطق بريطاني")
                     },
                     tint = if (hasAudio) colors.primary else colors.onSurfaceVariant.copy(alpha = 0.4f),
                     modifier = Modifier.size(18.dp)
@@ -289,7 +292,7 @@ private fun MiniSpeakerButton(
         ) {
             Icon(
                 imageVector = if (isPlaying) AppIcons.Stop else AppIcons.VolumeUp,
-                contentDescription = if (isPlaying) "إيقاف $label" else "نطق $label",
+                contentDescription = if (isPlaying) tr("Stop $label", "إيقاف $label") else tr("Play $label", "نطق $label"),
                 tint = colors.primary,
                 modifier = Modifier.size(16.dp)
             )
@@ -348,9 +351,9 @@ fun DirectionToggleChip(
 ) {
     val colors = MaterialTheme.colorScheme
     val desc = if (direction == LanguageDirection.AR_TO_EN) {
-        "عربي ⇄ إنجليزي"
+        tr("AR ⇄ EN", "عربي ⇄ إنجليزي")
     } else {
-        "إنجليزي ⇄ عربي"
+        tr("EN ⇄ AR", "إنجليزي ⇄ عربي")
     }
     Surface(
         modifier = modifier
@@ -566,12 +569,15 @@ fun NoInternetBanner(modifier: Modifier = Modifier) {
         ) {
             Icon(
                 imageVector = AppIcons.WifiOff,
-                contentDescription = stringResource(R.string.no_internet_title),
+                contentDescription = tr("No internet connection", "لا يوجد اتصال بالإنترنت"),
                 tint = colors.error,
                 modifier = Modifier.size(18.dp)
             )
             Text(
-                text = "وضع عدم الاتصال: يتم عرض الكلمات المحفوظة والترجمة المحلية فقط",
+                text = tr(
+                    "Offline mode: showing saved words and local translation only",
+                    "وضع عدم الاتصال: يتم عرض الكلمات المحفوظة والترجمة المحلية فقط"
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onErrorContainer
             )
@@ -580,8 +586,9 @@ fun NoInternetBanner(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun LoadingCard(message: String = "جاري التحميل...", modifier: Modifier = Modifier) {
+fun LoadingCard(message: String? = null, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
+    val displayMessage = message ?: tr("Loading...", "جاري التحميل...")
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -595,19 +602,26 @@ fun LoadingCard(message: String = "جاري التحميل...", modifier: Modifi
             modifier = Modifier.size(32.dp)
         )
         Text(
-            text = message,
+            text = displayMessage,
             style = MaterialTheme.typography.bodyMedium,
             color = colors.onSurfaceVariant
         )
     }
 }
 
-enum class BottomNavTab(val labelRes: Int, val testTag: String) {
-    HOME(R.string.nav_home, "nav_home"),
-    DISCOVER(R.string.nav_discover, "nav_discover"),
-    FILES(R.string.file_translation_title, "nav_files"),
-    FAVORITES(R.string.nav_favorites, "nav_favorites"),
-    MORE(R.string.nav_more, "nav_more")
+enum class BottomNavTab(
+    val labelRes: Int,
+    val labelEn: String,
+    val labelAr: String,
+    val testTag: String
+) {
+    HOME(R.string.nav_home, "Home", "الرئيسية", "nav_home"),
+    DISCOVER(R.string.nav_discover, "Discover", "اكتشف", "nav_discover"),
+    FILES(R.string.file_translation_title, "Files", "ملفات", "nav_files"),
+    FAVORITES(R.string.nav_favorites, "Favorites", "المفضلة", "nav_favorites"),
+    MORE(R.string.nav_more, "More", "المزيد", "nav_more");
+
+    fun label(language: AppLanguage): String = tr(language, labelEn, labelAr)
 }
 
 @Composable
@@ -616,6 +630,7 @@ fun AlMakhzanjiBottomBar(
     onSelectTab: (BottomNavTab) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     Column(modifier = Modifier.background(colors.surface)) {
         HorizontalDivider(color = colors.outline, thickness = 1.dp)
         NavigationBar(
@@ -625,6 +640,7 @@ fun AlMakhzanjiBottomBar(
         ) {
             BottomNavTab.entries.forEach { tab ->
                 val selected = tab == currentTab
+                val tabLabel = tab.label(lang)
                 val icon = when (tab) {
                     BottomNavTab.HOME -> if (selected) Icons.Rounded.Home else Icons.Outlined.Home
                     BottomNavTab.DISCOVER -> AppIcons.Explore
@@ -639,13 +655,13 @@ fun AlMakhzanjiBottomBar(
                     icon = {
                         Icon(
                             imageVector = icon,
-                            contentDescription = stringResource(tab.labelRes),
+                            contentDescription = tabLabel,
                             modifier = Modifier.size(22.dp)
                         )
                     },
                     label = {
                         Text(
-                            text = stringResource(tab.labelRes),
+                            text = tabLabel,
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -708,6 +724,7 @@ fun ArabicTranslatedText(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val machineTag = tr("Machine translated", "ترجمة آلية")
     val annotated = buildAnnotatedString {
         append(text)
         if (isMachineTranslated && showMachineLabel) {
@@ -719,7 +736,7 @@ fun ArabicTranslatedText(
                     color = colors.onSurfaceVariant.copy(alpha = 0.5f)
                 )
             ) {
-                append("ترجمة آلية")
+                append(machineTag)
             }
         }
     }
@@ -740,10 +757,12 @@ fun ArabicTranslatedText(
 fun SentenceSpeakerButton(
     isPlaying: Boolean,
     onClick: () -> Unit,
-    contentDescription: String = "استماع للجملة",
+    contentDescription: String? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val listenDesc = contentDescription ?: tr("Listen to sentence", "استماع للجملة")
+    val stopDesc = tr("Stop audio", "إيقاف الصوت")
     Box(
         modifier = modifier
             .size(40.dp)
@@ -754,7 +773,7 @@ fun SentenceSpeakerButton(
     ) {
         Icon(
             imageVector = if (isPlaying) Icons.Rounded.Close else AppIcons.VolumeUp,
-            contentDescription = if (isPlaying) "إيقاف الصوت" else contentDescription,
+            contentDescription = if (isPlaying) stopDesc else listenDesc,
             tint = if (isPlaying) colors.primary else colors.secondary,
             modifier = Modifier.size(18.dp)
         )
@@ -843,11 +862,21 @@ fun LongTextAudioBar(
                 Text(
                     text = when {
                         activeReader != null -> {
-                            val prefix = if (activeReader.isPaused) "متوقف مؤقتاً" else "جاري القراءة"
-                            "$prefix: جملة $currentStep من $totalSteps"
+                            val prefix = if (activeReader.isPaused) {
+                                tr("Paused", "متوقف مؤقتاً")
+                            } else {
+                                tr("Reading", "جاري القراءة")
+                            }
+                            tr(
+                                "$prefix: Sentence $currentStep of $totalSteps",
+                                "$prefix: جملة $currentStep من $totalSteps"
+                            )
                         }
-                        isPlaying && totalSteps > 1 -> "جاري القراءة: مقطع $currentStep من $totalSteps"
-                        isPlaying -> "جاري القراءة..."
+                        isPlaying && totalSteps > 1 -> tr(
+                            "Reading: Part $currentStep of $totalSteps",
+                            "جاري القراءة: مقطع $currentStep من $totalSteps"
+                        )
+                        isPlaying -> tr("Reading...", "جاري القراءة...")
                         else -> title
                     },
                     style = MaterialTheme.typography.labelMedium,
@@ -908,7 +937,7 @@ fun LongTextAudioBar(
                         ) {
                             Icon(
                                 imageVector = AppIcons.SkipPrevious,
-                                contentDescription = "الجملة السابقة",
+                                contentDescription = tr("Previous sentence", "الجملة السابقة"),
                                 tint = if (activeReader.currentIndex > 0) colors.onSurface else colors.onSurfaceVariant.copy(alpha = 0.4f),
                                 modifier = Modifier.size(20.dp)
                             )
@@ -934,12 +963,16 @@ fun LongTextAudioBar(
                             ) {
                                 Icon(
                                     imageVector = if (activeReader.isPaused) AppIcons.PlayArrow else AppIcons.Pause,
-                                    contentDescription = if (activeReader.isPaused) "استئناف القراءة" else "إيقاف مؤقت",
+                                    contentDescription = if (activeReader.isPaused) {
+                                        tr("Resume reading", "استئناف القراءة")
+                                    } else {
+                                        tr("Pause", "إيقاف مؤقت")
+                                    },
                                     tint = colors.primary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = if (activeReader.isPaused) "استئناف" else "إيقاف مؤقت",
+                                    text = if (activeReader.isPaused) tr("Resume", "استئناف") else tr("Pause", "إيقاف مؤقت"),
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                     color = colors.primary
                                 )
@@ -956,7 +989,7 @@ fun LongTextAudioBar(
                         ) {
                             Icon(
                                 imageVector = AppIcons.SkipNext,
-                                contentDescription = "الجملة التالية",
+                                contentDescription = tr("Next sentence", "الجملة التالية"),
                                 tint = colors.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -982,12 +1015,12 @@ fun LongTextAudioBar(
                         ) {
                             Icon(
                                 imageVector = AppIcons.Stop,
-                                contentDescription = "إيقاف القراءة",
+                                contentDescription = tr("Stop reading", "إيقاف القراءة"),
                                 tint = colors.error,
                                 modifier = Modifier.size(15.dp)
                             )
                             Text(
-                                text = "إيقاف",
+                                text = tr("Stop", "إيقاف"),
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                 color = colors.error
                             )
@@ -1103,7 +1136,7 @@ fun AudioSpeedSelector(
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "السرعة: $currentLabel",
+                    text = tr("Speed: $currentLabel", "السرعة: $currentLabel"),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
@@ -1113,7 +1146,7 @@ fun AudioSpeedSelector(
                 )
                 Icon(
                     imageVector = Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = "تغيير سرعة الصوت",
+                    contentDescription = tr("Change audio speed", "تغيير سرعة الصوت"),
                     tint = colors.onSurfaceVariant,
                     modifier = Modifier.size(14.dp)
                 )
@@ -1278,7 +1311,7 @@ fun InstantTranslationCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "جاري الترجمة الفورية...",
+                        text = tr("Translating...", "جاري الترجمة الفورية..."),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -1337,13 +1370,19 @@ fun InstantTranslationCard(
                 }
             } else if (result.missingPack) {
                 Text(
-                    text = "حمّل حزمة العربية والإنجليزية لتفعيل الترجمة الفورية دون إنترنت.",
+                    text = tr(
+                        "Download the Arabic & English packs to enable instant offline translation.",
+                        "حمّل حزمة العربية والإنجليزية لتفعيل الترجمة الفورية دون إنترنت."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.tertiary
                 )
             } else {
                 Text(
-                    text = "تعذر الحصول على ترجمة فورية حالياً.",
+                    text = tr(
+                        "Unable to fetch an instant translation right now.",
+                        "تعذر الحصول على ترجمة فورية حالياً."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant
                 )
@@ -1472,7 +1511,7 @@ fun PhraseFallbackBottomSheet(
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = "جاري جلب المعنى والمثال...",
+                        text = tr("Fetching meaning & example...", "جاري جلب المعنى والمثال..."),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -1501,7 +1540,10 @@ fun PhraseFallbackBottomSheet(
                     }
                 } else if (sheetData.missingArabicPack) {
                     Text(
-                        text = "حمّل حزمة اللغة العربية لعرض الترجمة دون إنترنت.",
+                        text = tr(
+                            "Download the Arabic language pack to view offline translations.",
+                            "حمّل حزمة اللغة العربية لعرض الترجمة دون إنترنت."
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.tertiary
                     )
@@ -1510,7 +1552,7 @@ fun PhraseFallbackBottomSheet(
                 if (sheetData.example.isNotBlank()) {
                     HorizontalDivider(color = colors.outline)
                     Text(
-                        text = "مثال حقيقي",
+                        text = tr("Real Example", "مثال حقيقي"),
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.secondary
                     )
@@ -1584,7 +1626,7 @@ fun PhraseFallbackBottomSheet(
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("تحليل العبارة")
+                        Text(tr("Analyze Phrase", "تحليل العبارة"))
                     }
                 }
                 OutlinedButton(
@@ -1592,7 +1634,7 @@ fun PhraseFallbackBottomSheet(
                     border = BorderStroke(1.dp, colors.outline),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("إغلاق", color = colors.onSurface)
+                    Text(tr("Close", "إغلاق"), color = colors.onSurface)
                 }
             }
         }
@@ -1627,7 +1669,10 @@ fun MissingArabicPackTopBanner(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "حزمة اللغة العربية للترجمة غير محمّلة. حمّلها لعرض المعاني والترجمات بالعربية.",
+                    text = tr(
+                        "Arabic translation pack is not downloaded. Download it to view Arabic meanings and translations.",
+                        "حزمة اللغة العربية للترجمة غير محمّلة. حمّلها لعرض المعاني والترجمات بالعربية."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onErrorContainer,
                     modifier = Modifier.weight(1f)
@@ -1648,7 +1693,7 @@ fun MissingArabicPackTopBanner(
                             modifier = Modifier.size(16.dp)
                         )
                     } else {
-                        Text("تحميل", style = MaterialTheme.typography.labelMedium)
+                        Text(tr("Download", "تحميل"), style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -1665,7 +1710,7 @@ fun MissingArabicPackTopBanner(
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = onOpenLanguages) {
-                        Text("اللغات", color = colors.secondary)
+                        Text(tr("Languages", "اللغات"), color = colors.secondary)
                     }
                 }
             }
@@ -1684,9 +1729,15 @@ fun MissingEnglishTtsVoiceBanner(
 ) {
     val colors = MaterialTheme.colorScheme
     val message = if (!missingAccentLabel.isNullOrBlank()) {
-        "صوت النطق $missingAccentLabel غير مثبت؛ يتم النطق بالصوت البديل. ثبّت حزمة الصوت من إعدادات الجهاز"
+        tr(
+            "$missingAccentLabel voice is not installed; using fallback voice. Install voice pack in device settings",
+            "صوت النطق $missingAccentLabel غير مثبت؛ يتم النطق بالصوت البديل. ثبّت حزمة الصوت من إعدادات الجهاز"
+        )
     } else {
-        "ثبّت صوتاً إنجليزياً من إعدادات الجهاز"
+        tr(
+            "Install an English voice from device settings",
+            "ثبّت صوتاً إنجليزياً من إعدادات الجهاز"
+        )
     }
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -1711,7 +1762,7 @@ fun MissingEnglishTtsVoiceBanner(
                 onClick = onInstallVoiceClick,
                 modifier = Modifier.testTag("install_tts_voice_button")
             ) {
-                Text("تثبيت", color = colors.secondary)
+                Text(tr("Install", "تثبيت"), color = colors.secondary)
             }
         }
     }

@@ -345,8 +345,30 @@ object LinguisticRanker {
         }
     }
 
-    fun formatPosBadgeLabel(partOfSpeech: String, partOfSpeechArabic: String): String {
-        val posKey = partOfSpeech.trim().lowercase(Locale.US)
+    fun formatPosBadgeLabel(
+        partOfSpeech: String,
+        partOfSpeechArabic: String,
+        language: AppLanguage = AppLanguage.ENGLISH
+    ): String {
+        val rawKey = partOfSpeech.trim().lowercase(Locale.US)
+        val posKey = when (rawKey) {
+            "فعل" -> "verb"
+            "اسم" -> "noun"
+            "صفة" -> "adjective"
+            "ظرف" -> "adverb"
+            "حرف جر" -> "preposition"
+            "ضمير" -> "pronoun"
+            "أداة ربط" -> "conjunction"
+            "صيغة تعجب" -> "interjection"
+            "محدد" -> "determiner"
+            "أداة" -> "particle"
+            "عدد" -> "numeral"
+            "تعبير اصطلاحي" -> "idiom"
+            "عبارة" -> "phrase"
+            "مَثَل", "مثل" -> "proverb"
+            "كلمة" -> "word"
+            else -> rawKey
+        }
         val englishLabel = when (posKey) {
             "verb" -> "Verb"
             "noun" -> "Noun"
@@ -363,32 +385,27 @@ object LinguisticRanker {
             "phrase" -> "Phrase"
             "proverb" -> "Proverb"
             "word" -> "Word"
-            else -> posKey.replaceFirstChar { it.titlecase(Locale.US) }
+            else -> posKey.replaceFirstChar { it.titlecase(Locale.US) }.ifBlank { "Word" }
         }
-        val arabicLabel = partOfSpeechArabic.trim().ifBlank {
-            when (posKey) {
-                "verb" -> "فعل"
-                "noun" -> "اسم"
-                "adjective" -> "صفة"
-                "adverb" -> "ظرف"
-                "preposition" -> "حرف جر"
-                "pronoun" -> "ضمير"
-                "conjunction" -> "أداة ربط"
-                "interjection", "exclamation" -> "صيغة تعجب"
-                "determiner" -> "محدد"
-                "particle" -> "أداة"
-                "numeral" -> "عدد"
-                "idiom" -> "تعبير اصطلاحي"
-                "phrase" -> "عبارة"
-                "proverb" -> "مَثَل"
-                else -> "كلمة"
-            }
+        val arabicLabel = when (posKey) {
+            "verb" -> "فعل"
+            "noun" -> "اسم"
+            "adjective" -> "صفة"
+            "adverb" -> "ظرف"
+            "preposition" -> "حرف جر"
+            "pronoun" -> "ضمير"
+            "conjunction" -> "أداة ربط"
+            "interjection", "exclamation" -> "صيغة تعجب"
+            "determiner" -> "محدد"
+            "particle" -> "أداة"
+            "numeral" -> "عدد"
+            "idiom" -> "تعبير اصطلاحي"
+            "phrase" -> "عبارة"
+            "proverb" -> "مَثَل"
+            "word" -> "كلمة"
+            else -> partOfSpeechArabic.trim().ifBlank { "كلمة" }
         }
-        return when {
-            englishLabel.isBlank() -> arabicLabel
-            arabicLabel.equals(englishLabel, ignoreCase = true) -> englishLabel
-            else -> "$arabicLabel • $englishLabel"
-        }
+        return if (language == AppLanguage.ARABIC) arabicLabel else englishLabel
     }
 
     /**
@@ -398,7 +415,8 @@ object LinguisticRanker {
      */
     fun extractPosHeadwordMeanings(
         entry: WordEntry,
-        maxPerPos: Int = 8
+        maxPerPos: Int = 8,
+        language: AppLanguage = AppLanguage.ENGLISH
     ): List<PosHeadwordMeanings> {
         if (entry.posGroups.isEmpty() || maxPerPos <= 0) return emptyList()
         val isTargetArabic = !entry.isArabicWord
@@ -470,7 +488,7 @@ object LinguisticRanker {
             PosHeadwordMeanings(
                 partOfSpeech = b.partOfSpeech,
                 partOfSpeechArabic = b.partOfSpeechArabic,
-                posBadgeLabel = formatPosBadgeLabel(b.partOfSpeech, b.partOfSpeechArabic),
+                posBadgeLabel = formatPosBadgeLabel(b.partOfSpeech, b.partOfSpeechArabic, language),
                 meanings = b.keyToValue.values.toList(),
                 isMachineOnly = !b.hasHuman && b.hasMachine
             )

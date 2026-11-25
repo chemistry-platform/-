@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.core.LinguisticRanker
+import com.example.core.LocalAppLanguage
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 import com.example.ui.components.PosChip
 import com.example.ui.viewmodel.FavoritesViewModel
@@ -50,6 +53,7 @@ fun FavoritesScreen(
 ) {
     val colors = MaterialTheme.colorScheme
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
+    val lang = LocalAppLanguage.current
 
     Box(
         modifier = modifier
@@ -68,12 +72,15 @@ fun FavoritesScreen(
             item {
                 Column {
                     Text(
-                        text = stringResource(R.string.nav_favorites),
+                        text = tr("Favorites", "المفضلة"),
                         style = MaterialTheme.typography.headlineLarge,
                         color = colors.onBackground
                     )
                     Text(
-                        text = "الكلمات المحفوظة للمراجعة السريعة بدون إنترنت",
+                        text = tr(
+                            "Saved words for quick offline review",
+                            "الكلمات المحفوظة للمراجعة السريعة بدون إنترنت"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -102,12 +109,15 @@ fun FavoritesScreen(
                                 modifier = Modifier.size(40.dp)
                             )
                             Text(
-                                text = stringResource(R.string.empty_favorites),
+                                text = tr("No favorite words yet", "لا توجد كلمات مفضلة بعد"),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = colors.onSurface
                             )
                             Text(
-                                text = "اضغط على أيقونة النجمة بجانب أي كلمة لحفظها هنا.",
+                                text = tr(
+                                    "Tap the star icon next to any word to save it here.",
+                                    "اضغط على أيقونة النجمة بجانب أي كلمة لحفظها هنا."
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant
                             )
@@ -158,7 +168,13 @@ fun FavoritesScreen(
                                                 }
                                             }
                                             if (fav.partOfSpeech.isNotBlank()) {
-                                                PosChip(text = fav.partOfSpeech)
+                                                PosChip(
+                                                    text = LinguisticRanker.formatPosBadgeLabel(
+                                                        partOfSpeech = fav.partOfSpeech,
+                                                        partOfSpeechArabic = "",
+                                                        language = lang
+                                                    )
+                                                )
                                             }
                                         }
                                         if (fav.summaryText.isNotBlank()) {
@@ -182,7 +198,7 @@ fun FavoritesScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Star,
-                                            contentDescription = "إزالة من المفضلة",
+                                            contentDescription = tr("Remove from favorites", "إزالة من المفضلة"),
                                             tint = colors.primary
                                         )
                                     }

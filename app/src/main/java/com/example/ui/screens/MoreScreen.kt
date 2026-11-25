@@ -55,8 +55,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Accent
+import com.example.core.AppLanguage
+import com.example.core.LocalAppLanguage
 import com.example.core.OfflinePackState
 import com.example.core.UpdateUiState
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.theme.ThemeMode
@@ -80,12 +83,14 @@ fun MoreScreen(
     val updateUiState by viewModel.updateUiState.collectAsStateWithLifecycle()
     val offlinePackState by viewModel.offlinePackState.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
     val audioSpeed by viewModel.audioSpeed.collectAsStateWithLifecycle()
     val sentenceAccent by viewModel.sentenceAccent.collectAsStateWithLifecycle()
     val showArabicTranslations by viewModel.showArabicTranslations.collectAsStateWithLifecycle()
     val showMachineTranslationLabel by viewModel.showMachineTranslationLabel.collectAsStateWithLifecycle()
     val literalTranslation by viewModel.literalTranslation.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+    val lang = LocalAppLanguage.current
 
     var showClearHistoryDialog by remember { mutableStateOf(false) }
 
@@ -106,12 +111,15 @@ fun MoreScreen(
             item {
                 Column {
                     Text(
-                        text = stringResource(R.string.nav_more),
+                        text = tr("More & Settings", "المزيد والإعدادات"),
                         style = MaterialTheme.typography.headlineLarge,
                         color = colors.onBackground
                     )
                     Text(
-                        text = "المظهر، حزم الأوفلاين، اللغات، السجل، والتحديثات",
+                        text = tr(
+                            "App language, appearance, offline packs, languages, history, and updates",
+                            "لغة التطبيق، المظهر، حزم الأوفلاين، اللغات، السجل، والتحديثات"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -136,7 +144,82 @@ fun MoreScreen(
                 }
             }
 
-            // Section 8: Theme Switcher (فاتح / داكن / حسب النظام)
+            // App Language Switcher (English default / Arabic)
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = colors.surface,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, colors.outline)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.Language,
+                                contentDescription = null,
+                                tint = colors.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = tr("App Language", "لغة التطبيق"),
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = colors.onSurface
+                            )
+                        }
+                        Text(
+                            text = tr(
+                                "Switch interface titles and labels between English and Arabic",
+                                "تبديل عناوين وواجهة التطبيق بين الإنجليزية والعربية"
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = appLanguage == AppLanguage.ENGLISH,
+                                onClick = { viewModel.setAppLanguage(AppLanguage.ENGLISH) },
+                                label = {
+                                    Text(
+                                        text = "English",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = colors.primaryContainer,
+                                    selectedLabelColor = colors.primary
+                                ),
+                                modifier = Modifier.testTag("app_lang_en")
+                            )
+                            FilterChip(
+                                selected = appLanguage == AppLanguage.ARABIC,
+                                onClick = { viewModel.setAppLanguage(AppLanguage.ARABIC) },
+                                label = {
+                                    Text(
+                                        text = "العربية",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = colors.primaryContainer,
+                                    selectedLabelColor = colors.primary
+                                ),
+                                modifier = Modifier.testTag("app_lang_ar")
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Section 8: Theme Switcher (Light / Dark / System)
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -159,7 +242,7 @@ fun MoreScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = "المظهر",
+                                text = tr("Appearance", "المظهر"),
                                 style = MaterialTheme.typography.headlineSmall,
                                 color = colors.onSurface
                             )
@@ -175,7 +258,7 @@ fun MoreScreen(
                                     onClick = { viewModel.setThemeMode(mode) },
                                     label = {
                                         Text(
-                                            text = mode.labelAr,
+                                            text = mode.labelFor(lang),
                                             style = MaterialTheme.typography.labelMedium
                                         )
                                     },
@@ -214,7 +297,7 @@ fun MoreScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = "إعدادات الصوت والترجمة",
+                                text = tr("Audio & Translation Settings", "إعدادات الصوت والترجمة"),
                                 style = MaterialTheme.typography.headlineSmall,
                                 color = colors.onSurface
                             )
@@ -227,7 +310,7 @@ fun MoreScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "سرعة النطق",
+                                text = tr("Speech Speed", "سرعة النطق"),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurface
                             )
@@ -242,12 +325,15 @@ fun MoreScreen(
                         // Sentence TTS accent (US default / UK)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "لهجة نطق الجمل",
+                                text = tr("Sentence Speech Accent", "لهجة نطق الجمل"),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurface
                             )
                             Text(
-                                text = "لنطق الجمل والأمثلة (الكلمات تحتفظ باللكنتين)",
+                                text = tr(
+                                    "For reading sentences & examples (words keep both accents)",
+                                    "لنطق الجمل والأمثلة (الكلمات تحتفظ باللكنتين)"
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant
                             )
@@ -259,7 +345,7 @@ fun MoreScreen(
                                     onClick = { viewModel.setSentenceAccent(Accent.US) },
                                     label = {
                                         Text(
-                                            text = "أمريكي (US)",
+                                            text = tr("US English", "أمريكي (US)"),
                                             style = MaterialTheme.typography.labelMedium
                                         )
                                     },
@@ -274,7 +360,7 @@ fun MoreScreen(
                                     onClick = { viewModel.setSentenceAccent(Accent.UK) },
                                     label = {
                                         Text(
-                                            text = "بريطاني (UK)",
+                                            text = tr("UK English", "بريطاني (UK)"),
                                             style = MaterialTheme.typography.labelMedium
                                         )
                                     },
@@ -297,12 +383,15 @@ fun MoreScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(
-                                    text = "عرض الترجمات العربية",
+                                    text = tr("Show Arabic Translations", "عرض الترجمات العربية"),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = "إظهار المعنى العربي فوق كل تعريف وأسفل الأمثلة",
+                                    text = tr(
+                                        "Display Arabic meanings above definitions and below examples",
+                                        "إظهار المعنى العربي فوق كل تعريف وأسفل الأمثلة"
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -317,7 +406,7 @@ fun MoreScreen(
 
                         HorizontalDivider(color = colors.outline)
 
-                        // Show "ترجمة آلية" label toggle (ON by default)
+                        // Show "Machine translated" label toggle (ON by default)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -325,12 +414,15 @@ fun MoreScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(
-                                    text = "إظهار وسم \"ترجمة آلية\"",
+                                    text = tr("Show \"Machine translated\" Badge", "إظهار وسم \"ترجمة آلية\""),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = "تمييز الترجمات المولّدة آلياً بوسم صغير بجانبها",
+                                    text = tr(
+                                        "Mark machine-generated translations with a small inline tag",
+                                        "تمييز الترجمات المولّدة آلياً بوسم صغير بجانبها"
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -353,12 +445,15 @@ fun MoreScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(
-                                    text = "ترجمة حرفية",
+                                    text = tr("Literal Translation", "ترجمة حرفية"),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = "ترجمة كل كلمة على حدة بدلاً من الترجمة حسب السياق",
+                                    text = tr(
+                                        "Translate word-by-word instead of contextual sentence translation",
+                                        "ترجمة كل كلمة على حدة بدلاً من الترجمة حسب السياق"
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -374,7 +469,7 @@ fun MoreScreen(
                 }
             }
 
-            // Section 2 Navigation: اللغات & الترجمة
+            // Section 2 Navigation: Languages & Translation
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -394,7 +489,8 @@ fun MoreScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
                                     imageVector = AppIcons.Language,
@@ -404,18 +500,21 @@ fun MoreScreen(
                                 )
                                 Column {
                                     Text(
-                                        text = "اللغات",
+                                        text = tr("Languages", "اللغات"),
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = colors.onSurface
                                     )
                                     Text(
-                                        text = "تحميل وإدارة حزم الترجمة بدون إنترنت",
+                                        text = tr(
+                                            "Download and manage offline translation packs",
+                                            "تحميل وإدارة حزم الترجمة بدون إنترنت"
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )
                                 }
                             }
-                            Text("فتح", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                            Text(tr("Open", "فتح"), color = colors.secondary, style = MaterialTheme.typography.labelMedium)
                         }
                         HorizontalDivider(color = colors.outline)
                         Row(
@@ -429,7 +528,8 @@ fun MoreScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
                                     imageVector = AppIcons.Translate,
@@ -439,18 +539,21 @@ fun MoreScreen(
                                 )
                                 Column {
                                     Text(
-                                        text = "ترجمة النصوص",
+                                        text = tr("Text Translation", "ترجمة النصوص"),
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = colors.onSurface
                                     )
                                     Text(
-                                        text = "ترجمة جمل ونصوص .txt طويلة دون اتصال",
+                                        text = tr(
+                                            "Translate sentences and long .txt files offline",
+                                            "ترجمة جمل ونصوص .txt طويلة دون اتصال"
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )
                                 }
                             }
-                            Text("فتح", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                            Text(tr("Open", "فتح"), color = colors.secondary, style = MaterialTheme.typography.labelMedium)
                         }
                         HorizontalDivider(color = colors.outline)
                         Row(
@@ -464,7 +567,8 @@ fun MoreScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
                                     imageVector = AppIcons.Description,
@@ -474,18 +578,21 @@ fun MoreScreen(
                                 )
                                 Column {
                                     Text(
-                                        text = "ترجمة ملفات (PDF • صور • TXT)",
+                                        text = tr("File Translation (PDF • Images • TXT)", "ترجمة ملفات (PDF • صور • TXT)"),
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = colors.onSurface
                                     )
                                     Text(
-                                        text = "معالجة صفحة بصفحة مع OCR وحفظ .txt تدريجي",
+                                        text = tr(
+                                            "Page-by-page OCR and incremental .txt export",
+                                            "معالجة صفحة بصفحة مع OCR وحفظ .txt تدريجي"
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )
                                 }
                             }
-                            Text("فتح", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                            Text(tr("Open", "فتح"), color = colors.secondary, style = MaterialTheme.typography.labelMedium)
                         }
                         HorizontalDivider(color = colors.outline)
                         Row(
@@ -499,7 +606,8 @@ fun MoreScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
                                     imageVector = AppIcons.Lightbulb,
@@ -509,18 +617,21 @@ fun MoreScreen(
                                 )
                                 Column {
                                     Text(
-                                        text = "التوفل والآيلتس",
+                                        text = tr("TOEFL & IELTS", "التوفل والآيلتس"),
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = colors.onSurface
                                     )
                                     Text(
-                                        text = "معلومات الاختبارين وقائمة الكلمات الأكاديمية",
+                                        text = tr(
+                                            "Exam guide and Academic Word List (AWL)",
+                                            "معلومات الاختبارين وقائمة الكلمات الأكاديمية"
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )
                                 }
                             }
-                            Text("فتح", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                            Text(tr("Open", "فتح"), color = colors.secondary, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -565,7 +676,7 @@ fun MoreScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
-                                    text = "تحديث التطبيق",
+                                    text = tr("App Update", "تحديث التطبيق"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onSurface
                                 )
@@ -597,7 +708,7 @@ fun MoreScreen(
                                 Spacer(modifier = Modifier.width(6.dp))
                             }
                             Text(
-                                text = if (isChecking) "جاري التحقق..." else "تحقق من التحديث",
+                                text = if (isChecking) tr("Checking...", "جاري التحقق...") else tr("Check for Update", "تحقق من التحديث"),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = colors.onSurface
                             )
@@ -634,7 +745,7 @@ fun MoreScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
-                                    text = "سجل البحث (${recentHistory.size})",
+                                    text = tr("Search History (${recentHistory.size})", "سجل البحث (${recentHistory.size})"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onSurface
                                 )
@@ -645,7 +756,7 @@ fun MoreScreen(
                                     modifier = Modifier.testTag("more_clear_history_button")
                                 ) {
                                     Text(
-                                        text = "مسح السجل",
+                                        text = tr("Clear History", "مسح السجل"),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = colors.primary
                                     )
@@ -655,7 +766,7 @@ fun MoreScreen(
 
                         if (recentHistory.isEmpty()) {
                             Text(
-                                text = "سجل البحث فارغ حالياً.",
+                                text = tr("Search history is currently empty.", "سجل البحث فارغ حالياً."),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant
                             )
@@ -685,7 +796,7 @@ fun MoreScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Close,
-                                            contentDescription = "حذف",
+                                            contentDescription = tr("Delete", "حذف"),
                                             tint = colors.onSurfaceVariant,
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -728,12 +839,12 @@ fun MoreScreen(
                             )
                             Column {
                                 Text(
-                                    text = "الذاكرة المؤقتة للقاموس",
+                                    text = tr("Dictionary Cache", "الذاكرة المؤقتة للقاموس"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = "$cachedCount كلمة مخزّنة محلياً",
+                                    text = tr("$cachedCount words cached locally", "$cachedCount كلمة مخزّنة محلياً"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -750,13 +861,13 @@ fun MoreScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("مسح الكاش", color = colors.onSurface)
+                            Text(tr("Clear Cache", "مسح الكاش"), color = colors.onSurface)
                         }
                     }
                 }
             }
 
-            // Section 4.8: "عن المصادر" screen trigger
+            // Section 4.8: Sources & Licenses screen trigger
             item {
                 Surface(
                     modifier = Modifier
@@ -774,7 +885,8 @@ fun MoreScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Info,
@@ -784,18 +896,21 @@ fun MoreScreen(
                             )
                             Column {
                                 Text(
-                                    text = "عن المصادر",
+                                    text = tr("Sources & Licenses", "عن المصادر"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = "تراخيص Wiktionary و Tatoeba و Datamuse و WordNet",
+                                    text = tr(
+                                        "Licenses for Wiktionary, Tatoeba, Datamuse & WordNet",
+                                        "تراخيص Wiktionary و Tatoeba و Datamuse و WordNet"
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
                             }
                         }
-                        Text("عرض", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+                        Text(tr("View", "عرض"), color = colors.secondary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -806,19 +921,19 @@ fun MoreScreen(
         AlertDialog(
             onDismissRequest = { showClearHistoryDialog = false },
             containerColor = colors.surface,
-            title = { Text("مسح السجل", style = MaterialTheme.typography.headlineSmall) },
-            text = { Text("هل تريد مسح سجل البحث بالكامل؟", style = MaterialTheme.typography.bodyMedium) },
+            title = { Text(tr("Clear History", "مسح السجل"), style = MaterialTheme.typography.headlineSmall) },
+            text = { Text(tr("Clear your entire search history?", "هل تريد مسح سجل البحث بالكامل؟"), style = MaterialTheme.typography.bodyMedium) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.clearHistory()
                     showClearHistoryDialog = false
                 }) {
-                    Text("مسح", color = colors.primary)
+                    Text(tr("Clear", "مسح"), color = colors.primary)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearHistoryDialog = false }) {
-                    Text("إلغاء", color = colors.onSurfaceVariant)
+                    Text(tr("Cancel", "إلغاء"), color = colors.onSurfaceVariant)
                 }
             }
         )
@@ -854,7 +969,7 @@ private fun OfflinePackCard(
                     modifier = Modifier.size(20.dp)
                 )
                 Text(
-                    text = "حزم الأوفلاين",
+                    text = tr("Offline Dictionary Pack", "حزم الأوفلاين"),
                     style = MaterialTheme.typography.headlineSmall,
                     color = colors.onSurface
                 )
@@ -864,9 +979,12 @@ private fun OfflinePackCard(
                 is OfflinePackState.Ready -> {
                     Text(
                         text = if (state.isInstalled) {
-                            "الحالة: مثبّتة (${state.wordCount} كلمة • ${formatBytes(state.diskSizeBytes)})"
+                            tr(
+                                "Status: Installed (${state.wordCount} words • ${formatBytes(state.diskSizeBytes)})",
+                                "الحالة: مثبّتة (${state.wordCount} كلمة • ${formatBytes(state.diskSizeBytes)})"
+                            )
                         } else {
-                            "الحالة: غير مثبّتة"
+                            tr("Status: Not installed", "الحالة: غير مثبّتة")
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = if (state.isInstalled) colors.secondary else colors.onSurfaceVariant
@@ -885,7 +1003,7 @@ private fun OfflinePackCard(
                                 .weight(1f)
                                 .testTag("download_offline_pack_button")
                         ) {
-                            Text(if (state.isInstalled) "تحديث الحزمة" else "تحميل الحزمة")
+                            Text(if (state.isInstalled) tr("Update Pack", "تحديث الحزمة") else tr("Download Pack", "تحميل الحزمة"))
                         }
                         if (state.isInstalled) {
                             OutlinedButton(
@@ -895,7 +1013,7 @@ private fun OfflinePackCard(
                                     .weight(1f)
                                     .testTag("delete_offline_pack_button")
                             ) {
-                                Text("حذف", color = colors.onSurface)
+                                Text(tr("Delete", "حذف"), color = colors.onSurface)
                             }
                         }
                     }
@@ -926,7 +1044,7 @@ private fun OfflinePackCard(
                         border = BorderStroke(1.dp, colors.outline),
                         modifier = Modifier.testTag("cancel_offline_pack_button")
                     ) {
-                        Text("إلغاء", color = colors.primary)
+                        Text(tr("Cancel", "إلغاء"), color = colors.primary)
                     }
                 }
 
@@ -948,7 +1066,7 @@ private fun OfflinePackCard(
                             ),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("إعادة المحاولة")
+                            Text(tr("Retry", "إعادة المحاولة"))
                         }
                         if (state.isInstalled) {
                             OutlinedButton(
@@ -956,7 +1074,7 @@ private fun OfflinePackCard(
                                 border = BorderStroke(1.dp, colors.outline),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("حذف", color = colors.onSurface)
+                                Text(tr("Delete", "حذف"), color = colors.onSurface)
                             }
                         }
                     }

@@ -82,6 +82,9 @@ import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.LinguisticRanker
+import com.example.core.LocalAppLanguage
+import com.example.core.LocalizedLabels
+import com.example.core.tr
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.ConfusableWordDetail
 import com.example.domain.model.PhraseDetailItem
@@ -123,6 +126,7 @@ fun WordDetailScreen(
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val lang = LocalAppLanguage.current
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isFavorite by viewModel.isFavorite.collectAsStateWithLifecycle()
@@ -205,7 +209,7 @@ fun WordDetailScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = stringResource(R.string.cd_back),
+                        contentDescription = tr("Back", "رجوع"),
                         tint = colors.onBackground
                     )
                 }
@@ -221,7 +225,7 @@ fun WordDetailScreen(
                         .testTag("word_detail_search_field"),
                     placeholder = {
                         Text(
-                            text = stringResource(R.string.search_placeholder_translate),
+                            text = tr("Search a word or sentence to translate...", "ابحث عن كلمة أو جملة لترجمتها..."),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant
                         )
@@ -287,7 +291,7 @@ fun WordDetailScreen(
 
             when (val state = uiState) {
                 is WordLoadState.Loading -> {
-                    LoadingCard(message = "جاري جلب المداخل من المصادر المفتوحة...")
+                    LoadingCard(message = tr("Fetching entries from open sources...", "جاري جلب المداخل من المصادر المفتوحة..."))
                 }
 
                 is WordLoadState.Error -> {
@@ -329,7 +333,7 @@ fun WordDetailScreen(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("إعادة المحاولة", style = MaterialTheme.typography.labelLarge)
+                                Text(tr("Retry", "إعادة المحاولة"), style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -489,7 +493,7 @@ fun WordDetailScreen(
                                             onClick = { onSelectUsageFilter(option) },
                                             label = {
                                                 Text(
-                                                    text = option.labelAr,
+                                                    text = option.labelFor(lang),
                                                     style = MaterialTheme.typography.labelMedium
                                                 )
                                             },
@@ -506,8 +510,12 @@ fun WordDetailScreen(
 
                         if (filteredPosGroups.isEmpty() && usageFilter != UsageFilterOption.ALL) {
                             item(key = "empty_filter_notice", contentType = "notice") {
+                                val filterLabel = usageFilter.labelFor(lang)
                                 Text(
-                                    text = "لا توجد معانٍ مطابقة لتصفية \"${usageFilter.labelAr}\".",
+                                    text = tr(
+                                        "No meanings match \"$filterLabel\".",
+                                        "لا توجد معانٍ مطابقة لتصفية \"$filterLabel\"."
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -542,7 +550,7 @@ fun WordDetailScreen(
                         if (entry.hasWiktionaryAttribution) {
                             item(key = "wiktionary_attribution", contentType = "attribution") {
                                 Text(
-                                    text = "المصدر: ويكاموس (Wiktionary) • CC BY-SA 4.0",
+                                    text = tr("Source: Wiktionary • CC BY-SA 4.0", "المصدر: ويكاموس (Wiktionary) • CC BY-SA 4.0"),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -553,7 +561,7 @@ fun WordDetailScreen(
                         if (phrasalVerbItems.isNotEmpty() || (isLoadingPhrasals && !entry.isArabicWord && displayPhrasals.isEmpty())) {
                             item(key = "sec_phrasal_verbs", contentType = "phrasals_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.phrasal_verbs_title),
+                                    title = tr("Phrasal Verbs", "الأفعال المركبة"),
                                     count = phrasalVerbItems.size,
                                     expanded = phrasalVerbsExpanded,
                                     onToggle = { phrasalVerbsExpanded = !phrasalVerbsExpanded }
@@ -573,7 +581,7 @@ fun WordDetailScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "جاري تحميل معاني الأفعال المركبة...",
+                                                text = tr("Loading phrasal verbs...", "جاري تحميل معاني الأفعال المركبة..."),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = colors.onSurfaceVariant
                                             )
@@ -607,7 +615,7 @@ fun WordDetailScreen(
                         if (idiomItems.isNotEmpty()) {
                             item(key = "sec_idioms", contentType = "idioms_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.idioms_expressions_title),
+                                    title = tr("Idioms & Expressions", "التعابير الاصطلاحية والعبارات"),
                                     count = idiomItems.size,
                                     expanded = idiomsExpanded,
                                     onToggle = { idiomsExpanded = !idiomsExpanded }
@@ -639,7 +647,7 @@ fun WordDetailScreen(
                         if (compoundDetailItems.isNotEmpty() || remainingCompoundChips.isNotEmpty()) {
                             item(key = "sec_compounds", contentType = "compounds_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.compound_expressions_title),
+                                    title = tr("Compound Expressions", "التعابير المركبة والمتلازمات"),
                                     count = compoundDetailItems.size + remainingCompoundChips.size,
                                     expanded = compoundsExpanded,
                                     onToggle = { compoundsExpanded = !compoundsExpanded }
@@ -678,7 +686,7 @@ fun WordDetailScreen(
                         if (entry.synonyms.isNotEmpty()) {
                             item(key = "sec_synonyms", contentType = "chips_section") {
                                 CollapsibleChipsSection(
-                                    title = stringResource(R.string.synonyms_title),
+                                    title = tr("Synonyms", "المترادفات"),
                                     expanded = synonymsExpanded,
                                     onToggle = { synonymsExpanded = !synonymsExpanded },
                                     items = entry.synonyms,
@@ -691,7 +699,7 @@ fun WordDetailScreen(
                         if (entry.antonyms.isNotEmpty()) {
                             item(key = "sec_antonyms", contentType = "chips_section") {
                                 CollapsibleChipsSection(
-                                    title = stringResource(R.string.antonyms_title),
+                                    title = tr("Antonyms", "المتضادات"),
                                     expanded = antonymsExpanded,
                                     onToggle = { antonymsExpanded = !antonymsExpanded },
                                     items = entry.antonyms,
@@ -704,7 +712,7 @@ fun WordDetailScreen(
                         if (entry.collocations.isNotEmpty()) {
                             item(key = "sec_collocations", contentType = "chips_section") {
                                 CollapsibleChipsSection(
-                                    title = stringResource(R.string.collocations_title),
+                                    title = tr("Collocations", "المتلازمات اللفظية"),
                                     expanded = collocationsExpanded,
                                     onToggle = { collocationsExpanded = !collocationsExpanded },
                                     items = entry.collocations,
@@ -717,7 +725,7 @@ fun WordDetailScreen(
                         if (entry.prepositionsAndPhrases.isNotEmpty()) {
                             item(key = "sec_phrases", contentType = "chips_section") {
                                 CollapsibleChipsSection(
-                                    title = stringResource(R.string.phrases_title),
+                                    title = tr("Prepositions & Phrases", "حروف الجر والتراكيب"),
                                     expanded = phrasesExpanded,
                                     onToggle = { phrasesExpanded = !phrasesExpanded },
                                     items = entry.prepositionsAndPhrases,
@@ -734,7 +742,7 @@ fun WordDetailScreen(
                         if (entry.wordFamily.isNotEmpty()) {
                             item(key = "sec_word_family", contentType = "word_family_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.similar_words_title),
+                                    title = tr("Word Family", "عائلة الكلمة"),
                                     count = entry.wordFamily.size,
                                     expanded = familyExpanded,
                                     onToggle = { familyExpanded = !familyExpanded }
@@ -771,7 +779,13 @@ fun WordDetailScreen(
                                                     }
                                                 }
                                                 if (member.partOfSpeechArabic.isNotBlank()) {
-                                                    PosChip(text = member.partOfSpeechArabic)
+                                                    PosChip(
+                                                        text = LinguisticRanker.formatPosBadgeLabel(
+                                                            partOfSpeech = member.partOfSpeechArabic,
+                                                            partOfSpeechArabic = member.partOfSpeechArabic,
+                                                            language = lang
+                                                        )
+                                                    )
                                                 }
                                             }
                                             if (idx < entry.wordFamily.lastIndex) {
@@ -786,7 +800,7 @@ fun WordDetailScreen(
                         if (entry.confusableCandidates.isNotEmpty()) {
                             item(key = "sec_confusables", contentType = "confusables_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.confusables_title),
+                                    title = tr("Confusable Words", "كلمات يسهل الخلط بينها"),
                                     count = entry.confusableCandidates.size,
                                     expanded = confusablesExpanded,
                                     onToggle = {
@@ -817,14 +831,17 @@ fun WordDetailScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
-                                                text = "جاري تحميل الكلمات المتشابهة...",
+                                                text = tr("Loading confusable words...", "جاري تحميل الكلمات المتشابهة..."),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = colors.onSurfaceVariant
                                             )
                                         }
                                     } else if (confusableDetails.isEmpty()) {
                                         Text(
-                                            text = "لا توجد مداخل قاموسية مؤكدة لهذه الكلمات.",
+                                            text = tr(
+                                                "No confirmed dictionary entries for these words.",
+                                                "لا توجد مداخل قاموسية مؤكدة لهذه الكلمات."
+                                            ),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = colors.onSurfaceVariant
                                         )
@@ -850,7 +867,7 @@ fun WordDetailScreen(
                         if (entry.generalTerms.isNotEmpty() || entry.specificTerms.isNotEmpty()) {
                             item(key = "sec_general_specific", contentType = "general_specific_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.hypernyms_hyponyms_title),
+                                    title = tr("Broader & Narrower Terms", "مصطلحات أعم وأخص"),
                                     count = entry.generalTerms.size + entry.specificTerms.size,
                                     expanded = generalSpecExpanded,
                                     onToggle = { generalSpecExpanded = !generalSpecExpanded }
@@ -858,7 +875,7 @@ fun WordDetailScreen(
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         if (entry.generalTerms.isNotEmpty()) {
                                             Text(
-                                                text = "مصطلحات أعم",
+                                                text = tr("Broader terms", "مصطلحات أعم"),
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = colors.onSurfaceVariant
                                             )
@@ -870,7 +887,7 @@ fun WordDetailScreen(
                                         }
                                         if (entry.specificTerms.isNotEmpty()) {
                                             Text(
-                                                text = "مصطلحات أخص",
+                                                text = tr("Narrower terms", "مصطلحات أخص"),
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = colors.onSurfaceVariant
                                             )
@@ -888,7 +905,7 @@ fun WordDetailScreen(
                         if (entry.relatedWords.isNotEmpty()) {
                             item(key = "sec_related", contentType = "chips_section") {
                                 CollapsibleChipsSection(
-                                    title = stringResource(R.string.related_terms_title),
+                                    title = tr("Related Terms", "كلمات ذات صلة"),
                                     expanded = relatedExpanded,
                                     onToggle = { relatedExpanded = !relatedExpanded },
                                     items = entry.relatedWords,
@@ -902,7 +919,7 @@ fun WordDetailScreen(
                         if (entry.tatoebaSentences.isNotEmpty()) {
                             item(key = "sec_tatoeba", contentType = "tatoeba_section") {
                                 CollapsibleSectionCard(
-                                    title = stringResource(R.string.more_examples_title),
+                                    title = tr("More Examples (Tatoeba)", "أمثلة إضافية (ترجمة بشرية من Tatoeba)"),
                                     count = entry.tatoebaSentences.size,
                                     expanded = tatoebaExpanded,
                                     onToggle = { tatoebaExpanded = !tatoebaExpanded }
@@ -1020,7 +1037,7 @@ fun WordDetailScreen(
                                         }
                                         if (entry.hasTatoebaAttribution) {
                                             Text(
-                                                text = "المصدر: Tatoeba • CC BY 2.0 FR",
+                                                text = tr("Source: Tatoeba • CC BY 2.0 FR", "المصدر: Tatoeba • CC BY 2.0 FR"),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = colors.onSurfaceVariant
                                             )
@@ -1053,17 +1070,20 @@ fun WordDetailScreen(
             onDismissRequest = { showAwlDialog = false },
             containerColor = colors.surface,
             title = {
-                Text("كلمة أكاديمية (AWL)", style = MaterialTheme.typography.headlineSmall)
+                Text(tr("Academic Word (AWL)", "كلمة أكاديمية (AWL)"), style = MaterialTheme.typography.headlineSmall)
             },
             text = {
                 Text(
-                    text = "من قائمة الكلمات الأكاديمية (Academic Word List) الشائعة في التحضير للتوفل والآيلتس. ليست قائمة رسمية من ETS أو IELTS.",
+                    text = tr(
+                        "From the Academic Word List (AWL), commonly studied for TOEFL and IELTS preparation. Not an official ETS or IELTS list.",
+                        "من قائمة الكلمات الأكاديمية (Academic Word List) الشائعة في التحضير للتوفل والآيلتس. ليست قائمة رسمية من ETS أو IELTS."
+                    ),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
                 TextButton(onClick = { showAwlDialog = false }) {
-                    Text("حسناً", color = colors.primary)
+                    Text(tr("OK", "حسناً"), color = colors.primary)
                 }
             }
         )
@@ -1073,21 +1093,24 @@ fun WordDetailScreen(
         AlertDialog(
             onDismissRequest = { viewModel.dismissCellularDownload() },
             containerColor = colors.surface,
-            title = { Text("التحميل عبر بيانات الهاتف؟", style = MaterialTheme.typography.headlineSmall) },
+            title = { Text(tr("Download over mobile data?", "التحميل عبر بيانات الهاتف؟"), style = MaterialTheme.typography.headlineSmall) },
             text = {
                 Text(
-                    "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزمة العربية والإنجليزية؟",
+                    tr(
+                        "You are currently on mobile data. Continue downloading the Arabic & English packs?",
+                        "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزمة العربية والإنجليزية؟"
+                    ),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
                 Button(onClick = { viewModel.confirmCellularDownload() }) {
-                    Text("متابعة")
+                    Text(tr("Continue", "متابعة"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissCellularDownload() }) {
-                    Text("إلغاء")
+                    Text(tr("Cancel", "إلغاء"))
                 }
             }
         )
@@ -1111,6 +1134,7 @@ private fun HeadwordCard(
     onSelectVocalizedForm: (String) -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val hasUs = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.US, entry.usAudioUrl)
     val hasUk = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.UK, entry.ukAudioUrl)
     val hasAwlTag = entry.tags.any { it.equals("AWL", ignoreCase = true) }
@@ -1150,7 +1174,7 @@ private fun HeadwordCard(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = "أوفلاين",
+                                text = tr("Offline", "أوفلاين"),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.onSecondaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1163,7 +1187,7 @@ private fun HeadwordCard(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = "محفوظ",
+                                text = tr("Cached", "محفوظ"),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.onSecondaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1179,7 +1203,7 @@ private fun HeadwordCard(
                     ) {
                         Icon(
                             imageVector = if (isFavorite) Icons.Rounded.Star else AppIcons.StarOutline,
-                            contentDescription = stringResource(R.string.cd_favorite),
+                            contentDescription = tr("Favorite", "المفضلة"),
                             tint = if (isFavorite) colors.primary else colors.onSurfaceVariant,
                             modifier = Modifier.size(26.dp)
                         )
@@ -1201,7 +1225,7 @@ private fun HeadwordCard(
                 val activeCanonical = ArabicTextUtils.canonicalizeArabicWithDiacritics(entry.displayWord)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "الصيغ المشكولة:",
+                        text = tr("Vocalized forms:", "الصيغ المشكولة:"),
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant
                     )
@@ -1243,7 +1267,7 @@ private fun HeadwordCard(
                     border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.4f))
                 ) {
                     Text(
-                        text = "كلمة أكاديمية (AWL)",
+                        text = tr("Academic Word (AWL)", "كلمة أكاديمية (AWL)"),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = colors.onSecondaryContainer,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -1293,8 +1317,8 @@ private fun HeadwordCard(
             }
 
             // Comprehensive quick meanings grouped by Part of Speech directly under word & US/UK audio
-            val posSummaries = remember(entry) {
-                LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = 8)
+            val posSummaries = remember(entry, lang) {
+                LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = 8, language = lang)
             }
             if ((posSummaries.isNotEmpty() || entry.machineTranslations.isNotEmpty()) && (entry.isArabicWord || showArabicTranslations)) {
                 val allMachineOnly = if (posSummaries.isNotEmpty()) {
@@ -1320,13 +1344,13 @@ private fun HeadwordCard(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "الترجمة",
+                                text = tr("Translation", "الترجمة"),
                                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                                 color = colors.primary
                             )
                             if (showMachineLabel && allMachineOnly) {
                                 Text(
-                                    text = "ترجمة آلية",
+                                    text = tr("Machine translated", "ترجمة آلية"),
                                     fontSize = 9.sp,
                                     lineHeight = 11.sp,
                                     color = colors.onSurfaceVariant.copy(alpha = 0.6f)
@@ -1426,7 +1450,7 @@ private fun HeadwordCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "سرعة الصوت",
+                    text = tr("Speech speed", "سرعة الصوت"),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
@@ -1455,7 +1479,13 @@ private fun PosGroupCard(
     onOpenWord: (String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val visibleSenses = if (showAll) group.senses else group.senses.take(10)
+    val posBadge = LinguisticRanker.formatPosBadgeLabel(
+        partOfSpeech = group.partOfSpeech,
+        partOfSpeechArabic = group.partOfSpeechArabic,
+        language = lang
+    )
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1472,14 +1502,12 @@ private fun PosGroupCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                PosChip(text = group.partOfSpeechArabic)
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    Text(
-                        text = group.partOfSpeech,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant
-                    )
-                }
+                PosChip(text = posBadge)
+                Text(
+                    text = tr("${group.senses.size} meanings", "${group.senses.size} معنى"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant
+                )
             }
 
             HorizontalDivider(color = colors.outline, thickness = 1.dp)
@@ -1508,7 +1536,11 @@ private fun PosGroupCard(
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 ) {
                     Text(
-                        text = if (showAll) "عرض أقل" else "عرض المزيد (${group.senses.size - 10})",
+                        text = if (showAll) {
+                            tr("Show less", "عرض أقل")
+                        } else {
+                            tr("Show more (${group.senses.size - 10})", "عرض المزيد (${group.senses.size - 10})")
+                        },
                         color = colors.secondary,
                         style = MaterialTheme.typography.labelLarge
                     )
@@ -1533,6 +1565,7 @@ private fun SenseCardContent(
     onOpenWord: (String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val defIsArabic = ArabicTextUtils.containsArabicLetters(sense.definition)
     val translatedMeaning = sense.definitionArabic?.takeIf { it.isNotBlank() }
 
@@ -1544,10 +1577,10 @@ private fun SenseCardContent(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 sense.usageLabels.forEach { label ->
-                    UsageLabelChip(text = label)
+                    UsageLabelChip(text = LocalizedLabels.usageLabel(label, lang))
                 }
                 sense.spellingVariantLabel?.let { variantLabel ->
-                    UsageLabelChip(text = variantLabel)
+                    UsageLabelChip(text = LocalizedLabels.usageLabel(variantLabel, lang))
                 }
                 sense.otherSpellingWord?.let { otherWord ->
                     InteractiveWordChip(
@@ -1634,7 +1667,7 @@ private fun SenseCardContent(
                 }
                 if (!sense.usageNote.isNullOrBlank()) {
                     Text(
-                        text = sense.usageNote,
+                        text = LocalizedLabels.usageNote(sense.usageNote, lang),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth()
@@ -1733,7 +1766,7 @@ private fun SenseCardContent(
         if (sense.synonyms.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "مرادفات المعنى:",
+                    text = tr("Sense Synonyms:", "مرادفات المعنى:"),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
@@ -1747,7 +1780,7 @@ private fun SenseCardContent(
         if (sense.antonyms.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "أضداد المعنى:",
+                    text = tr("Sense Antonyms:", "أضداد المعنى:"),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
@@ -1772,13 +1805,10 @@ private fun PhrasalIdiomDetailCard(
     onStop: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val phrasePrefix = "phrasal_${item.phrase.hashCode()}"
     val phraseIsArabic = ArabicTextUtils.containsArabicLetters(item.phrase)
-    val badgeText = when {
-        item.category == "COMPOUND" -> "تعبير مركب"
-        item.isIdiom || item.category == "IDIOM" -> "تعبير اصطلاحي"
-        else -> "فعل مركب"
-    }
+    val badgeText = LocalizedLabels.phraseBadge(item.category, item.isIdiom, lang)
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
@@ -1829,7 +1859,7 @@ private fun PhrasalIdiomDetailCard(
         if (!item.grammarStructure.isNullOrBlank()) {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(
-                    text = item.grammarStructure,
+                    text = LocalizedLabels.formatGrammarStructure(item.grammarStructure, lang),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.secondary,
                     modifier = Modifier.fillMaxWidth()
@@ -1936,6 +1966,7 @@ private fun ConfusableCard(
     onOpenWord: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val hasUs = audioManager.hasAudioOrCache(detail.word, Accent.US, detail.usAudioUrl)
     val hasUk = audioManager.hasAudioOrCache(detail.word, Accent.UK, detail.ukAudioUrl)
 
@@ -1974,7 +2005,13 @@ private fun ConfusableCard(
                             )
                         }
                         if (detail.partOfSpeech.isNotBlank()) {
-                            PosChip(text = detail.partOfSpeech)
+                            PosChip(
+                                text = LinguisticRanker.formatPosBadgeLabel(
+                                    partOfSpeech = detail.partOfSpeech,
+                                    partOfSpeechArabic = "",
+                                    language = lang
+                                )
+                            )
                         }
                     }
                     if (!wordArabicMeaning.isNullOrBlank()) {
@@ -2019,7 +2056,7 @@ private fun ConfusableCard(
                             shape = RoundedCornerShape(999.dp)
                         ) {
                             Text(
-                                text = label,
+                                text = LocalizedLabels.usageLabel(label, lang),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.tertiary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -2122,7 +2159,7 @@ private fun CollapsibleSectionCard(
                 }
                 Icon(
                     imageVector = if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = if (expanded) "طي" else "توسيع",
+                    contentDescription = if (expanded) tr("Collapse", "طي") else tr("Expand", "توسيع"),
                     tint = colors.onSurfaceVariant
                 )
             }

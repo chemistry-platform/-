@@ -32,10 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.R
+import com.example.core.LocalAppLanguage
+import com.example.core.tr
 import com.example.domain.model.LanguageDirection
 import com.example.ui.components.AppIcons
 import com.example.ui.components.ChipWrapRow
@@ -54,6 +54,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val direction by viewModel.languageDirection.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
 
@@ -74,12 +75,16 @@ fun HomeScreen(
             item(key = "home_header", contentType = "header") {
                 Column {
                     Text(
-                        text = stringResource(R.string.app_name),
+                        text = tr(lang, "Al-Makhzanji Lexicon", "معجم المخزنجي"),
                         style = MaterialTheme.typography.headlineLarge,
                         color = colors.onBackground
                     )
                     Text(
-                        text = "معجم ومترجم عربي - إنجليزي مفتوح المصدر",
+                        text = tr(
+                            lang,
+                            "Open-Source English–Arabic Dictionary & Translator",
+                            "معجم ومترجم عربي - إنجليزي مفتوح المصدر"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -124,7 +129,7 @@ fun HomeScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = stringResource(R.string.search_placeholder_home),
+                                text = tr(lang, "Search a word or sentence...", "ابحث عن كلمة أو جملة..."),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = colors.onSurfaceVariant
                             )
@@ -133,7 +138,7 @@ fun HomeScreen(
                 }
             }
 
-            // Functional tool tiles: الترجمة + ترجمة ملفات + اللغات
+            // Functional tool tiles: Text Translation + File Translation + Languages
             item(key = "home_tools_row", contentType = "tools_row") {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
@@ -141,8 +146,8 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         HomeActionTile(
-                            title = "ترجمة النصوص",
-                            subtitle = "59 لغة محلياً",
+                            title = tr(lang, "Text Translation", "ترجمة النصوص"),
+                            subtitle = tr(lang, "59 offline languages", "59 لغة محلياً"),
                             icon = AppIcons.Translate,
                             onClick = onOpenTranslation,
                             modifier = Modifier
@@ -150,8 +155,8 @@ fun HomeScreen(
                                 .testTag("home_translation_tile")
                         )
                         HomeActionTile(
-                            title = "ترجمة ملفات",
-                            subtitle = "PDF • صور • TXT",
+                            title = tr(lang, "File Translation", "ترجمة ملفات"),
+                            subtitle = tr(lang, "PDF • Images • TXT", "PDF • صور • TXT"),
                             icon = AppIcons.Description,
                             onClick = onOpenFileTranslation,
                             modifier = Modifier
@@ -160,8 +165,12 @@ fun HomeScreen(
                         )
                     }
                     HomeActionTile(
-                        title = "إدارة اللغات وحزم الترجمة",
-                        subtitle = "تحميل وتحديث حزم العمل بدون إنترنت",
+                        title = tr(lang, "Manage Languages & Packs", "إدارة اللغات وحزم الترجمة"),
+                        subtitle = tr(
+                            lang,
+                            "Download and update offline translation packs",
+                            "تحميل وتحديث حزم العمل بدون إنترنت"
+                        ),
                         icon = AppIcons.Language,
                         onClick = onOpenLanguages,
                         modifier = Modifier
@@ -184,7 +193,7 @@ fun HomeScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "مداخل قاموسية سريعة",
+                            text = tr(lang, "Quick Dictionary Entries", "مداخل قاموسية سريعة"),
                             style = MaterialTheme.typography.headlineSmall,
                             color = colors.onSurface
                         )

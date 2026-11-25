@@ -61,6 +61,9 @@ import com.example.R
 import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
+import com.example.core.LinguisticRanker
+import com.example.core.LocalAppLanguage
+import com.example.core.tr
 import com.example.data.local.SearchHistoryEntity
 import com.example.domain.model.SearchSuggestion
 import com.example.ui.components.AppIcons
@@ -126,7 +129,7 @@ fun QuickTranslateScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = stringResource(R.string.cd_back),
+                        contentDescription = tr("Back", "رجوع"),
                         tint = colors.onBackground
                     )
                 }
@@ -154,7 +157,7 @@ fun QuickTranslateScreen(
                         .testTag("quick_translate_input"),
                     placeholder = {
                         Text(
-                            text = stringResource(R.string.search_placeholder_translate),
+                            text = tr("Search a word or sentence to translate...", "ابحث عن كلمة أو جملة لترجمتها..."),
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant
                         )
@@ -174,7 +177,7 @@ fun QuickTranslateScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
-                                    contentDescription = stringResource(R.string.cd_clear_search),
+                                    contentDescription = tr("Clear search", "مسح البحث"),
                                     tint = colors.onSurfaceVariant
                                 )
                             }
@@ -277,9 +280,15 @@ fun QuickTranslateScreen(
                             ) {
                                 Text(
                                     text = if (isSentence) {
-                                        "ترجمة وتحليل الجملة: \"$trimmedQuery\""
+                                        tr(
+                                            "Translate & analyze sentence: \"$trimmedQuery\"",
+                                            "ترجمة وتحليل الجملة: \"$trimmedQuery\""
+                                        )
                                     } else {
-                                        "فتح صفحة المعجم الكاملة لـ \"$trimmedQuery\""
+                                        tr(
+                                            "Open full dictionary entry for \"$trimmedQuery\"",
+                                            "فتح صفحة المعجم الكاملة لـ \"$trimmedQuery\""
+                                        )
                                     },
                                     style = MaterialTheme.typography.labelLarge,
                                     color = colors.secondary,
@@ -288,7 +297,7 @@ fun QuickTranslateScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = if (isSentence) "ترجمة الجملة" else "بحث",
+                                    text = if (isSentence) tr("Translate", "ترجمة الجملة") else tr("Search", "بحث"),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = colors.primary
                                 )
@@ -339,7 +348,7 @@ fun QuickTranslateScreen(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = stringResource(R.string.recent_searches),
+                                    text = tr("Recent Searches", "عمليات البحث الأخيرة"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onBackground
                                 )
@@ -349,7 +358,7 @@ fun QuickTranslateScreen(
                                 modifier = Modifier.testTag("clear_search_history_button")
                             ) {
                                 Text(
-                                    text = "مسح السجل",
+                                    text = tr("Clear History", "مسح السجل"),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = colors.primary
                                 )
@@ -386,19 +395,19 @@ fun QuickTranslateScreen(
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
             containerColor = colors.surface,
-            title = { Text("مسح السجل", style = MaterialTheme.typography.headlineSmall) },
-            text = { Text("هل تريد مسح سجل البحث بالكامل؟", style = MaterialTheme.typography.bodyMedium) },
+            title = { Text(tr("Clear History", "مسح السجل"), style = MaterialTheme.typography.headlineSmall) },
+            text = { Text(tr("Clear your entire search history?", "هل تريد مسح سجل البحث بالكامل؟"), style = MaterialTheme.typography.bodyMedium) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.clearHistory()
                     showClearConfirm = false
                 }) {
-                    Text("مسح", color = colors.primary)
+                    Text(tr("Clear", "مسح"), color = colors.primary)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirm = false }) {
-                    Text("إلغاء", color = colors.onSurfaceVariant)
+                    Text(tr("Cancel", "إلغاء"), color = colors.onSurfaceVariant)
                 }
             }
         )
@@ -412,6 +421,7 @@ private fun SuggestionResultRow(
     onOpenWord: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val hasUs = !suggestion.isArabic && audioManager.hasAudioOrCache(suggestion.word, Accent.US, suggestion.usAudioUrl)
     val hasUk = !suggestion.isArabic && audioManager.hasAudioOrCache(suggestion.word, Accent.UK, suggestion.ukAudioUrl)
 
@@ -455,7 +465,13 @@ private fun SuggestionResultRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (suggestion.partOfSpeech.isNotBlank()) {
-                PosChip(text = suggestion.partOfSpeech)
+                PosChip(
+                    text = LinguisticRanker.formatPosBadgeLabel(
+                        partOfSpeech = suggestion.partOfSpeech,
+                        partOfSpeechArabic = "",
+                        language = lang
+                    )
+                )
             }
             if (!suggestion.isArabic) {
                 CompactWordAudioButtons(
@@ -529,7 +545,7 @@ private fun HistoryRow(
         ) {
             Icon(
                 imageVector = Icons.Rounded.Close,
-                contentDescription = "حذف من السجل",
+                contentDescription = tr("Remove from history", "حذف من السجل"),
                 tint = colors.onSurfaceVariant,
                 modifier = Modifier.size(18.dp)
             )

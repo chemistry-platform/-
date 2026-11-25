@@ -69,6 +69,9 @@ import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.ChunkSlice
 import com.example.core.LanguagePackInfo
+import com.example.core.LocalAppLanguage
+import com.example.core.LocalizedLabels
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.components.HighlightableSentencesText
@@ -85,6 +88,7 @@ fun TranslationScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
@@ -153,7 +157,7 @@ fun TranslationScreen(
                         )
                     }
                     Text(
-                        text = "الترجمة",
+                        text = tr("Translation", "الترجمة"),
                         style = MaterialTheme.typography.headlineMedium,
                         color = colors.onBackground
                     )
@@ -170,7 +174,7 @@ fun TranslationScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("اللغات", color = colors.secondary)
+                    Text(tr("Languages", "اللغات"), color = colors.secondary)
                 }
             }
 
@@ -190,7 +194,7 @@ fun TranslationScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     LanguageChipSelector(
-                        label = sourceInfo?.arabicName ?: state.sourceCode,
+                        label = sourceInfo?.let { LocalizedLabels.languageDisplayName(it, lang) } ?: state.sourceCode,
                         onClick = { selectingSource = true },
                         modifier = Modifier
                             .weight(1f)
@@ -211,7 +215,7 @@ fun TranslationScreen(
                     }
 
                     LanguageChipSelector(
-                        label = targetInfo?.arabicName ?: state.targetCode,
+                        label = targetInfo?.let { LocalizedLabels.languageDisplayName(it, lang) } ?: state.targetCode,
                         onClick = { selectingTarget = true },
                         modifier = Modifier
                             .weight(1f)
@@ -238,7 +242,7 @@ fun TranslationScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "حزمة اللغة غير محمّلة",
+                            text = tr("Language pack not downloaded", "حزمة اللغة غير محمّلة"),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onErrorContainer,
                             modifier = Modifier.weight(1f)
@@ -259,7 +263,7 @@ fun TranslationScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                             } else {
-                                Text("تحميل", style = MaterialTheme.typography.labelMedium)
+                                Text(tr("Download", "تحميل"), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
@@ -281,7 +285,7 @@ fun TranslationScreen(
                             .testTag("translation_input_field"),
                         placeholder = {
                             Text(
-                                text = "أدخل نصاً للترجمة أو استورد ملف .txt طويل...",
+                                text = tr("Enter text to translate or import a long .txt file...", "أدخل نصاً للترجمة أو استورد ملف .txt طويل..."),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurfaceVariant
                             )
@@ -294,7 +298,7 @@ fun TranslationScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.Close,
-                                        contentDescription = "مسح",
+                                        contentDescription = tr("Clear", "مسح"),
                                         tint = colors.onSurfaceVariant
                                     )
                                 }
@@ -329,7 +333,7 @@ fun TranslationScreen(
                                     .height(48.dp)
                                     .testTag("cancel_translation_button")
                             ) {
-                                Text("إلغاء الترجمة (${state.progressPercent}%)")
+                                Text(tr("Cancel (${state.progressPercent}%)", "إلغاء الترجمة (${state.progressPercent}%)"))
                             }
                         } else {
                             Button(
@@ -344,7 +348,7 @@ fun TranslationScreen(
                                     .height(48.dp)
                                     .testTag("translate_action_button")
                             ) {
-                                Text("ترجمة", style = MaterialTheme.typography.labelLarge)
+                                Text(tr("Translate", "ترجمة"), style = MaterialTheme.typography.labelLarge)
                             }
                         }
 
@@ -363,7 +367,7 @@ fun TranslationScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("ملف .txt", color = colors.onSurface)
+                            Text(tr("Import .txt", "ملف .txt"), color = colors.onSurface)
                         }
                     }
                 }
@@ -378,7 +382,7 @@ fun TranslationScreen(
                         ) {
                             Box(modifier = Modifier.weight(1f)) {
                                 LongTextAudioBar(
-                                    title = "قراءة النص المدخل",
+                                    title = tr("Read input text", "قراءة النص المدخل"),
                                     isPlaying = playingKey == "tr_input_text",
                                     ttsProgress = ttsProgress,
                                     onPlayClick = {
@@ -417,7 +421,7 @@ fun TranslationScreen(
                                 trackColor = colors.outline
                             )
                             Text(
-                                text = "جاري الترجمة: ${state.progressPercent}%",
+                                text = tr("Translating: ${state.progressPercent}%", "جاري الترجمة: ${state.progressPercent}%"),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = colors.onSurfaceVariant
                             )
@@ -454,7 +458,7 @@ fun TranslationScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "الترجمة",
+                                        text = tr("Translation", "الترجمة"),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = colors.secondary
                                     )
@@ -469,7 +473,7 @@ fun TranslationScreen(
                                         ) {
                                             Icon(
                                                 imageVector = AppIcons.ContentCopy,
-                                                contentDescription = "نسخ",
+                                                contentDescription = tr("Copy", "نسخ"),
                                                 tint = colors.onSurfaceVariant,
                                                 modifier = Modifier.size(18.dp)
                                             )
@@ -488,7 +492,7 @@ fun TranslationScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 LongTextAudioBar(
-                                    title = "استماع للترجمة",
+                                    title = tr("Listen to translation", "استماع للترجمة"),
                                     isPlaying = playingKey == "tr_short_output",
                                     ttsProgress = ttsProgress,
                                     onPlayClick = {
@@ -532,7 +536,10 @@ fun TranslationScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "الترجمة المتدفقة (${state.slices.size} مقاطع)",
+                                        text = tr(
+                                            "Streamed Translation (${state.slices.size} parts)",
+                                            "الترجمة المتدفقة (${state.slices.size} مقاطع)"
+                                        ),
                                         style = MaterialTheme.typography.headlineSmall,
                                         color = colors.onBackground
                                     )
@@ -548,7 +555,7 @@ fun TranslationScreen(
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("تصدير .txt", color = colors.onSurface)
+                                        Text(tr("Export .txt", "تصدير .txt"), color = colors.onSurface)
                                     }
                                 }
                                 Row(
@@ -558,7 +565,7 @@ fun TranslationScreen(
                                 ) {
                                     Box(modifier = Modifier.weight(1f)) {
                                         LongTextAudioBar(
-                                            title = "قراءة كل النص المترجم",
+                                            title = tr("Read all translated text", "قراءة كل النص المترجم"),
                                             isPlaying = playingKey == "tr_streamed_out",
                                             ttsProgress = ttsProgress,
                                             onPlayClick = {
@@ -609,7 +616,7 @@ fun TranslationScreen(
 
     if (selectingSource) {
         LanguagePickerDialog(
-            title = "اختر لغة المصدر",
+            title = tr("Select Source Language", "اختر لغة المصدر"),
             languages = languages,
             selectedCode = state.sourceCode,
             onSelect = {
@@ -622,7 +629,7 @@ fun TranslationScreen(
 
     if (selectingTarget) {
         LanguagePickerDialog(
-            title = "اختر لغة الهدف",
+            title = tr("Select Target Language", "اختر لغة الهدف"),
             languages = languages,
             selectedCode = state.targetCode,
             onSelect = {
@@ -637,21 +644,29 @@ fun TranslationScreen(
         AlertDialog(
             onDismissRequest = { viewModel.dismissCellularDownload() },
             containerColor = colors.surface,
-            title = { Text("التحميل عبر بيانات الهاتف؟", style = MaterialTheme.typography.headlineSmall) },
+            title = {
+                Text(
+                    tr("Download over mobile data?", "التحميل عبر بيانات الهاتف؟"),
+                    style = MaterialTheme.typography.headlineSmall
+                )
+            },
             text = {
                 Text(
-                    "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزم الترجمة؟",
+                    tr(
+                        "You are currently using mobile data. Continue downloading translation packs?",
+                        "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزم الترجمة؟"
+                    ),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
                 Button(onClick = { viewModel.confirmCellularDownload() }) {
-                    Text("متابعة")
+                    Text(tr("Continue", "متابعة"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissCellularDownload() }) {
-                    Text("إلغاء")
+                    Text(tr("Cancel", "إلغاء"))
                 }
             }
         )
@@ -726,12 +741,14 @@ private fun LanguagePickerDialog(
     onDismiss: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     var filter by remember { mutableStateOf("") }
-    val filtered = remember(languages, filter) {
+    val filtered = remember(languages, filter, lang) {
         val q = filter.trim()
         if (q.isEmpty()) languages
         else languages.filter {
-            it.arabicName.contains(q, ignoreCase = true) ||
+            LocalizedLabels.languageDisplayName(it, lang).contains(q, ignoreCase = true) ||
+                it.arabicName.contains(q, ignoreCase = true) ||
                 it.nativeName.contains(q, ignoreCase = true) ||
                 it.code.contains(q, ignoreCase = true)
         }
@@ -746,7 +763,7 @@ private fun LanguagePickerDialog(
                 OutlinedTextField(
                     value = filter,
                     onValueChange = { filter = it },
-                    placeholder = { Text("ابحث عن لغة...") },
+                    placeholder = { Text(tr("Search for a language...", "ابحث عن لغة...")) },
                     leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -764,7 +781,7 @@ private fun LanguagePickerDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = item.arabicName,
+                                    text = LocalizedLabels.languageDisplayName(item, lang),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = if (isSelected) colors.primary else colors.onSurface
                                 )
@@ -775,7 +792,11 @@ private fun LanguagePickerDialog(
                                 )
                             }
                             Text(
-                                text = if (item.isDownloaded) "محمّلة" else "غير محمّلة",
+                                text = if (item.isDownloaded) {
+                                    tr(lang, "Downloaded", "محمّلة")
+                                } else {
+                                    tr(lang, "Not downloaded", "غير محمّلة")
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (item.isDownloaded) colors.secondary else colors.onSurfaceVariant
                             )
@@ -786,7 +807,7 @@ private fun LanguagePickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("إغلاق") }
+            TextButton(onClick = onDismiss) { Text(tr("Close", "إغلاق")) }
         }
     )
 }

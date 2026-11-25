@@ -57,6 +57,11 @@ class UserSettingsPreferences(context: Context) {
     )
     val literalTranslation: StateFlow<Boolean> = _literalTranslation.asStateFlow()
 
+    private val _appLanguage = MutableStateFlow(
+        AppLanguage.fromCode(prefs.getString(KEY_APP_LANGUAGE, AppLanguage.ENGLISH.code))
+    )
+    val appLanguage: StateFlow<AppLanguage> = _appLanguage.asStateFlow()
+
     fun setAudioSpeed(speed: Float) {
         val valid = AudioSpeedOptions.sanitize(speed)
         prefs.edit().putFloat(KEY_AUDIO_SPEED, valid).apply()
@@ -83,11 +88,17 @@ class UserSettingsPreferences(context: Context) {
         _literalTranslation.value = literal
     }
 
+    fun setAppLanguage(language: AppLanguage) {
+        prefs.edit().putString(KEY_APP_LANGUAGE, language.code).apply()
+        _appLanguage.value = language
+    }
+
     private companion object {
         const val KEY_AUDIO_SPEED = "audio_speed"
         const val KEY_SENTENCE_ACCENT = "sentence_accent"
         const val KEY_SHOW_ARABIC_TRANSLATIONS = "show_arabic_translations"
         const val KEY_SHOW_MACHINE_LABEL = "show_machine_translation_label"
         const val KEY_LITERAL_TRANSLATION = "literal_translation"
+        const val KEY_APP_LANGUAGE = "app_language"
     }
 }

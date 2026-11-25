@@ -73,7 +73,10 @@ import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.InputDocumentType
 import com.example.core.LanguagePackInfo
+import com.example.core.LocalAppLanguage
+import com.example.core.LocalizedLabels
 import com.example.core.TranslatedPageResult
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.components.HighlightableSentencesText
@@ -90,6 +93,7 @@ fun FileTranslationScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val languages by viewModel.languages.collectAsStateWithLifecycle()
@@ -108,15 +112,15 @@ fun FileTranslationScreen(
     }
 
     // Section 18.5: derive progress label smoothly without recomposing the entire page list
-    val progressLabel by remember {
+    val progressLabel by remember(lang) {
         derivedStateOf {
             val total = uiState.totalPages
             val current = uiState.currentPage
             val pct = uiState.progressPercent
             if (total > 0) {
-                "صفحة $current من $total • $pct%"
+                tr(lang, "Page $current of $total • $pct%", "صفحة $current من $total • $pct%")
             } else {
-                uiState.statusMessage ?: "جاري المعالجة..."
+                uiState.statusMessage ?: tr(lang, "Processing...", "جاري المعالجة...")
             }
         }
     }
@@ -184,12 +188,12 @@ fun FileTranslationScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = stringResource(R.string.file_translation_title),
+                            text = tr("File Translation", "ترجمة الملفات"),
                             style = MaterialTheme.typography.headlineLarge,
                             color = colors.onBackground
                         )
                         Text(
-                            text = "PDF • صور (OCR) • ملفات نصية .txt",
+                            text = tr("PDF • Images (OCR) • .txt files", "PDF • صور (OCR) • ملفات نصية .txt"),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant
                         )
@@ -205,7 +209,7 @@ fun FileTranslationScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("اللغات", color = colors.secondary)
+                        Text(tr("Languages", "اللغات"), color = colors.secondary)
                     }
                 }
             }
@@ -226,8 +230,8 @@ fun FileTranslationScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         FileLangSelectorPill(
-                            label = "من",
-                            langName = sourceLangInfo?.arabicName ?: uiState.sourceCode,
+                            label = tr("From", "من"),
+                            langName = sourceLangInfo?.let { LocalizedLabels.languageDisplayName(it, lang) } ?: uiState.sourceCode,
                             downloaded = sourceLangInfo?.isDownloaded == true,
                             onClick = { pickingForSource = true },
                             modifier = Modifier.weight(1f)
@@ -245,8 +249,8 @@ fun FileTranslationScreen(
                             )
                         }
                         FileLangSelectorPill(
-                            label = "إلى",
-                            langName = targetLangInfo?.arabicName ?: uiState.targetCode,
+                            label = tr("To", "إلى"),
+                            langName = targetLangInfo?.let { LocalizedLabels.languageDisplayName(it, lang) } ?: uiState.targetCode,
                             downloaded = targetLangInfo?.isDownloaded == true,
                             onClick = { pickingForSource = false },
                             modifier = Modifier.weight(1f)
@@ -269,7 +273,10 @@ fun FileTranslationScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "حزمة اللغة المختارة غير محملة بعد للعمل دون إنترنت.",
+                                text = tr(
+                                    "The selected language pack is not downloaded for offline use yet.",
+                                    "حزمة اللغة المختارة غير محملة بعد للعمل دون إنترنت."
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onErrorContainer
                             )
@@ -287,10 +294,10 @@ fun FileTranslationScreen(
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                     }
-                                    Text("تحميل حزمة اللغة")
+                                    Text(tr("Download Language Pack", "تحميل حزمة اللغة"))
                                 }
                                 OutlinedButton(onClick = onOpenLanguages) {
-                                    Text("كل اللغات", color = colors.onErrorContainer)
+                                    Text(tr("All Languages", "كل اللغات"), color = colors.onErrorContainer)
                                 }
                             }
                         }
@@ -319,12 +326,18 @@ fun FileTranslationScreen(
                         )
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "تعتمد سرعة المعالجة على حجم الملف وقدرات الجهاز؛ استخراج النص عبر OCR للصور أو صفحات PDF المصوّرة أبطأ من استخراج الطبقة النصية المباشرة.",
+                                text = tr(
+                                    "Processing speed depends on file size and device performance; OCR text extraction for images or scanned PDF pages is slower than reading an embedded text layer.",
+                                    "تعتمد سرعة المعالجة على حجم الملف وقدرات الجهاز؛ استخراج النص عبر OCR للصور أو صفحات PDF المصوّرة أبطأ من استخراج الطبقة النصية المباشرة."
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant
                             )
                             Text(
-                                text = "التعرف على النص العربي في الصور غير مدعوم حالياً (ملفات PDF العربية ذات النص القابل للنسخ تعمل بشكل طبيعي).",
+                                text = tr(
+                                    "Arabic text recognition in images is not currently supported (selectable-text Arabic PDFs work normally).",
+                                    "التعرف على النص العربي في الصور غير مدعوم حالياً (ملفات PDF العربية ذات النص القابل للنسخ تعمل بشكل طبيعي)."
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colors.tertiary
                             )
@@ -340,7 +353,7 @@ fun FileTranslationScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     FileInputTypeButton(
-                        title = "ملف PDF",
+                        title = tr("PDF File", "ملف PDF"),
                         icon = AppIcons.PictureAsPdf,
                         enabled = !uiState.isProcessing,
                         onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
@@ -349,7 +362,7 @@ fun FileTranslationScreen(
                             .testTag("pick_pdf_button")
                     )
                     FileInputTypeButton(
-                        title = "صورة (OCR)",
+                        title = tr("Image (OCR)", "صورة (OCR)"),
                         icon = AppIcons.ImageFile,
                         enabled = !uiState.isProcessing,
                         onClick = {
@@ -362,7 +375,7 @@ fun FileTranslationScreen(
                             .testTag("pick_image_button")
                     )
                     FileInputTypeButton(
-                        title = "ملف نصي",
+                        title = tr("Text File", "ملف نصي"),
                         icon = AppIcons.Description,
                         enabled = !uiState.isProcessing,
                         onClick = { txtPickerLauncher.launch(arrayOf("text/plain")) },
@@ -392,7 +405,7 @@ fun FileTranslationScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = uiState.selectedFileName ?: "ملف محدد",
+                                    text = uiState.selectedFileName ?: tr("Selected file", "ملف محدد"),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = colors.onSurface,
                                     maxLines = 1,
@@ -400,7 +413,7 @@ fun FileTranslationScreen(
                                     modifier = Modifier.weight(1f)
                                 )
                                 uiState.selectedInputType?.let { type ->
-                                    UsageLabelChip(text = type.labelAr)
+                                    UsageLabelChip(text = type.labelFor(lang))
                                 }
                             }
 
@@ -423,7 +436,7 @@ fun FileTranslationScreen(
                                             .height(48.dp)
                                             .testTag("start_save_txt_button")
                                     ) {
-                                        Text("ترجمة وحفظ .txt", maxLines = 1)
+                                        Text(tr("Translate & Save .txt", "ترجمة وحفظ .txt"), maxLines = 1)
                                     }
                                     OutlinedButton(
                                         onClick = onStartPreviewOnly,
@@ -433,7 +446,11 @@ fun FileTranslationScreen(
                                             .height(48.dp)
                                             .testTag("start_preview_only_button")
                                     ) {
-                                        Text("ترجمة وعرض هنا", color = colors.onSurface, maxLines = 1)
+                                        Text(
+                                            tr("Translate & Preview", "ترجمة وعرض هنا"),
+                                            color = colors.onSurface,
+                                            maxLines = 1
+                                        )
                                     }
                                 }
                             } else {
@@ -465,7 +482,7 @@ fun FileTranslationScreen(
                                             .height(48.dp)
                                             .testTag("cancel_file_translation_button")
                                     ) {
-                                        Text("إيقاف الترجمة فوراً", color = colors.primary)
+                                        Text(tr("Stop Translation", "إيقاف الترجمة فوراً"), color = colors.primary)
                                     }
                                 }
                             }
@@ -553,21 +570,29 @@ fun FileTranslationScreen(
         AlertDialog(
             onDismissRequest = { viewModel.dismissCellularDownload() },
             containerColor = colors.surface,
-            title = { Text("التحميل عبر بيانات الجوال", style = MaterialTheme.typography.headlineSmall) },
+            title = {
+                Text(
+                    tr("Download over mobile data", "التحميل عبر بيانات الجوال"),
+                    style = MaterialTheme.typography.headlineSmall
+                )
+            },
             text = {
                 Text(
-                    "أنت متصل حالياً ببيانات الجوال فقط. هل تريد متابعة تحميل حزم الترجمة الآن؟",
+                    tr(
+                        "You are currently on mobile data only. Continue downloading translation packs now?",
+                        "أنت متصل حالياً ببيانات الجوال فقط. هل تريد متابعة تحميل حزم الترجمة الآن؟"
+                    ),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.confirmCellularDownload() }) {
-                    Text("متابعة", color = colors.primary)
+                    Text(tr("Continue", "متابعة"), color = colors.primary)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissCellularDownload() }) {
-                    Text("إلغاء", color = colors.onSurfaceVariant)
+                    Text(tr("Cancel", "إلغاء"), color = colors.onSurfaceVariant)
                 }
             }
         )
@@ -607,7 +632,7 @@ private fun FileLangSelectorPill(
                 )
                 if (downloaded) {
                     Text(
-                        text = "• جاهز",
+                        text = tr("• Ready", "• جاهز"),
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.secondary
                     )
@@ -703,9 +728,9 @@ private fun TranslatedPageCard(
             ) {
                 Text(
                     text = if (page.totalPages > 1) {
-                        "صفحة ${page.pageNumber} من ${page.totalPages}"
+                        tr("Page ${page.pageNumber} of ${page.totalPages}", "صفحة ${page.pageNumber} من ${page.totalPages}")
                     } else {
-                        "النتيجة"
+                        tr("Result", "النتيجة")
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     color = colors.primary
@@ -721,7 +746,7 @@ private fun TranslatedPageCard(
                     if (page.usedOcr) {
                         UsageLabelChip(text = "OCR")
                     }
-                    UsageLabelChip(text = "ترجمة آلية")
+                    UsageLabelChip(text = tr("Machine translated", "ترجمة آلية"))
                 }
             }
 
@@ -741,7 +766,7 @@ private fun TranslatedPageCard(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             PageTextColumn(
-                                header = "النص الأصلي",
+                                header = tr("Original Text", "النص الأصلي"),
                                 text = page.originalText,
                                 isArabic = sourceIsArabic,
                                 audioKey = "file_orig_${page.pageNumber}",
@@ -758,7 +783,7 @@ private fun TranslatedPageCard(
                                 modifier = Modifier.weight(1f)
                             )
                             PageTextColumn(
-                                header = "الترجمة",
+                                header = tr("Translation", "الترجمة"),
                                 text = page.translatedText,
                                 isArabic = targetIsArabic,
                                 audioKey = "file_trans_${page.pageNumber}",
@@ -782,7 +807,7 @@ private fun TranslatedPageCard(
                         ) {
                             if (page.originalText.isNotBlank()) {
                                 PageTextColumn(
-                                    header = "النص الأصلي",
+                                    header = tr("Original Text", "النص الأصلي"),
                                     text = page.originalText,
                                     isArabic = sourceIsArabic,
                                     audioKey = "file_orig_${page.pageNumber}",
@@ -801,7 +826,7 @@ private fun TranslatedPageCard(
                             }
                             if (page.translatedText.isNotBlank()) {
                                 PageTextColumn(
-                                    header = "الترجمة",
+                                    header = tr("Translation", "الترجمة"),
                                     text = page.translatedText,
                                     isArabic = targetIsArabic,
                                     audioKey = "file_trans_${page.pageNumber}",
@@ -863,7 +888,7 @@ private fun PageTextColumn(
             )
             if (text.isNotBlank()) {
                 LongTextAudioBar(
-                    title = if (isArabic) "استماع بالعربية" else "استماع للنص",
+                    title = if (isArabic) tr("Listen in Arabic", "استماع بالعربية") else tr("Listen to text", "استماع للنص"),
                     isPlaying = isThisPlaying,
                     ttsProgress = ttsProgress,
                     onPlayClick = onSpeak,
@@ -897,12 +922,14 @@ private fun FileLanguagePickerDialog(
     onDismiss: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val appLang = LocalAppLanguage.current
     var search by remember { mutableStateOf("") }
-    val filtered = remember(languages, search) {
+    val filtered = remember(languages, search, appLang) {
         val q = search.trim()
         if (q.isEmpty()) languages
         else languages.filter {
-            it.arabicName.contains(q, ignoreCase = true) ||
+            LocalizedLabels.languageDisplayName(it, appLang).contains(q, ignoreCase = true) ||
+                it.arabicName.contains(q, ignoreCase = true) ||
                 it.nativeName.contains(q, ignoreCase = true) ||
                 it.code.contains(q, ignoreCase = true)
         }
@@ -911,18 +938,18 @@ private fun FileLanguagePickerDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.surface,
-        title = { Text("اختر اللغة", style = MaterialTheme.typography.headlineSmall) },
+        title = { Text(tr("Select Language", "اختر اللغة"), style = MaterialTheme.typography.headlineSmall) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = search,
                     onValueChange = { search = it },
-                    placeholder = { Text("ابحث عن لغة...") },
+                    placeholder = { Text(tr("Search for a language...", "ابحث عن لغة...")) },
                     leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                     trailingIcon = {
                         if (search.isNotEmpty()) {
                             IconButton(onClick = { search = "" }) {
-                                Icon(Icons.Rounded.Close, contentDescription = "مسح")
+                                Icon(Icons.Rounded.Close, contentDescription = tr("Clear", "مسح"))
                             }
                         }
                     },
@@ -949,7 +976,7 @@ private fun FileLanguagePickerDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = lang.arabicName,
+                                    text = LocalizedLabels.languageDisplayName(lang, appLang),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = colors.onSurface
                                 )
@@ -961,7 +988,7 @@ private fun FileLanguagePickerDialog(
                             }
                             if (lang.isDownloaded) {
                                 Text(
-                                    text = "محملة",
+                                    text = tr(appLang, "Downloaded", "محملة"),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.secondary
                                 )
@@ -974,7 +1001,7 @@ private fun FileLanguagePickerDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("إغلاق", color = colors.onSurfaceVariant)
+                Text(tr("Close", "إغلاق"), color = colors.onSurfaceVariant)
             }
         }
     )

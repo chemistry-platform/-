@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.Accent
+import com.example.core.AppLanguage
 import com.example.core.AppUpdateManager
 import com.example.core.AudioPlayerManager
 import com.example.core.OfflinePackManager
 import com.example.core.OfflinePackState
 import com.example.core.UpdateUiState
 import com.example.core.UserSettingsPreferences
+import com.example.core.tr
 import com.example.data.local.SearchHistoryEntity
 import com.example.data.repository.LexiconRepository
 import com.example.ui.theme.ThemeMode
@@ -55,6 +57,7 @@ class MoreViewModel(
     val offlinePackState: StateFlow<OfflinePackState> = offlinePackManager.state
     val themeMode: StateFlow<ThemeMode> = themePreferences.themeMode
 
+    val appLanguage: StateFlow<AppLanguage> = settingsPreferences.appLanguage
     val audioSpeed: StateFlow<Float> = settingsPreferences.audioSpeed
     val sentenceAccent: StateFlow<Accent> = settingsPreferences.sentenceAccent
     val showArabicTranslations: StateFlow<Boolean> = settingsPreferences.showArabicTranslations
@@ -63,6 +66,10 @@ class MoreViewModel(
 
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
+
+    fun setAppLanguage(language: AppLanguage) {
+        settingsPreferences.setAppLanguage(language)
+    }
 
     fun setThemeMode(mode: ThemeMode) {
         themePreferences.setThemeMode(mode)
@@ -102,13 +109,21 @@ class MoreViewModel(
 
     fun deleteOfflinePack() {
         offlinePackManager.deletePack()
-        _actionMessage.value = "تم حذف حزمة القاموس الأوفلاين"
+        _actionMessage.value = tr(
+            appLanguage.value,
+            "Offline dictionary pack deleted",
+            "تم حذف حزمة القاموس الأوفلاين"
+        )
     }
 
     fun clearCache() {
         viewModelScope.launch {
             repository.clearApiCache()
-            _actionMessage.value = "تم مسح ذاكرة التخزين المؤقت"
+            _actionMessage.value = tr(
+                appLanguage.value,
+                "Dictionary cache cleared",
+                "تم مسح ذاكرة التخزين المؤقت"
+            )
         }
     }
 
@@ -121,7 +136,11 @@ class MoreViewModel(
     fun clearHistory() {
         viewModelScope.launch {
             repository.clearHistory()
-            _actionMessage.value = "تم مسح سجل البحث"
+            _actionMessage.value = tr(
+                appLanguage.value,
+                "Search history cleared",
+                "تم مسح سجل البحث"
+            )
         }
     }
 

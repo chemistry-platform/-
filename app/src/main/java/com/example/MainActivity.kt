@@ -16,6 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -36,7 +39,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.example.core.AppLanguage
 import com.example.core.CrashReporter
+import com.example.core.LocalAppLanguage
 import com.example.core.UpdateUiState
 import com.example.di.AppContainer
 import com.example.domain.model.LanguageDirection
@@ -95,6 +100,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val themeMode by appContainer.themePreferences.themeMode.collectAsStateWithLifecycle()
+            val appLanguage by appContainer.userSettingsPreferences.appLanguage.collectAsStateWithLifecycle()
+            val layoutDirection = if (appLanguage == AppLanguage.ARABIC) {
+                LayoutDirection.Rtl
+            } else {
+                LayoutDirection.Ltr
+            }
             val isDark = when (themeMode) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
@@ -116,20 +127,25 @@ class MainActivity : ComponentActivity() {
             }
 
             AlMakhzanjiTheme(themeMode = themeMode) {
-                var pendingCrashReport by remember {
-                    mutableStateOf(CrashReporter.readLastCrash(this@MainActivity))
-                }
-                val reportText = pendingCrashReport
-                if (reportText != null) {
-                    CrashReportScreen(
-                        crashTrace = reportText,
-                        onContinueToApp = {
-                            CrashReporter.clearLastCrash(this@MainActivity)
-                            pendingCrashReport = null
-                        }
-                    )
-                } else {
-                    AlMakhzanjiApp(appContainer = appContainer)
+                CompositionLocalProvider(
+                    LocalAppLanguage provides appLanguage,
+                    LocalLayoutDirection provides layoutDirection
+                ) {
+                    var pendingCrashReport by remember {
+                        mutableStateOf(CrashReporter.readLastCrash(this@MainActivity))
+                    }
+                    val reportText = pendingCrashReport
+                    if (reportText != null) {
+                        CrashReportScreen(
+                            crashTrace = reportText,
+                            onContinueToApp = {
+                                CrashReporter.clearLastCrash(this@MainActivity)
+                                pendingCrashReport = null
+                            }
+                        )
+                    } else {
+                        AlMakhzanjiApp(appContainer = appContainer)
+                    }
                 }
             }
         }

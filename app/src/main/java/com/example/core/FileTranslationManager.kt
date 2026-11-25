@@ -42,10 +42,13 @@ private const val OCR_MAX_DIMENSION_PX = 1600
 private const val TXT_PAGE_CHAR_LIMIT = 2400
 private const val PROGRESS_MIN_INTERVAL_MS = 350L
 
-enum class InputDocumentType(val labelAr: String) {
-    PDF("PDF"),
-    IMAGE("صورة"),
-    TXT("ملف نصي")
+enum class InputDocumentType(val labelAr: String, val labelEn: String) {
+    PDF("PDF", "PDF"),
+    IMAGE("صورة", "Image"),
+    TXT("ملف نصي", "Text File");
+
+    fun labelFor(language: AppLanguage): String =
+        if (language == AppLanguage.ARABIC) labelAr else labelEn
 }
 
 @Immutable

@@ -35,12 +35,17 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-enum class UsageFilterOption(val labelAr: String) {
-    ALL("الكل"),
-    FORMAL("رسمي"),
-    INFORMAL("غير رسمي"),
-    US("أمريكي"),
-    UK("بريطاني")
+import com.example.core.AppLanguage
+
+enum class UsageFilterOption(val labelAr: String, val labelEn: String) {
+    ALL("الكل", "All"),
+    FORMAL("رسمي", "Formal"),
+    INFORMAL("غير رسمي", "Informal"),
+    US("أمريكي", "US"),
+    UK("بريطاني", "UK");
+
+    fun labelFor(language: AppLanguage): String =
+        if (language == AppLanguage.ARABIC) labelAr else labelEn
 }
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)

@@ -65,6 +65,7 @@ import com.example.R
 import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
+import com.example.core.tr
 import com.example.ui.components.ArabicTranslatedText
 import com.example.ui.components.AudioSpeedSelector
 import com.example.ui.components.DirectionToggleChip
@@ -177,7 +178,7 @@ fun SentenceLookupScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = stringResource(R.string.cd_back),
+                        contentDescription = tr("Back", "رجوع"),
                         tint = colors.onBackground
                     )
                 }
@@ -193,7 +194,7 @@ fun SentenceLookupScreen(
                         .testTag("sentence_lookup_search_field"),
                     placeholder = {
                         Text(
-                            text = stringResource(R.string.search_placeholder_translate),
+                            text = tr("Search a word or sentence to translate...", "ابحث عن كلمة أو جملة لترجمتها..."),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant
                         )
@@ -310,7 +311,7 @@ fun SentenceLookupScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
-                                text = "الجملة الأصلية",
+                                text = tr("Original Sentence", "الجملة الأصلية"),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = colors.secondary
                             )
@@ -414,7 +415,7 @@ fun SentenceLookupScreen(
 
                             if (isOrigLong) {
                                 LongTextAudioBar(
-                                    title = "قراءة النص الأصلي",
+                                    title = tr("Read original text", "قراءة النص الأصلي"),
                                     isPlaying = playingKey == origAudioKey,
                                     ttsProgress = ttsProgress,
                                     onPlayClick = {
@@ -440,7 +441,11 @@ fun SentenceLookupScreen(
                                 HorizontalDivider(color = colors.outline, thickness = 1.dp)
 
                                 Text(
-                                    text = if (state.isArabicInput) "الترجمة إلى الإنجليزية" else "الترجمة العربية",
+                                    text = if (state.isArabicInput) {
+                                        tr("English Translation", "الترجمة إلى الإنجليزية")
+                                    } else {
+                                        tr("Arabic Translation", "الترجمة العربية")
+                                    },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = colors.primary
                                 )
@@ -544,7 +549,7 @@ fun SentenceLookupScreen(
 
                                     if (isTransLong) {
                                         LongTextAudioBar(
-                                            title = "قراءة الترجمة كاملة",
+                                            title = tr("Read full translation", "قراءة الترجمة كاملة"),
                                             isPlaying = playingKey == transAudioKey,
                                             ttsProgress = ttsProgress,
                                             onPlayClick = {
@@ -567,7 +572,7 @@ fun SentenceLookupScreen(
                                     }
                                 } else if (!state.missingTranslationPack) {
                                     Text(
-                                        text = "جاري الترجمة...",
+                                        text = tr("Translating...", "جاري الترجمة..."),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colors.onSurfaceVariant
                                     )
@@ -580,7 +585,7 @@ fun SentenceLookupScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "سرعة الصوت",
+                                    text = tr("Speech speed", "سرعة الصوت"),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -607,7 +612,7 @@ fun SentenceLookupScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
-                                    text = "التعابير الاصطلاحية المكتشفة",
+                                    text = tr("Detected Idioms & Expressions", "التعابير الاصطلاحية المكتشفة"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.primary
                                 )
@@ -638,7 +643,13 @@ fun SentenceLookupScreen(
                                                         color = colors.secondary
                                                     )
                                                 }
-                                                UsageLabelChip(text = if (idiom.isPhrasalVerb) "فعل مركب" else "تعبير اصطلاحي")
+                                                UsageLabelChip(
+                                                    text = if (idiom.isPhrasalVerb) {
+                                                        tr("Phrasal Verb", "فعل مركب")
+                                                    } else {
+                                                        tr("Idiom", "تعبير اصطلاحي")
+                                                    }
+                                                )
                                             }
                                             if (phraseIsArabic) {
                                                 SentenceSpeakerButton(
@@ -745,7 +756,7 @@ fun SentenceLookupScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
-                                    text = "كلمات الجملة (اضغط لفتح المعجم)",
+                                    text = tr("Sentence Words (tap to open lexicon)", "كلمات الجملة (اضغط لفتح المعجم)"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onSurface
                                 )
@@ -786,7 +797,7 @@ fun SentenceLookupScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
-                                    text = stringResource(R.string.more_examples_title),
+                                    text = tr("More Examples (Tatoeba)", "أمثلة إضافية (ترجمة بشرية من Tatoeba)"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.primary
                                 )
@@ -898,7 +909,7 @@ fun SentenceLookupScreen(
                                     }
                                 }
                                 Text(
-                                    text = "المصدر: Tatoeba • CC BY 2.0 FR",
+                                    text = tr("Source: Tatoeba • CC BY 2.0 FR", "المصدر: Tatoeba • CC BY 2.0 FR"),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -925,21 +936,24 @@ fun SentenceLookupScreen(
         AlertDialog(
             onDismissRequest = { viewModel.dismissCellularDownload() },
             containerColor = colors.surface,
-            title = { Text("التحميل عبر بيانات الهاتف؟", style = MaterialTheme.typography.headlineSmall) },
+            title = { Text(tr("Download over mobile data?", "التحميل عبر بيانات الهاتف؟"), style = MaterialTheme.typography.headlineSmall) },
             text = {
                 Text(
-                    "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزمة العربية والإنجليزية؟",
+                    tr(
+                        "You are currently on mobile data. Continue downloading the Arabic & English packs?",
+                        "أنت تستخدم بيانات الهاتف المحمول حالياً. هل تريد المتابعة لتحميل حزمة العربية والإنجليزية؟"
+                    ),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
                 Button(onClick = { viewModel.confirmCellularDownload() }) {
-                    Text("متابعة")
+                    Text(tr("Continue", "متابعة"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissCellularDownload() }) {
-                    Text("إلغاء")
+                    Text(tr("Cancel", "إلغاء"))
                 }
             }
         )

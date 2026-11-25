@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 
 @Composable
@@ -70,12 +71,15 @@ fun CrashReportScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "تم رصد توقف مفاجئ سابق",
+                text = tr("Previous Crash Detected", "تم رصد توقف مفاجئ سابق"),
                 style = MaterialTheme.typography.headlineMedium,
                 color = colors.error
             )
             Text(
-                text = "يمكنك نسخ سجل الخطأ لإرساله قبل المتابعة إلى التطبيق:",
+                text = tr(
+                    "You can copy the error log to report it before continuing to the app:",
+                    "يمكنك نسخ سجل الخطأ لإرساله قبل المتابعة إلى التطبيق:"
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = colors.onSurfaceVariant
             )
@@ -111,12 +115,13 @@ fun CrashReportScreen(
 
             if (copied) {
                 Text(
-                    text = "تم نسخ تفاصيل الخطأ إلى الحافظة",
+                    text = tr("Error details copied to clipboard", "تم نسخ تفاصيل الخطأ إلى الحافظة"),
                     style = MaterialTheme.typography.labelMedium,
                     color = colors.secondary
                 )
             }
 
+            val copyLabel = tr("Copy Log", "نسخ الخطأ")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -134,12 +139,12 @@ fun CrashReportScreen(
                 ) {
                     Icon(
                         imageVector = AppIcons.ContentCopy,
-                        contentDescription = "نسخ الخطأ",
+                        contentDescription = copyLabel,
                         tint = colors.secondary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("نسخ الخطأ", color = colors.onSurface)
+                    Text(copyLabel, color = colors.onSurface)
                 }
 
                 Button(
@@ -153,7 +158,7 @@ fun CrashReportScreen(
                         .height(48.dp)
                         .testTag("continue_after_crash_button")
                 ) {
-                    Text("متابعة للتطبيق")
+                    Text(tr("Continue to App", "متابعة للتطبيق"))
                 }
             }
         }

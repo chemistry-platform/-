@@ -1,14 +1,18 @@
 package com.example
 
+import com.example.core.AppLanguage
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.ContextualTranslationAnalyzer
 import com.example.core.LinguisticRanker
+import com.example.core.UserSettingsPreferences
 import com.example.data.repository.WiktionaryHtmlParser
 import com.example.domain.model.PosSenseGroup
 import com.example.domain.model.SenseItem
 import com.example.domain.model.SenseSource
 import com.example.domain.model.WordEntry
+import androidx.test.core.app.ApplicationProvider
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -274,10 +278,14 @@ class LinguisticUpgradeTest {
 
     @Test
     fun linguisticRanker_extractsMultiPosHeadwordMeaningsForEnglishAndArabic() {
-        assertEquals("فعل • Verb", LinguisticRanker.formatPosBadgeLabel("verb", "فعل"))
-        assertEquals("اسم • Noun", LinguisticRanker.formatPosBadgeLabel("noun", "اسم"))
-        assertEquals("صفة • Adjective", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة"))
-        assertEquals("ظرف • Adverb", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف"))
+        assertEquals("Verb", LinguisticRanker.formatPosBadgeLabel("verb", "فعل", AppLanguage.ENGLISH))
+        assertEquals("Noun", LinguisticRanker.formatPosBadgeLabel("noun", "اسم", AppLanguage.ENGLISH))
+        assertEquals("Adjective", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة", AppLanguage.ENGLISH))
+        assertEquals("Adverb", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف", AppLanguage.ENGLISH))
+        assertEquals("فعل", LinguisticRanker.formatPosBadgeLabel("verb", "فعل", AppLanguage.ARABIC))
+        assertEquals("اسم", LinguisticRanker.formatPosBadgeLabel("noun", "اسم", AppLanguage.ARABIC))
+        assertEquals("صفة", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة", AppLanguage.ARABIC))
+        assertEquals("ظرف", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف", AppLanguage.ARABIC))
 
         val enEntry = WordEntry(
             word = "run",
@@ -331,9 +339,9 @@ class LinguisticUpgradeTest {
             )
         )
 
-        val enSummaries = LinguisticRanker.extractPosHeadwordMeanings(enEntry)
+        val enSummaries = LinguisticRanker.extractPosHeadwordMeanings(enEntry, language = AppLanguage.ENGLISH)
         assertEquals(listOf("verb", "noun"), enSummaries.map { it.partOfSpeech })
-        assertEquals("فعل • Verb", enSummaries[0].posBadgeLabel)
+        assertEquals("Verb", enSummaries[0].posBadgeLabel)
         assertTrue("رَكَضَ" in enSummaries[0].meanings)
         assertTrue("أَدَارَ" in enSummaries[0].meanings)
         assertTrue("شَغَّلَ" in enSummaries[0].meanings)
@@ -344,6 +352,9 @@ class LinguisticUpgradeTest {
         assertEquals(1, enSummaries[0].meanings.count { ArabicTextUtils.normalizeArabicForMatching(it) == "يدير" })
         assertFalse(enSummaries[0].isMachineOnly)
         assertEquals(listOf("جَرْيٌ", "سِبَاقٌ", "شَوْطٌ"), enSummaries[1].meanings)
+
+        val enSummariesAr = LinguisticRanker.extractPosHeadwordMeanings(enEntry, language = AppLanguage.ARABIC)
+        assertEquals("فعل", enSummariesAr[0].posBadgeLabel)
 
         val arEntry = WordEntry(
             word = "مر",
@@ -382,9 +393,9 @@ class LinguisticUpgradeTest {
             )
         )
 
-        val arSummaries = LinguisticRanker.extractPosHeadwordMeanings(arEntry)
+        val arSummaries = LinguisticRanker.extractPosHeadwordMeanings(arEntry, language = AppLanguage.ENGLISH)
         assertEquals(listOf("adjective", "verb"), arSummaries.map { it.partOfSpeech })
-        assertEquals("صفة • Adjective", arSummaries[0].posBadgeLabel)
+        assertEquals("Adjective", arSummaries[0].posBadgeLabel)
         assertTrue("bitter (in taste, mood)" in arSummaries[0].meanings)
         assertTrue("bitter" in arSummaries[0].meanings)
         assertTrue("to pass by" in arSummaries[1].meanings)
@@ -429,5 +440,33 @@ class LinguisticUpgradeTest {
         val multiSentence = "First sentence here. Second sentence follows! Third sentence?"
         val split = AudioPlayerManager.splitTextSafelyForTts(multiSentence, maxChunkLength = 3800)
         assertEquals(listOf("First sentence here.", "Second sentence follows!", "Third sentence?"), split)
+    }
+
+    @Test
+    fun appLanguage_defaultsToEnglishEvenUnderArabicSystemLocaleAndPersistsArabicSelection() {
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-EG"))
+            val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+            context.getSharedPreferences("app_user_settings", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+
+            val prefs = UserSettingsPreferences(context)
+            assertEquals(AppLanguage.ENGLISH, prefs.appLanguage.value)
+
+            prefs.setAppLanguage(AppLanguage.ARABIC)
+            assertEquals(AppLanguage.ARABIC, prefs.appLanguage.value)
+
+            val reloaded = UserSettingsPreferences(context)
+            assertEquals(AppLanguage.ARABIC, reloaded.appLanguage.value)
+
+            prefs.setAppLanguage(AppLanguage.ENGLISH)
+            assertEquals(AppLanguage.ENGLISH, prefs.appLanguage.value)
+            assertEquals(AppLanguage.ENGLISH, UserSettingsPreferences(context).appLanguage.value)
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
     }
 }

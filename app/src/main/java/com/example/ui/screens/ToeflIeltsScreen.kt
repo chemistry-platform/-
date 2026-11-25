@@ -54,6 +54,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Accent
 import com.example.core.AudioPlayerManager
+import com.example.core.LocalAppLanguage
+import com.example.core.tr
 import com.example.domain.model.AwlWordItem
 import com.example.ui.components.AppIcons
 import com.example.ui.components.CompactWordAudioButtons
@@ -104,7 +106,7 @@ fun ToeflIeltsScreen(
                     )
                 }
                 Text(
-                    text = "التوفل والآيلتس",
+                    text = tr("TOEFL & IELTS", "التوفل والآيلتس"),
                     style = MaterialTheme.typography.headlineMedium,
                     color = colors.onBackground
                 )
@@ -123,7 +125,7 @@ fun ToeflIeltsScreen(
                     ) {
                         ExamCard(
                             title = "TOEFL",
-                            subtitle = "معلومات اختبار TOEFL iBT",
+                            subtitle = tr("TOEFL iBT exam overview", "معلومات اختبار TOEFL iBT"),
                             onClick = { onOpenExamInfo("TOEFL") },
                             modifier = Modifier
                                 .weight(1f)
@@ -131,7 +133,7 @@ fun ToeflIeltsScreen(
                         )
                         ExamCard(
                             title = "IELTS",
-                            subtitle = "معلومات اختبار IELTS",
+                            subtitle = tr("IELTS exam overview", "معلومات اختبار IELTS"),
                             onClick = { onOpenExamInfo("IELTS") },
                             modifier = Modifier
                                 .weight(1f)
@@ -147,12 +149,15 @@ fun ToeflIeltsScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "الكلمات الأكاديمية",
+                            text = tr("Academic Vocabulary", "الكلمات الأكاديمية"),
                             style = MaterialTheme.typography.headlineSmall,
                             color = colors.onBackground
                         )
                         Text(
-                            text = "من قائمة الكلمات الأكاديمية (AWL) عند توفرها في حزمة الأوفلاين.",
+                            text = tr(
+                                "From the Academic Word List (AWL) when available in the offline pack.",
+                                "من قائمة الكلمات الأكاديمية (AWL) عند توفرها في حزمة الأوفلاين."
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant
                         )
@@ -168,7 +173,10 @@ fun ToeflIeltsScreen(
                             border = BorderStroke(1.dp, colors.outline)
                         ) {
                             Text(
-                                text = "ثبّت حزمة الأوفلاين لعرض القائمة",
+                                text = tr(
+                                    "Install the offline pack to view this list",
+                                    "ثبّت حزمة الأوفلاين لعرض القائمة"
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurfaceVariant,
                                 modifier = Modifier
@@ -187,7 +195,7 @@ fun ToeflIeltsScreen(
                                 .testTag("awl_search_field"),
                             placeholder = {
                                 Text(
-                                    text = "ابحث في الكلمات الأكاديمية...",
+                                    text = tr("Search academic words...", "ابحث في الكلمات الأكاديمية..."),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -237,9 +245,15 @@ fun ToeflIeltsScreen(
                             ) {
                                 Text(
                                     text = if (searchQuery.isBlank()) {
-                                        "لا توجد كلمات موسومة بـ AWL في حزمة الأوفلاين المثبّتة."
+                                        tr(
+                                            "No AWL-tagged words found in the installed offline pack.",
+                                            "لا توجد كلمات موسومة بـ AWL في حزمة الأوفلاين المثبّتة."
+                                        )
                                     } else {
-                                        "لا توجد نتائج مطابقة لـ \"$searchQuery\"."
+                                        tr(
+                                            "No matching results for \"$searchQuery\".",
+                                            "لا توجد نتائج مطابقة لـ \"$searchQuery\"."
+                                        )
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant,
@@ -297,7 +311,7 @@ private fun ExamCard(
                 color = colors.onSurfaceVariant
             )
             Text(
-                text = "عرض التفاصيل",
+                text = tr("View details", "عرض التفاصيل"),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.secondary
             )
@@ -398,22 +412,51 @@ fun ExamInfoScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     val context = LocalContext.current
     val isToefl = examId.equals("TOEFL", ignoreCase = true)
 
     val title = if (isToefl) "TOEFL iBT" else "IELTS"
     val facts = if (isToefl) {
         listOf(
-            "اختبار كفاءة في اللغة الإنجليزية تقدّمه مؤسسة ETS، ويُستخدم غالباً للقبول الجامعي، خصوصاً في الولايات المتحدة الأمريكية.",
-            "المهارات المختبرة: القراءة (Reading)، الاستماع (Listening)، التحدث (Speaking)، والكتابة (Writing).",
-            "يُجرى الاختبار على الحاسوب."
+            tr(
+                lang,
+                "An English proficiency test administered by ETS, widely used for university admissions, especially in the United States.",
+                "اختبار كفاءة في اللغة الإنجليزية تقدّمه مؤسسة ETS، ويُستخدم غالباً للقبول الجامعي، خصوصاً في الولايات المتحدة الأمريكية."
+            ),
+            tr(
+                lang,
+                "Tested sections: Reading, Listening, Speaking, and Writing.",
+                "المهارات المختبرة: القراءة (Reading)، الاستماع (Listening)، التحدث (Speaking)، والكتابة (Writing)."
+            ),
+            tr(
+                lang,
+                "The exam is computer-delivered.",
+                "يُجرى الاختبار على الحاسوب."
+            )
         )
     } else {
         listOf(
-            "اختبار كفاءة في اللغة الإنجليزية مملوك بشكل مشترك من قِبل المجلس الثقافي البريطاني (British Council) و IDP و Cambridge University Press & Assessment.",
-            "يتوفر بنسختين: الأكاديمي (Academic) للدراسة الجامعية، والتدريب العام (General Training) للهجرة أو العمل.",
-            "المهارات المختبرة: الاستماع (Listening)، القراءة (Reading)، الكتابة (Writing)، والتحدث (Speaking).",
-            "يُحتسب التقييم بنظام الدرجات (Bands) من 0 إلى 9."
+            tr(
+                lang,
+                "An English proficiency test jointly owned by the British Council, IDP, and Cambridge University Press & Assessment.",
+                "اختبار كفاءة في اللغة الإنجليزية مملوك بشكل مشترك من قِبل المجلس الثقافي البريطاني (British Council) و IDP و Cambridge University Press & Assessment."
+            ),
+            tr(
+                lang,
+                "Available in two versions: Academic for university study, and General Training for migration or work.",
+                "يتوفر بنسختين: الأكاديمي (Academic) للدراسة الجامعية، والتدريب العام (General Training) للهجرة أو العمل."
+            ),
+            tr(
+                lang,
+                "Tested sections: Listening, Reading, Writing, and Speaking.",
+                "المهارات المختبرة: الاستماع (Listening)، القراءة (Reading)، الكتابة (Writing)، والتحدث (Speaking)."
+            ),
+            tr(
+                lang,
+                "Scores are reported on a 0 to 9 Band scale.",
+                "يُحتسب التقييم بنظام الدرجات (Bands) من 0 إلى 9."
+            )
         )
     }
 
@@ -496,7 +539,10 @@ fun ExamInfoScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Text(
-                                text = "للتفاصيل الرسمية والأسعار والمواعيد راجع الموقع الرسمي",
+                                text = tr(
+                                    "For official details, fees, and test dates, visit the official website",
+                                    "للتفاصيل الرسمية والأسعار والمواعيد راجع الموقع الرسمي"
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.onSurfaceVariant
                             )
@@ -516,7 +562,7 @@ fun ExamInfoScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("الموقع الرسمي TOEFL (ETS)", color = colors.onSurface)
+                                Text(tr("Official TOEFL Site (ETS)", "الموقع الرسمي TOEFL (ETS)"), color = colors.onSurface)
                             }
 
                             OutlinedButton(
@@ -534,7 +580,7 @@ fun ExamInfoScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("الموقع الرسمي IELTS", color = colors.onSurface)
+                                Text(tr("Official IELTS Site", "الموقع الرسمي IELTS"), color = colors.onSurface)
                             }
                         }
                     }

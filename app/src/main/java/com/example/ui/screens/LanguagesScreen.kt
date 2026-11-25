@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.LanguagePackInfo
+import com.example.core.LocalAppLanguage
+import com.example.core.LocalizedLabels
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 import com.example.ui.viewmodel.LanguagesViewModel
 
@@ -60,12 +63,14 @@ fun LanguagesScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val pendingCellularCode by viewModel.pendingCellularCode.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val lang = LocalAppLanguage.current
 
-    val filteredLanguages = remember(languages, searchQuery) {
+    val filteredLanguages = remember(languages, searchQuery, lang) {
         val q = searchQuery.trim()
         if (q.isEmpty()) languages
         else languages.filter {
-            it.arabicName.contains(q, ignoreCase = true) ||
+            LocalizedLabels.languageDisplayName(it, lang).contains(q, ignoreCase = true) ||
+                it.arabicName.contains(q, ignoreCase = true) ||
                 it.nativeName.contains(q, ignoreCase = true) ||
                 it.code.contains(q, ignoreCase = true)
         }
@@ -97,18 +102,21 @@ fun LanguagesScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = stringResource(R.string.cd_back),
+                        contentDescription = tr("Back", "رجوع"),
                         tint = colors.onBackground
                     )
                 }
                 Column {
                     Text(
-                        text = "اللغات",
+                        text = tr("Languages", "اللغات"),
                         style = MaterialTheme.typography.headlineMedium,
                         color = colors.onBackground
                     )
                     Text(
-                        text = "${languages.size} لغة متاحة عبر ML Kit بدون اتصال",
+                        text = tr(
+                            "${languages.size} offline languages available via ML Kit",
+                            "${languages.size} لغة متاحة عبر ML Kit بدون اتصال"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -122,12 +130,12 @@ fun LanguagesScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp)
                     .testTag("languages_search_field"),
-                placeholder = { Text("ابحث عن لغة...", color = colors.onSurfaceVariant) },
+                placeholder = { Text(tr("Search for a language...", "ابحث عن لغة..."), color = colors.onSurfaceVariant) },
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = colors.secondary) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
-                            Icon(Icons.Rounded.Close, contentDescription = "مسح")
+                            Icon(Icons.Rounded.Close, contentDescription = tr("Clear", "مسح"))
                         }
                     }
                 },
@@ -181,21 +189,24 @@ fun LanguagesScreen(
         AlertDialog(
             onDismissRequest = { viewModel.dismissCellularDialog() },
             containerColor = colors.surface,
-            title = { Text("التحميل عبر بيانات الهاتف؟", style = MaterialTheme.typography.headlineSmall) },
+            title = { Text(tr("Download over mobile data?", "التحميل عبر بيانات الهاتف؟"), style = MaterialTheme.typography.headlineSmall) },
             text = {
                 Text(
-                    "أنت متصل ببيانات الهاتف المحمول. هل تريد تحميل حزمة اللغة الآن؟",
+                    tr(
+                        "You are connected via mobile data. Download the language pack now?",
+                        "أنت متصل ببيانات الهاتف المحمول. هل تريد تحميل حزمة اللغة الآن؟"
+                    ),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             confirmButton = {
                 Button(onClick = { viewModel.confirmCellularDownload() }) {
-                    Text("تحميل")
+                    Text(tr("Download", "تحميل"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissCellularDialog() }) {
-                    Text("إلغاء")
+                    Text(tr("Cancel", "إلغاء"))
                 }
             }
         )
@@ -209,6 +220,7 @@ private fun LanguagePackRow(
     onDelete: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -229,7 +241,7 @@ private fun LanguagePackRow(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = info.arabicName,
+                    text = LocalizedLabels.languageDisplayName(info, lang),
                     style = MaterialTheme.typography.labelLarge,
                     color = colors.onSurface
                 )
@@ -239,7 +251,7 @@ private fun LanguagePackRow(
                     color = colors.onSurfaceVariant
                 )
                 Text(
-                    text = if (info.isDownloaded) "محمّلة" else "غير محمّلة",
+                    text = if (info.isDownloaded) tr("Downloaded", "محمّلة") else tr("Not downloaded", "غير محمّلة"),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (info.isDownloaded) colors.secondary else colors.onSurfaceVariant
                 )
@@ -256,7 +268,7 @@ private fun LanguagePackRow(
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "جاري التحميل",
+                        text = tr("Downloading", "جاري التحميل"),
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.secondary
                     )
@@ -274,7 +286,7 @@ private fun LanguagePackRow(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("حذف", color = colors.onSurface)
+                    Text(tr("Delete", "حذف"), color = colors.onSurface)
                 }
             } else {
                 Button(
@@ -291,7 +303,7 @@ private fun LanguagePackRow(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("تحميل")
+                    Text(tr("Download", "تحميل"))
                 }
             }
         }

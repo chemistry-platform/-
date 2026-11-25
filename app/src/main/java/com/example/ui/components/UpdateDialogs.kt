@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.core.UpdateUiState
+import com.example.core.tr
 
 @Composable
 fun AppUpdateDialogs(
@@ -33,7 +34,7 @@ fun AppUpdateDialogs(
                 textContentColor = colors.onSurface,
                 text = {
                     Text(
-                        text = "تحديث التطبيق",
+                        text = tr("App Update", "تحديث التطبيق"),
                         style = MaterialTheme.typography.headlineSmall,
                         color = colors.onSurface,
                         modifier = Modifier.testTag("update_dialog_text")
@@ -49,7 +50,7 @@ fun AppUpdateDialogs(
                         modifier = Modifier.testTag("update_confirm_button")
                     ) {
                         Text(
-                            text = "تحديث",
+                            text = tr("Update", "تحديث"),
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -60,7 +61,7 @@ fun AppUpdateDialogs(
                         modifier = Modifier.testTag("update_later_button")
                     ) {
                         Text(
-                            text = "لاحقاً",
+                            text = tr("Later", "لاحقاً"),
                             style = MaterialTheme.typography.labelLarge,
                             color = colors.onSurfaceVariant
                         )
@@ -77,7 +78,7 @@ fun AppUpdateDialogs(
                 textContentColor = colors.onSurfaceVariant,
                 title = {
                     Text(
-                        text = "تحديث التطبيق",
+                        text = tr("App Update", "تحديث التطبيق"),
                         style = MaterialTheme.typography.headlineSmall,
                         color = colors.onSurface
                     )
@@ -115,7 +116,7 @@ fun AppUpdateDialogs(
                         modifier = Modifier.testTag("update_cancel_download_button")
                     ) {
                         Text(
-                            text = "إلغاء",
+                            text = tr("Cancel", "إلغاء"),
                             style = MaterialTheme.typography.labelLarge,
                             color = colors.primary
                         )
@@ -132,14 +133,17 @@ fun AppUpdateDialogs(
                 textContentColor = colors.onSurfaceVariant,
                 title = {
                     Text(
-                        text = "إذن التثبيت مطلوب",
+                        text = tr("Install Permission Required", "إذن التثبيت مطلوب"),
                         style = MaterialTheme.typography.headlineSmall,
                         color = colors.onSurface
                     )
                 },
                 text = {
                     Text(
-                        text = "يرجى السماح لتطبيق معجم المخزنجي بتثبيت التحديثات من إعدادات الجهاز ثم العودة للمتابعة.",
+                        text = tr(
+                            "Please allow Al-Makhzanji Lexicon to install updates in device settings, then return to continue.",
+                            "يرجى السماح لتطبيق معجم المخزنجي بتثبيت التحديثات من إعدادات الجهاز ثم العودة للمتابعة."
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant
                     )
@@ -154,7 +158,7 @@ fun AppUpdateDialogs(
                         modifier = Modifier.testTag("open_install_permission_button")
                     ) {
                         Text(
-                            text = "الإعدادات",
+                            text = tr("Settings", "الإعدادات"),
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -162,7 +166,7 @@ fun AppUpdateDialogs(
                 dismissButton = {
                     TextButton(onClick = onDismiss) {
                         Text(
-                            text = "لاحقاً",
+                            text = tr("Later", "لاحقاً"),
                             style = MaterialTheme.typography.labelLarge,
                             color = colors.onSurfaceVariant
                         )

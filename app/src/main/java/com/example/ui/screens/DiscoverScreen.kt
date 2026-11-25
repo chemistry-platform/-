@@ -32,27 +32,37 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.core.AppLanguage
+import com.example.core.LocalAppLanguage
+import com.example.core.tr
 import com.example.ui.components.AppIcons
 import com.example.ui.components.InteractiveWordChip
 
 private data class DiscoverWord(
     val word: String,
+    val hintEn: String,
     val hintArabic: String
 )
 
 private val curatedWords = listOf(
-    DiscoverWord("run", "يجري • يدير • يشتغل • يترشح"),
-    DiscoverWord("set", "يضبط • يحدد • مجموعة • غروب"),
-    DiscoverWord("eloquent", "فصيح • بليغ اللسان"),
-    DiscoverWord("resilient", "مرن • سريع التعافي"),
-    DiscoverWord("pragmatic", "عملي • واقعي"),
-    DiscoverWord("ambiguous", "غامض • يحتمل أكثر من معنى")
+    DiscoverWord("run", "jog • manage • operate • flow • compete", "يجري • يدير • يشتغل • يترشح"),
+    DiscoverWord("set", "adjust • determine • group • sunset", "يضبط • يحدد • مجموعة • غروب"),
+    DiscoverWord("eloquent", "fluent • expressive • articulate", "فصيح • بليغ اللسان"),
+    DiscoverWord("resilient", "adaptable • quick to recover", "مرن • سريع التعافي"),
+    DiscoverWord("pragmatic", "practical • realistic", "عملي • واقعي"),
+    DiscoverWord("ambiguous", "unclear • open to multiple meanings", "غامض • يحتمل أكثر من معنى")
+)
+
+private data class TopicSet(
+    val titleEn: String,
+    val titleAr: String,
+    val words: List<String>
 )
 
 private val topicSets = listOf(
-    "أفعال متعددة المعاني" to listOf("run", "take", "make", "break", "turn", "get"),
-    "مفردات الأعمال والتقنية" to listOf("strategy", "deploy", "scalable", "benchmark", "revenue"),
-    "صفات دقيقة في التعبير" to listOf("subtle", "vivid", "coherent", "profound", "concise")
+    TopicSet("Multi-meaning Verbs", "أفعال متعددة المعاني", listOf("run", "take", "make", "break", "turn", "get")),
+    TopicSet("Business & Technology", "مفردات الأعمال والتقنية", listOf("strategy", "deploy", "scalable", "benchmark", "revenue")),
+    TopicSet("Nuanced Adjectives", "صفات دقيقة في التعبير", listOf("subtle", "vivid", "coherent", "profound", "concise"))
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -62,6 +72,7 @@ fun DiscoverScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -79,12 +90,15 @@ fun DiscoverScreen(
             item {
                 Column {
                     Text(
-                        text = stringResource(R.string.nav_discover),
+                        text = tr("Discover", "اكتشف"),
                         style = MaterialTheme.typography.headlineLarge,
                         color = colors.onBackground
                     )
                     Text(
-                        text = "كلمات مختارة لتوسيع حصيلتك اللغوية وسياقاتها",
+                        text = tr(
+                            "Curated words to expand your vocabulary and contextual usage",
+                            "كلمات مختارة لتوسيع حصيلتك اللغوية وسياقاتها"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
@@ -115,7 +129,7 @@ fun DiscoverScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = "كلمة اليوم متعددة السياقات",
+                                text = tr("Multi-Context Word of the Day", "كلمة اليوم متعددة السياقات"),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = colors.tertiary
                             )
@@ -128,7 +142,10 @@ fun DiscoverScreen(
                             )
                         }
                         Text(
-                            text = "يجري؛ يدير؛ يشتغل؛ يسيل؛ يترشح — اضغط لاستعراض كافة المعاني والأمثلة الصوتية.",
+                            text = tr(
+                                "jog; manage; operate; flow; compete — tap to view all meanings and audio examples.",
+                                "يجري؛ يدير؛ يشتغل؛ يسيل؛ يترشح — اضغط لاستعراض كافة المعاني والأمثلة الصوتية."
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant
                         )
@@ -138,7 +155,7 @@ fun DiscoverScreen(
 
             item {
                 Text(
-                    text = "مفردات مقترحة",
+                    text = tr("Suggested Vocabulary", "مفردات مقترحة"),
                     style = MaterialTheme.typography.headlineSmall,
                     color = colors.primary
                 )
@@ -165,7 +182,7 @@ fun DiscoverScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = item.hintArabic,
+                                    text = if (lang == AppLanguage.ARABIC) item.hintArabic else item.hintEn,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
@@ -183,7 +200,7 @@ fun DiscoverScreen(
                 }
             }
 
-            topicSets.forEach { (title, words) ->
+            topicSets.forEach { set ->
                 item {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -196,7 +213,7 @@ fun DiscoverScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Text(
-                                text = title,
+                                text = tr(lang, set.titleEn, set.titleAr),
                                 style = MaterialTheme.typography.headlineSmall,
                                 color = colors.onSurface
                             )
@@ -205,7 +222,7 @@ fun DiscoverScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    words.forEach { w ->
+                                    set.words.forEach { w ->
                                         InteractiveWordChip(
                                             word = w,
                                             onClick = { onOpenWord(w) }
