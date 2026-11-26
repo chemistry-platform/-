@@ -8,6 +8,8 @@ import android.util.Log
 import com.example.BuildConfig
 import com.example.data.local.LexiconDao
 import com.example.data.local.OfflinePackWordEntity
+import com.example.data.local.PackIdiomEntity
+import com.example.data.local.ReverseArabicEntryEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,19 +29,24 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.Locale
 import java.util.zip.GZIPInputStream
+import kotlin.coroutines.coroutineContext
 
 private const val TAG = "OfflinePackManager"
 private const val PREFS_NAME = "offline_pack_prefs"
 private const val KEY_PACK_DISK_BYTES = "pack_disk_bytes"
+private const val KEY_FIRST_RUN_AUTO_TRIGGERED = "first_run_auto_triggered"
 
 sealed interface OfflinePackState {
     data class Ready(
         val isInstalled: Boolean,
         val wordCount: Int,
-        val diskSizeBytes: Long
+        val diskSizeBytes: Long,
+        val idiomCount: Int = 0,
+        val reverseCount: Int = 0
     ) : OfflinePackState
 
     data class Downloading(
@@ -52,7 +59,9 @@ sealed interface OfflinePackState {
         val message: String,
         val isInstalled: Boolean,
         val wordCount: Int,
-        val diskSizeBytes: Long
+        val diskSizeBytes: Long,
+        val idiomCount: Int = 0,
+        val reverseCount: Int = 0
     ) : OfflinePackState
 }
 
@@ -87,12 +96,21 @@ class OfflinePackManager(
 
     suspend fun refreshStatus() {
         try {
-            val count = withContext(Dispatchers.IO) { dao.getOfflinePackCount() }
-            val diskBytes = if (count > 0) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
+            val (wordCount, idiomCount, reverseCount) = withContext(Dispatchers.IO) {
+                Triple(
+                    dao.getOfflinePackCount(),
+                    dao.getPackIdiomCount(),
+                    dao.getReverseArabicCount()
+                )
+            }
+            val installed = wordCount > 0 || idiomCount > 0
+            val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
             _state.value = OfflinePackState.Ready(
-                isInstalled = count > 0,
-                wordCount = count,
-                diskSizeBytes = diskBytes
+                isInstalled = installed,
+                wordCount = wordCount,
+                diskSizeBytes = diskBytes,
+                idiomCount = idiomCount,
+                reverseCount = reverseCount
             )
         } catch (e: CancellationException) {
             throw e
@@ -101,30 +119,65 @@ class OfflinePackManager(
         }
     }
 
+    /**
+     * Automatically triggers the one-time offline pack download on first run when
+     * GitHub repository metadata is configured and device is online.
+     * Safely no-ops on local/dev builds ("unknown/unknown") or offline launches.
+     */
+    fun startDownloadIfFirstRun() {
+        if (downloadJob?.isActive == true) return
+        if (prefs.getBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, false)) return
+        if (BuildConfig.GITHUB_REPO == "unknown/unknown" || !BuildConfig.GITHUB_REPO.contains("/")) return
+        if (!networkMonitor.isOnline()) return
+
+        scope.launch {
+            ensureInitialized()
+            val alreadyHasData = withContext(Dispatchers.IO) {
+                dao.getOfflinePackCount() > 0 || dao.getPackIdiomCount() > 0
+            }
+            if (alreadyHasData) {
+                prefs.edit().putBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, true).apply()
+                return@launch
+            }
+            prefs.edit().putBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, true).apply()
+            startDownload()
+        }
+    }
+
     fun startDownload() {
         if (downloadJob?.isActive == true) return
         if (BuildConfig.GITHUB_REPO == "unknown/unknown" || !BuildConfig.GITHUB_REPO.contains("/")) {
             scope.launch {
-                val count = withContext(Dispatchers.IO) { dao.getOfflinePackCount() }
-                val diskBytes = if (count > 0) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
+                val (wordCount, idiomCount, reverseCount) = withContext(Dispatchers.IO) {
+                    Triple(dao.getOfflinePackCount(), dao.getPackIdiomCount(), dao.getReverseArabicCount())
+                }
+                val installed = wordCount > 0 || idiomCount > 0
+                val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
                 _state.value = OfflinePackState.Error(
                     message = "الحزمة غير متاحة حالياً",
-                    isInstalled = count > 0,
-                    wordCount = count,
-                    diskSizeBytes = diskBytes
+                    isInstalled = installed,
+                    wordCount = wordCount,
+                    diskSizeBytes = diskBytes,
+                    idiomCount = idiomCount,
+                    reverseCount = reverseCount
                 )
             }
             return
         }
         if (!networkMonitor.isOnline()) {
             scope.launch {
-                val count = withContext(Dispatchers.IO) { dao.getOfflinePackCount() }
-                val diskBytes = if (count > 0) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
+                val (wordCount, idiomCount, reverseCount) = withContext(Dispatchers.IO) {
+                    Triple(dao.getOfflinePackCount(), dao.getPackIdiomCount(), dao.getReverseArabicCount())
+                }
+                val installed = wordCount > 0 || idiomCount > 0
+                val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
                 _state.value = OfflinePackState.Error(
                     message = "الحزمة غير متاحة حالياً",
-                    isInstalled = count > 0,
-                    wordCount = count,
-                    diskSizeBytes = diskBytes
+                    isInstalled = installed,
+                    wordCount = wordCount,
+                    diskSizeBytes = diskBytes,
+                    idiomCount = idiomCount,
+                    reverseCount = reverseCount
                 )
             }
             return
@@ -136,7 +189,7 @@ class OfflinePackManager(
                 _state.value = OfflinePackState.Downloading(
                     progress = 0f,
                     indeterminate = true,
-                    statusText = "جاري تنزيل حزمة القاموس..."
+                    statusText = "Downloading dictionary pack..."
                 )
 
                 val downloadedBytes = withContext(Dispatchers.IO) {
@@ -174,7 +227,7 @@ class OfflinePackManager(
                                         _state.value = OfflinePackState.Downloading(
                                             progress = fraction,
                                             indeterminate = false,
-                                            statusText = "جاري التنزيل ($pct%)..."
+                                            statusText = "Downloading dictionary pack ($pct%)..."
                                         )
                                     }
                                 }
@@ -185,104 +238,249 @@ class OfflinePackManager(
 
                     val gzSize = tempFile.length()
                     _state.value = OfflinePackState.Downloading(
-                        progress = 0.72f,
+                        progress = 0.75f,
                         indeterminate = true,
-                        statusText = "جاري فك الضغط والفهرسة محلياً..."
+                        statusText = "Indexing words, idioms & Arabic reverse index..."
                     )
 
-                    dao.clearOfflinePack()
-                    var totalJsonBytes = 0L
-                    GZIPInputStream(BufferedInputStream(FileInputStream(tempFile), 32 * 1024)).use { gzStream ->
-                        JsonReader(InputStreamReader(gzStream, Charsets.UTF_8)).use { reader ->
-                            reader.isLenient = true
-                            val batch = ArrayList<OfflinePackWordEntity>(300)
-                            val token = reader.peek()
-                            if (token == JsonToken.BEGIN_ARRAY) {
-                                reader.beginArray()
-                                while (reader.hasNext()) {
-                                    coroutineContext.ensureActive()
-                                    val entity = readPackWordObject(reader)
-                                    if (entity != null) {
-                                        totalJsonBytes += entity.payloadJson.length
-                                        batch.add(entity)
-                                        if (batch.size >= 300) {
-                                            dao.upsertOfflinePackBatch(batch.toList())
-                                            batch.clear()
-                                        }
-                                    }
-                                }
-                                reader.endArray()
-                            } else if (token == JsonToken.BEGIN_OBJECT) {
-                                // Either {"words": [...]} or concatenated JSON objects (NDJSON)
-                                reader.beginObject()
-                                val firstName = if (reader.hasNext()) reader.nextName() else null
-                                if (firstName == "words" && reader.peek() == JsonToken.BEGIN_ARRAY) {
-                                    reader.beginArray()
-                                    while (reader.hasNext()) {
-                                        coroutineContext.ensureActive()
-                                        val entity = readPackWordObject(reader)
-                                        if (entity != null) {
-                                            totalJsonBytes += entity.payloadJson.length
-                                            batch.add(entity)
-                                            if (batch.size >= 300) {
-                                                dao.upsertOfflinePackBatch(batch.toList())
-                                                batch.clear()
-                                            }
-                                        }
-                                    }
-                                    reader.endArray()
-                                    while (reader.hasNext()) reader.skipValue()
-                                    reader.endObject()
-                                } else {
-                                    val firstEntity = readRemainingFieldsAfterFirst(reader, firstName)
-                                    reader.endObject()
-                                    if (firstEntity != null) {
-                                        totalJsonBytes += firstEntity.payloadJson.length
-                                        batch.add(firstEntity)
-                                    }
-                                    while (reader.peek() == JsonToken.BEGIN_OBJECT) {
-                                        coroutineContext.ensureActive()
-                                        val entity = readPackWordObject(reader)
-                                        if (entity != null) {
-                                            totalJsonBytes += entity.payloadJson.length
-                                            batch.add(entity)
-                                            if (batch.size >= 300) {
-                                                dao.upsertOfflinePackBatch(batch.toList())
-                                                batch.clear()
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if (batch.isNotEmpty()) {
-                                dao.upsertOfflinePackBatch(batch.toList())
-                                batch.clear()
-                            }
+                    val importedJsonBytes = GZIPInputStream(BufferedInputStream(FileInputStream(tempFile), 32 * 1024)).use { gzStream ->
+                        importPackFromJsonStream(gzStream) { indexedCount ->
+                            val frac = (0.75f + (indexedCount / 200_000f).coerceAtMost(0.24f)).coerceIn(0.75f, 0.99f)
+                            _state.value = OfflinePackState.Downloading(
+                                progress = frac,
+                                indeterminate = false,
+                                statusText = "Indexing offline dictionary ($indexedCount entries)..."
+                            )
                         }
                     }
 
-                    maxOf(totalJsonBytes, gzSize)
+                    maxOf(importedJsonBytes, gzSize)
                 }
 
-                prefs.edit().putLong(KEY_PACK_DISK_BYTES, downloadedBytes).apply()
+                prefs.edit()
+                    .putLong(KEY_PACK_DISK_BYTES, downloadedBytes)
+                    .putBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, true)
+                    .apply()
                 refreshStatus()
             } catch (e: CancellationException) {
                 refreshStatus()
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Offline dictionary pack download failed", e)
-                val count = withContext(Dispatchers.IO) { dao.getOfflinePackCount() }
-                val diskBytes = if (count > 0) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
+                val (wordCount, idiomCount, reverseCount) = withContext(Dispatchers.IO) {
+                    Triple(dao.getOfflinePackCount(), dao.getPackIdiomCount(), dao.getReverseArabicCount())
+                }
+                val installed = wordCount > 0 || idiomCount > 0
+                val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
                 _state.value = OfflinePackState.Error(
                     message = "الحزمة غير متاحة حالياً",
-                    isInstalled = count > 0,
-                    wordCount = count,
-                    diskSizeBytes = diskBytes
+                    isInstalled = installed,
+                    wordCount = wordCount,
+                    diskSizeBytes = diskBytes,
+                    idiomCount = idiomCount,
+                    reverseCount = reverseCount
                 )
             } finally {
                 runCatching { if (tempFile.exists()) tempFile.delete() }
             }
         }
+    }
+
+    /**
+     * Streams a decompressed JSON pack stream into Room (`offline_pack_words`, `pack_idioms`, `reverse_arabic_index`).
+     * Supports:
+     * - v2 schema object: `{"version": 2, "words": [...], "idioms": [...], "reverse_ar": [...]}` (keys in ANY order)
+     * - legacy array: `[...]`
+     * - NDJSON stream: `{...}\n{...}`
+     */
+    suspend fun importPackFromJsonStream(
+        inputStream: InputStream,
+        onProgress: ((Int) -> Unit)? = null
+    ): Long = withContext(Dispatchers.IO) {
+        dao.clearAllOfflinePackData()
+
+        var totalJsonBytes = 0L
+        var totalEntries = 0
+        var hasExplicitReverseAr = false
+
+        val wordBatch = ArrayList<OfflinePackWordEntity>(350)
+        val idiomBatch = ArrayList<PackIdiomEntity>(350)
+        val explicitReverseBatch = ArrayList<ReverseArabicEntryEntity>(500)
+        val derivedReverseBatch = ArrayList<ReverseArabicEntryEntity>(500)
+        val seenDerivedReverse = HashSet<String>(4096)
+
+        suspend fun flushWords() {
+            if (wordBatch.isNotEmpty()) {
+                dao.upsertOfflinePackBatch(wordBatch.toList())
+                totalEntries += wordBatch.size
+                wordBatch.clear()
+                onProgress?.invoke(totalEntries)
+            }
+        }
+
+        suspend fun flushIdioms() {
+            if (idiomBatch.isNotEmpty()) {
+                dao.upsertPackIdiomsBatch(idiomBatch.toList())
+                totalEntries += idiomBatch.size
+                idiomBatch.clear()
+                onProgress?.invoke(totalEntries)
+            }
+        }
+
+        suspend fun flushExplicitReverse() {
+            if (explicitReverseBatch.isNotEmpty()) {
+                dao.upsertReverseArabicBatch(explicitReverseBatch.toList())
+                totalEntries += explicitReverseBatch.size
+                explicitReverseBatch.clear()
+                onProgress?.invoke(totalEntries)
+            }
+        }
+
+        suspend fun flushDerivedReverse() {
+            if (derivedReverseBatch.isNotEmpty()) {
+                dao.upsertReverseArabicBatch(derivedReverseBatch.toList())
+                derivedReverseBatch.clear()
+            }
+        }
+
+        JsonReader(InputStreamReader(inputStream, Charsets.UTF_8)).use { reader ->
+            reader.isLenient = true
+            val rootToken = reader.peek()
+            when (rootToken) {
+                JsonToken.BEGIN_ARRAY -> {
+                    reader.beginArray()
+                    while (reader.hasNext()) {
+                        coroutineContext.ensureActive()
+                        val parsed = readPackWordObject(reader)
+                        if (parsed != null) {
+                            totalJsonBytes += parsed.entity.payloadJson.length
+                            wordBatch.add(parsed.entity)
+                            appendDerivedReverseEntries(parsed.derivedReverse, derivedReverseBatch, seenDerivedReverse)
+                            if (wordBatch.size >= 350) flushWords()
+                            if (derivedReverseBatch.size >= 500) flushDerivedReverse()
+                        }
+                    }
+                    reader.endArray()
+                }
+                JsonToken.BEGIN_OBJECT -> {
+                    reader.beginObject()
+                    var handledAsContainer = false
+                    var pendingField: String? = if (reader.hasNext()) reader.nextName() else null
+
+                    while (pendingField != null) {
+                        coroutineContext.ensureActive()
+                        val field = pendingField
+                        pendingField = null
+                        when (field) {
+                            "version", "generated_at", "meta", "stats" -> {
+                                handledAsContainer = true
+                                reader.skipValue()
+                            }
+                            "words" -> {
+                                handledAsContainer = true
+                                if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                                    reader.beginArray()
+                                    while (reader.hasNext()) {
+                                        coroutineContext.ensureActive()
+                                        val parsed = readPackWordObject(reader)
+                                        if (parsed != null) {
+                                            totalJsonBytes += parsed.entity.payloadJson.length
+                                            wordBatch.add(parsed.entity)
+                                            if (!hasExplicitReverseAr) {
+                                                appendDerivedReverseEntries(parsed.derivedReverse, derivedReverseBatch, seenDerivedReverse)
+                                            }
+                                            if (wordBatch.size >= 350) flushWords()
+                                            if (derivedReverseBatch.size >= 500) flushDerivedReverse()
+                                        }
+                                    }
+                                    reader.endArray()
+                                } else {
+                                    reader.skipValue()
+                                }
+                            }
+                            "idioms" -> {
+                                handledAsContainer = true
+                                if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                                    reader.beginArray()
+                                    while (reader.hasNext()) {
+                                        coroutineContext.ensureActive()
+                                        val idiom = readPackIdiomObject(reader)
+                                        if (idiom != null) {
+                                            totalJsonBytes += idiom.englishDefinition.length + idiom.arabicMeaning.length
+                                            idiomBatch.add(idiom)
+                                            if (idiomBatch.size >= 350) flushIdioms()
+                                        }
+                                    }
+                                    reader.endArray()
+                                } else {
+                                    reader.skipValue()
+                                }
+                            }
+                            "reverse_ar" -> {
+                                handledAsContainer = true
+                                if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                                    hasExplicitReverseAr = true
+                                    derivedReverseBatch.clear()
+                                    reader.beginArray()
+                                    while (reader.hasNext()) {
+                                        coroutineContext.ensureActive()
+                                        readReverseArabicItems(reader, explicitReverseBatch)
+                                        if (explicitReverseBatch.size >= 500) flushExplicitReverse()
+                                    }
+                                    reader.endArray()
+                                } else {
+                                    reader.skipValue()
+                                }
+                            }
+                            else -> {
+                                if (!handledAsContainer) {
+                                    // NDJSON stream where first object is itself a word item
+                                    val firstParsed = readRemainingFieldsAfterFirst(reader, field)
+                                    reader.endObject()
+                                    if (firstParsed != null) {
+                                        totalJsonBytes += firstParsed.entity.payloadJson.length
+                                        wordBatch.add(firstParsed.entity)
+                                        appendDerivedReverseEntries(firstParsed.derivedReverse, derivedReverseBatch, seenDerivedReverse)
+                                    }
+                                    while (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                                        coroutineContext.ensureActive()
+                                        val parsed = readPackWordObject(reader)
+                                        if (parsed != null) {
+                                            totalJsonBytes += parsed.entity.payloadJson.length
+                                            wordBatch.add(parsed.entity)
+                                            appendDerivedReverseEntries(parsed.derivedReverse, derivedReverseBatch, seenDerivedReverse)
+                                            if (wordBatch.size >= 350) flushWords()
+                                            if (derivedReverseBatch.size >= 500) flushDerivedReverse()
+                                        }
+                                    }
+                                    pendingField = null
+                                    break
+                                } else {
+                                    reader.skipValue()
+                                }
+                            }
+                        }
+                        if (reader.hasNext()) {
+                            pendingField = reader.nextName()
+                        }
+                    }
+                    if (handledAsContainer) {
+                        reader.endObject()
+                    }
+                }
+                else -> reader.skipValue()
+            }
+        }
+
+        flushWords()
+        flushIdioms()
+        if (hasExplicitReverseAr) {
+            flushExplicitReverse()
+        } else {
+            flushDerivedReverse()
+        }
+
+        totalJsonBytes
     }
 
     fun cancelDownload() {
@@ -295,14 +493,19 @@ class OfflinePackManager(
         downloadJob = null
         scope.launch {
             withContext(Dispatchers.IO) {
-                dao.clearOfflinePack()
+                dao.clearAllOfflinePackData()
                 prefs.edit().remove(KEY_PACK_DISK_BYTES).apply()
             }
             refreshStatus()
         }
     }
 
-    private fun readPackWordObject(reader: JsonReader): OfflinePackWordEntity? {
+    private data class ParsedPackWord(
+        val entity: OfflinePackWordEntity,
+        val derivedReverse: List<ReverseArabicEntryEntity>
+    )
+
+    private fun readPackWordObject(reader: JsonReader): ParsedPackWord? {
         reader.beginObject()
         return try {
             readRemainingFieldsAfterFirst(reader, null)
@@ -314,13 +517,17 @@ class OfflinePackManager(
     private fun readRemainingFieldsAfterFirst(
         reader: JsonReader,
         initialFieldName: String?
-    ): OfflinePackWordEntity? {
+    ): ParsedPackWord? {
         val root = JSONObject()
         var word = ""
         var lang = ""
         var phonetic = ""
+        var ukPhonetic = ""
         var summaryDef = ""
+        var explicitPreview = ""
+        var freqRank = Int.MAX_VALUE
         val tagsList = mutableListOf<String>()
+        var sensesArr: JSONArray? = null
 
         var currentName = initialFieldName
         while (currentName != null || reader.hasNext()) {
@@ -335,9 +542,21 @@ class OfflinePackManager(
                     lang = readStringOrNull(reader).orEmpty().trim().lowercase(Locale.US)
                     if (lang.isNotEmpty()) root.put("lang", lang)
                 }
-                "phonetic" -> {
+                "phonetic", "usIpa" -> {
                     phonetic = readStringOrNull(reader).orEmpty().trim()
                     if (phonetic.isNotEmpty()) root.put("phonetic", phonetic)
+                }
+                "ukIpa" -> {
+                    ukPhonetic = readStringOrNull(reader).orEmpty().trim()
+                    if (ukPhonetic.isNotEmpty()) root.put("ukIpa", ukPhonetic)
+                }
+                "rank", "frequencyRank" -> {
+                    freqRank = readIntOrDefault(reader, Int.MAX_VALUE)
+                    if (freqRank != Int.MAX_VALUE) root.put("rank", freqRank)
+                }
+                "preview" -> {
+                    explicitPreview = readStringOrNull(reader).orEmpty().trim()
+                    if (explicitPreview.isNotEmpty()) root.put("preview", explicitPreview)
                 }
                 "tags" -> {
                     val tagsArr = readStringArray(reader)
@@ -349,12 +568,13 @@ class OfflinePackManager(
                 }
                 "senses" -> {
                     val arr = readSensesArray(reader)
+                    sensesArr = arr
                     root.put("senses", arr)
                     if (summaryDef.isEmpty() && arr.length() > 0) {
                         summaryDef = arr.optJSONObject(0)?.optString("definition").orEmpty()
                     }
                 }
-                "collocations", "phrases", "family", "confusables" -> {
+                "collocations", "phrases", "idioms", "family", "confusables", "synonyms", "antonyms" -> {
                     root.put(name, readStringArray(reader))
                 }
                 else -> reader.skipValue()
@@ -378,18 +598,251 @@ class OfflinePackManager(
         } else {
             trimmedWord.lowercase(Locale.US)
         }
+
+        val posList = LinkedHashSet<String>()
+        val derivedReverse = ArrayList<ReverseArabicEntryEntity>()
+        val previewSb = StringBuilder()
+
+        if (sensesArr != null && sensesArr.length() > 0) {
+            val groupedGlosses = LinkedHashMap<String, LinkedHashMap<String, String>>()
+            for (i in 0 until sensesArr.length()) {
+                val sObj = sensesArr.optJSONObject(i) ?: continue
+                val pos = sObj.optString("partOfSpeech", "word").trim().ifBlank { "word" }
+                val engDef = sObj.optString("definition", "").trim()
+                val arDef = sObj.optString("definitionArabic", "").trim()
+                val abbr = LinguisticRanker.abbreviatePosTag(pos)
+                if (abbr.isNotBlank()) posList.add(abbr)
+
+                if (resolvedLang == "en" && arDef.isNotBlank()) {
+                    val bucket = groupedGlosses.getOrPut(abbr) { LinkedHashMap() }
+                    val glosses = arDef.split('؛', ';', '،')
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() && ArabicTextUtils.containsArabicLetters(it) }
+                    for (g in glosses) {
+                        val normAr = ArabicTextUtils.normalizeArabicForMatching(g)
+                        val dedupKey = normAr.ifEmpty { g }
+                        val existingGloss = bucket[dedupKey]
+                        if (existingGloss == null) {
+                            bucket[dedupKey] = g
+                        } else if (!ArabicTextUtils.hasArabicDiacritics(existingGloss) &&
+                            ArabicTextUtils.hasArabicDiacritics(g)
+                        ) {
+                            bucket[dedupKey] = g
+                        }
+                        if (normAr.isNotEmpty()) {
+                            derivedReverse.add(
+                                ReverseArabicEntryEntity(
+                                    normalizedArabic = normAr,
+                                    vocalizedArabic = ArabicTextUtils.canonicalizeArabicWithDiacritics(g),
+                                    englishWord = keyWord,
+                                    partOfSpeech = pos,
+                                    englishDefinition = engDef,
+                                    frequencyRank = freqRank,
+                                    source = "wiktionary"
+                                )
+                            )
+                        }
+                    }
+                } else if (resolvedLang == "ar") {
+                    val bucket = groupedGlosses.getOrPut(abbr) { LinkedHashMap() }
+                    val previewVal = engDef.ifBlank { arDef }
+                    if (previewVal.isNotBlank()) {
+                        bucket.putIfAbsent(previewVal.lowercase(Locale.US), previewVal)
+                    }
+                }
+            }
+            for ((abbr, glossMap) in groupedGlosses) {
+                if (glossMap.isEmpty()) continue
+                if (previewSb.isNotEmpty()) previewSb.append("؛ ")
+                if (abbr.isNotEmpty()) previewSb.append(abbr).append(' ')
+                previewSb.append(glossMap.values.joinToString("؛ "))
+            }
+            if (previewSb.isEmpty() && summaryDef.isNotBlank()) {
+                val hasArabic = ArabicTextUtils.containsArabicLetters(summaryDef)
+                if ((resolvedLang == "en" && hasArabic) || (resolvedLang == "ar" && !hasArabic)) {
+                    previewSb.append(summaryDef)
+                }
+            }
+        }
+
+        val computedPreview = previewSb.toString()
+        val finalPreview = when {
+            explicitPreview.isBlank() -> computedPreview
+            computedPreview.length > explicitPreview.length -> computedPreview
+            else -> explicitPreview
+        }
         val distinctTags = tagsList.distinct()
         val hasAwl = distinctTags.any { it.equals("AWL", ignoreCase = true) }
-        return OfflinePackWordEntity(
+
+        val entity = OfflinePackWordEntity(
             word = keyWord,
             normalizedWord = normalized,
             lang = resolvedLang,
             phonetic = phonetic,
-            summaryDefinition = summaryDef.take(180),
+            summaryDefinition = summaryDef.ifBlank { finalPreview },
+            previewSummary = finalPreview,
+            posTagsCsv = posList.joinToString(","),
+            frequencyRank = freqRank,
             tagsCsv = distinctTags.joinToString(","),
             hasAwlTag = hasAwl,
             payloadJson = root.toString()
         )
+        return ParsedPackWord(entity, derivedReverse)
+    }
+
+    private fun appendDerivedReverseEntries(
+        candidates: List<ReverseArabicEntryEntity>,
+        batch: MutableList<ReverseArabicEntryEntity>,
+        seenKeys: MutableSet<String>
+    ) {
+        if (candidates.isEmpty()) return
+        for (c in candidates) {
+            val k = "${c.normalizedArabic}|${c.vocalizedArabic}|${c.englishWord}|${c.partOfSpeech}"
+            if (seenKeys.size > 80_000) seenKeys.clear()
+            if (seenKeys.add(k)) {
+                batch.add(c)
+            }
+        }
+    }
+
+    private fun readPackIdiomObject(reader: JsonReader): PackIdiomEntity? {
+        reader.beginObject()
+        var phrase = ""
+        var engDef = ""
+        var arMeaning = ""
+        var ex = ""
+        var exAr = ""
+        var cat = "IDIOM"
+        var rank = Int.MAX_VALUE
+        try {
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "phrase", "word" -> phrase = readStringOrNull(reader).orEmpty().trim()
+                    "def", "englishDefinition" -> engDef = readStringOrNull(reader).orEmpty().trim()
+                    "ar", "arabicMeaning" -> arMeaning = readStringOrNull(reader).orEmpty().trim()
+                    "ex", "example" -> ex = readStringOrNull(reader).orEmpty().trim()
+                    "exAr", "exampleArabic" -> exAr = readStringOrNull(reader).orEmpty().trim()
+                    "cat", "category" -> cat = readStringOrNull(reader).orEmpty().trim().ifBlank { "IDIOM" }
+                    "rank", "frequencyRank" -> rank = readIntOrDefault(reader, Int.MAX_VALUE)
+                    else -> reader.skipValue()
+                }
+            }
+        } finally {
+            reader.endObject()
+        }
+        val cleanPhrase = phrase.replace(Regex("\\s+"), " ").trim()
+        if (cleanPhrase.isBlank() || engDef.isBlank()) return null
+        val lower = cleanPhrase.lowercase(Locale.US)
+        val tokens = lower.split(Regex("[^a-z0-9']+"))
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+        val tokensSearch = if (tokens.isNotBlank()) " $tokens " else ""
+        return PackIdiomEntity(
+            phrase = lower,
+            normalizedPhrase = lower,
+            englishDefinition = engDef,
+            arabicMeaning = arMeaning,
+            exampleSentence = ex,
+            exampleArabic = exAr,
+            category = cat,
+            frequencyRank = rank,
+            tokensSearch = tokensSearch
+        )
+    }
+
+    /**
+     * Reads reverse_ar items in either grouped form:
+     * `{"ar": "مر", "voc": "مُرّ", "matches": [{"en": "bitter", "pos": "adj", "def": "...", "rank": 2100, "src": "omwn"}]}`
+     * OR flat form:
+     * `{"ar": "مر", "voc": "مُرّ", "en": "bitter", "pos": "adj", "def": "...", "rank": 2100, "src": "omwn"}`
+     */
+    private fun readReverseArabicItems(reader: JsonReader, out: MutableList<ReverseArabicEntryEntity>) {
+        reader.beginObject()
+        var arNormField = ""
+        var vocField = ""
+        var flatEn = ""
+        var flatPos = ""
+        var flatDef = ""
+        var flatRank = Int.MAX_VALUE
+        var flatSrc = "pack"
+        val nestedMatches = ArrayList<ReverseArabicEntryEntity>()
+        try {
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "ar" -> arNormField = readStringOrNull(reader).orEmpty().trim()
+                    "voc" -> vocField = readStringOrNull(reader).orEmpty().trim()
+                    "en" -> flatEn = readStringOrNull(reader).orEmpty().trim().lowercase(Locale.US)
+                    "pos" -> flatPos = readStringOrNull(reader).orEmpty().trim()
+                    "def" -> flatDef = readStringOrNull(reader).orEmpty().trim()
+                    "rank" -> flatRank = readIntOrDefault(reader, Int.MAX_VALUE)
+                    "src" -> flatSrc = readStringOrNull(reader).orEmpty().trim().ifBlank { "pack" }
+                    "matches" -> {
+                        if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                            reader.beginArray()
+                            while (reader.hasNext()) {
+                                reader.beginObject()
+                                var mEn = ""
+                                var mPos = ""
+                                var mDef = ""
+                                var mRank = Int.MAX_VALUE
+                                var mSrc = "pack"
+                                while (reader.hasNext()) {
+                                    when (reader.nextName()) {
+                                        "en" -> mEn = readStringOrNull(reader).orEmpty().trim().lowercase(Locale.US)
+                                        "pos" -> mPos = readStringOrNull(reader).orEmpty().trim()
+                                        "def" -> mDef = readStringOrNull(reader).orEmpty().trim()
+                                        "rank" -> mRank = readIntOrDefault(reader, Int.MAX_VALUE)
+                                        "src" -> mSrc = readStringOrNull(reader).orEmpty().trim().ifBlank { "pack" }
+                                        else -> reader.skipValue()
+                                    }
+                                }
+                                reader.endObject()
+                                if (mEn.isNotBlank()) {
+                                    nestedMatches.add(
+                                        ReverseArabicEntryEntity(
+                                            normalizedArabic = "",
+                                            vocalizedArabic = "",
+                                            englishWord = mEn,
+                                            partOfSpeech = mPos,
+                                            englishDefinition = mDef,
+                                            frequencyRank = mRank,
+                                            source = mSrc
+                                        )
+                                    )
+                                }
+                            }
+                            reader.endArray()
+                        } else {
+                            reader.skipValue()
+                        }
+                    }
+                    else -> reader.skipValue()
+                }
+            }
+        } finally {
+            reader.endObject()
+        }
+        val effectiveVoc = ArabicTextUtils.canonicalizeArabicWithDiacritics(vocField.ifBlank { arNormField })
+        val effectiveNorm = ArabicTextUtils.normalizeArabicForMatching(arNormField.ifBlank { vocField })
+        if (effectiveNorm.isBlank() || effectiveVoc.isBlank()) return
+
+        if (nestedMatches.isNotEmpty()) {
+            nestedMatches.forEach { m ->
+                out.add(m.copy(normalizedArabic = effectiveNorm, vocalizedArabic = effectiveVoc))
+            }
+        } else if (flatEn.isNotBlank()) {
+            out.add(
+                ReverseArabicEntryEntity(
+                    normalizedArabic = effectiveNorm,
+                    vocalizedArabic = effectiveVoc,
+                    englishWord = flatEn,
+                    partOfSpeech = flatPos,
+                    englishDefinition = flatDef,
+                    frequencyRank = flatRank,
+                    source = flatSrc
+                )
+            )
+        }
     }
 
     private fun readSensesArray(reader: JsonReader): JSONArray {
@@ -404,9 +857,9 @@ class OfflinePackManager(
             val obj = JSONObject()
             while (reader.hasNext()) {
                 when (reader.nextName()) {
-                    "partOfSpeech" -> obj.put("partOfSpeech", readStringOrNull(reader).orEmpty())
-                    "definition" -> obj.put("definition", readStringOrNull(reader).orEmpty())
-                    "definitionArabic" -> {
+                    "partOfSpeech", "pos" -> obj.put("partOfSpeech", readStringOrNull(reader).orEmpty())
+                    "definition", "def" -> obj.put("definition", readStringOrNull(reader).orEmpty())
+                    "definitionArabic", "ar" -> {
                         val ar = readStringOrNull(reader).orEmpty().trim()
                         if (ar.isNotEmpty()) obj.put("definitionArabic", ar)
                     }
@@ -439,11 +892,30 @@ class OfflinePackManager(
     }
 
     private fun readStringOrNull(reader: JsonReader): String? {
-        return if (reader.peek() == JsonToken.NULL) {
-            reader.nextNull()
-            null
-        } else {
-            reader.nextString()
+        return when (reader.peek()) {
+            JsonToken.NULL -> {
+                reader.nextNull()
+                null
+            }
+            JsonToken.NUMBER, JsonToken.BOOLEAN -> {
+                reader.nextString()
+            }
+            else -> reader.nextString()
+        }
+    }
+
+    private fun readIntOrDefault(reader: JsonReader, fallback: Int): Int {
+        return when (reader.peek()) {
+            JsonToken.NULL -> {
+                reader.nextNull()
+                fallback
+            }
+            JsonToken.NUMBER -> runCatching { reader.nextInt() }.getOrDefault(fallback)
+            JsonToken.STRING -> reader.nextString().toIntOrNull() ?: fallback
+            else -> {
+                reader.skipValue()
+                fallback
+            }
         }
     }
 

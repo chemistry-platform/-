@@ -161,6 +161,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
 
     val updateManager = appContainer.appUpdateManager
     val updateUiState by updateManager.uiState.collectAsStateWithLifecycle()
+    val offlinePackState by appContainer.offlinePackManager.state.collectAsStateWithLifecycle()
 
     val unknownSourcesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -199,6 +200,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     LaunchedEffect(Unit) {
         appContainer.translationManager.ensureLanguagesLoaded()
         appContainer.offlinePackManager.ensureInitialized()
+        appContainer.offlinePackManager.startDownloadIfFirstRun()
         appContainer.audioPlayerManager.prepareTtsCheckIfNeeded()
         updateManager.checkForUpdate(force = false)
     }
@@ -263,7 +265,10 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     updateManager.checkForUpdate(force = false)
                 }
                 val homeViewModel: HomeViewModel = viewModel(
-                    factory = HomeViewModel.Factory(appContainer.repository)
+                    factory = HomeViewModel.Factory(
+                        repository = appContainer.repository,
+                        offlinePackManager = appContainer.offlinePackManager
+                    )
                 )
                 HomeScreen(
                     viewModel = homeViewModel,
@@ -371,7 +376,8 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     },
                     onOpenSentence = { sentence ->
                         navController.navigate(SentenceLookupRoute(query = sentence))
-                    }
+                    },
+                    offlinePackState = offlinePackState
                 )
             }
 

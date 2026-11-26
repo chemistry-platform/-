@@ -86,9 +86,11 @@ import com.example.core.LocalAppLanguage
 import com.example.core.LocalizedLabels
 import com.example.core.tr
 import com.example.data.repository.WordLoadState
+import com.example.domain.model.ArabicVocalizedGroup
 import com.example.domain.model.ConfusableWordDetail
 import com.example.domain.model.PhraseDetailItem
 import com.example.domain.model.PosSenseGroup
+import com.example.domain.model.ReverseEnglishMatch
 import com.example.domain.model.SenseItem
 import com.example.domain.model.WordEntry
 import com.example.ui.components.AppIcons
@@ -473,6 +475,16 @@ fun WordDetailScreen(
                                 onChipClick = { w -> viewModel.onChipTapped(w) },
                                 onSelectVocalizedForm = { vocalized -> viewModel.loadWord(vocalized) }
                             )
+                        }
+
+                        if (entry.isArabicWord && entry.reverseArabicGroups.isNotEmpty()) {
+                            item(key = "reverse_arabic_groups_${entry.word}", contentType = "reverse_arabic_groups") {
+                                ReverseArabicGroupsCard(
+                                    groups = entry.reverseArabicGroups,
+                                    audioManager = audioManager,
+                                    onOpenEnglishWord = { engWord -> onOpenWord(engWord, null, null) }
+                                )
+                            }
                         }
 
                         // Section 13.3: Usage filter row (hidden if NO sense has a label)
@@ -1318,7 +1330,7 @@ private fun HeadwordCard(
 
             // Comprehensive quick meanings grouped by Part of Speech directly under word & US/UK audio
             val posSummaries = remember(entry, lang) {
-                LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = 8, language = lang)
+                LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = Int.MAX_VALUE, language = lang)
             }
             if ((posSummaries.isNotEmpty() || entry.machineTranslations.isNotEmpty()) && (entry.isArabicWord || showArabicTranslations)) {
                 val allMachineOnly = if (posSummaries.isNotEmpty()) {
@@ -1867,25 +1879,39 @@ private fun PhrasalIdiomDetailCard(
             }
         }
 
-        if (showArabicTranslations && !item.arabicMeaning.isNullOrBlank()) {
-            ArabicTranslatedText(
-                text = item.arabicMeaning,
-                isMachineTranslated = item.isArabicMachine,
-                showMachineLabel = showMachineLabel,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = colors.primary,
-                modifier = Modifier.fillMaxWidth()
+        if (item.noMeaningFound) {
+            Text(
+                text = tr(
+                    "no idiom meaning found",
+                    "لم يُعثر على معنى للتعبير الاصطلاحي"
+                ),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = colors.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("phrase_item_no_idiom_meaning")
             )
-        }
-
-        if (item.englishMeaning.isNotBlank()) {
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                Text(
-                    text = item.englishMeaning,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurface,
+        } else {
+            if (showArabicTranslations && !item.arabicMeaning.isNullOrBlank()) {
+                ArabicTranslatedText(
+                    text = item.arabicMeaning,
+                    isMachineTranslated = item.isArabicMachine,
+                    showMachineLabel = showMachineLabel,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = colors.primary,
                     modifier = Modifier.fillMaxWidth()
                 )
+            }
+
+            if (item.englishMeaning.isNotBlank()) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Text(
+                        text = item.englishMeaning,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurface,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
@@ -2183,3 +2209,155 @@ private fun matchesUsageFilter(sense: SenseItem, filter: UsageFilterOption): Boo
         UsageFilterOption.UK -> "بريطاني" in sense.usageLabels || sense.spellingVariantLabel == "إملاء بريطاني"
     }
 }
+
+@Composable
+private fun ReverseArabicGroupsCard(
+    groups: List<ArabicVocalizedGroup>,
+    audioManager: AudioPlayerManager,
+    onOpenEnglishWord: (String) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val lang = LocalAppLanguage.current
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("reverse_arabic_groups_card"),
+        color = colors.surface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = tr("English Meanings by Vocalized Form", "المعاني الإنجليزية حسب التشكيل"),
+                style = MaterialTheme.typography.headlineSmall,
+                color = colors.primary
+            )
+
+            groups.forEachIndexed { groupIndex, group ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("reverse_arabic_group_$groupIndex"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        color = colors.primaryContainer,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                            Text(
+                                text = "${group.vocalizedForm} (${group.matches.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = colors.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    group.matches.forEach { match ->
+                        ReverseArabicMatchRow(
+                            match = match,
+                            posBadgeText = if (match.partOfSpeech.isNotBlank()) {
+                                LinguisticRanker.formatPosBadgeLabel(match.partOfSpeech, "", lang)
+                            } else {
+                                ""
+                            },
+                            audioManager = audioManager,
+                            onOpenEnglishWord = { onOpenEnglishWord(match.englishWord) }
+                        )
+                    }
+
+                    if (groupIndex < groups.lastIndex) {
+                        HorizontalDivider(color = colors.outline, thickness = 1.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReverseArabicMatchRow(
+    match: ReverseEnglishMatch,
+    posBadgeText: String,
+    audioManager: AudioPlayerManager,
+    onOpenEnglishWord: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onOpenEnglishWord)
+            .testTag("reverse_match_${match.englishWord}"),
+        color = colors.surfaceVariant.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = match.englishWord,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = colors.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                    if (posBadgeText.isNotBlank()) {
+                        PosChip(text = posBadgeText)
+                    }
+                }
+
+                CompactWordAudioButtons(
+                    hasUsAudio = true,
+                    hasUkAudio = true,
+                    onPlayUs = {
+                        audioManager.playHumanPronunciation(
+                            word = match.englishWord,
+                            accent = Accent.US,
+                            audioUrl = match.usAudioUrl,
+                            key = "rev_us_${match.englishWord}"
+                        )
+                    },
+                    onPlayUk = {
+                        audioManager.playHumanPronunciation(
+                            word = match.englishWord,
+                            accent = Accent.UK,
+                            audioUrl = match.ukAudioUrl,
+                            key = "rev_uk_${match.englishWord}"
+                        )
+                    }
+                )
+            }
+
+            if (match.englishDefinition.isNotBlank()) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Text(
+                        text = match.englishDefinition,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+    }
+}
+

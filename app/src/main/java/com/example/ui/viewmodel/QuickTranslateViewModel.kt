@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
@@ -44,6 +46,25 @@ class QuickTranslateViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _suggestions = MutableStateFlow<List<SearchSuggestion>>(emptyList())
+    val suggestions: StateFlow<List<SearchSuggestion>> = _suggestions.asStateFlow()
+
+    private val _hasMoreSuggestions = MutableStateFlow(false)
+    val hasMoreSuggestions: StateFlow<Boolean> = _hasMoreSuggestions.asStateFlow()
+
+    private val _isLoadingMore = MutableStateFlow(false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
+    private val _submittedQuery = MutableStateFlow<String?>(null)
+    val isSearchSubmitted: StateFlow<Boolean> = combine(_submittedQuery, _query) { sub, q ->
+        val trimmed = q.trim()
+        !sub.isNullOrBlank() && sub == trimmed && trimmed.isNotEmpty()
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000L),
+        initialValue = false
+    )
+
     val isOnline: StateFlow<Boolean> = repository.isOnlineFlow
         .stateIn(
             scope = viewModelScope,
@@ -58,64 +79,109 @@ class QuickTranslateViewModel(
             initialValue = emptyList()
         )
 
-    val suggestions: StateFlow<List<SearchSuggestion>> = _query
-        .debounce(150L)
-        .flatMapLatest { raw ->
-            flow {
-                val trimmed = raw.trim()
-                if (trimmed.isEmpty()) {
-                    _isLoading.value = false
-                    emit(emptyList())
-                } else {
-                    _isLoading.value = true
-                    try {
-                        val list = repository.getLiveSuggestions(trimmed)
-                        // Section 18.3: Prefetch top suggestion in the background
-                        list.firstOrNull()?.word?.let { topWord ->
-                            repository.prefetchWord(topWord)
+    init {
+        viewModelScope.launch {
+            _query
+                .debounce(80L)
+                .flatMapLatest { raw ->
+                    flow {
+                        val trimmed = raw.trim()
+                        if (trimmed.isEmpty()) {
+                            _isLoading.value = false
+                            _hasMoreSuggestions.value = false
+                            emit(emptyList<SearchSuggestion>() to false)
+                        } else {
+                            _isLoading.value = true
+                            try {
+                                val page = repository.getLiveSuggestionsPaged(
+                                    query = trimmed,
+                                    offset = 0,
+                                    limit = PAGE_SIZE
+                                )
+                                page.items.firstOrNull()?.word?.let { topWord ->
+                                    if (!page.items.first().isIdiom) {
+                                        repository.prefetchWord(topWord)
+                                    }
+                                }
+                                emit(page.items to page.hasMore)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                emit(emptyList<SearchSuggestion>() to false)
+                            } finally {
+                                _isLoading.value = false
+                            }
                         }
-                        emit(list)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        emit(emptyList())
-                    } finally {
-                        _isLoading.value = false
                     }
                 }
+                .collect { (items, hasMore) ->
+                    if (_query.value.trim().isEmpty()) {
+                        _suggestions.value = emptyList()
+                        _hasMoreSuggestions.value = false
+                    } else {
+                        _suggestions.value = items
+                        _hasMoreSuggestions.value = hasMore
+                    }
+                    _isLoadingMore.value = false
+                }
+        }
+    }
+
+    fun loadMoreSuggestions() {
+        val trimmed = _query.value.trim()
+        if (trimmed.isEmpty() || _isLoadingMore.value || !_hasMoreSuggestions.value) return
+        val offset = _suggestions.value.size
+        _isLoadingMore.value = true
+        viewModelScope.launch {
+            try {
+                val page = repository.getLiveSuggestionsPaged(
+                    query = trimmed,
+                    offset = offset,
+                    limit = PAGE_SIZE
+                )
+                if (_query.value.trim() == trimmed) {
+                    val existingKeys = _suggestions.value.mapTo(HashSet()) { it.word.lowercase() }
+                    val appended = page.items.filter { it.word.lowercase() !in existingKeys }
+                    _suggestions.value = _suggestions.value + appended
+                    _hasMoreSuggestions.value = page.hasMore && appended.isNotEmpty()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _hasMoreSuggestions.value = false
+            } finally {
+                _isLoadingMore.value = false
             }
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000L),
-            initialValue = emptyList()
-        )
+    }
 
-    // BUG 6: 300ms debounced non-blocking live translation directly under search bar & audio row
-    val instantTranslation: StateFlow<InstantTranslationResult?> = _query
-        .debounce(300L)
-        .flatMapLatest { raw ->
+    // Live summary/translation card shown ONLY when user taps the Search icon or submits search
+    val instantTranslation: StateFlow<InstantTranslationResult?> = combine(_submittedQuery, _query) { sub, q ->
+        val trimmed = q.trim()
+        if (sub != null && sub == trimmed && trimmed.isNotEmpty()) trimmed else null
+    }
+        .distinctUntilChanged()
+        .flatMapLatest { submitted ->
             flow {
-                val trimmed = raw.trim()
-                if (trimmed.isEmpty()) {
+                if (submitted == null) {
                     emit(null)
                 } else {
-                    val isArabic = ArabicTextUtils.containsArabicLetters(trimmed)
+                    val isArabic = ArabicTextUtils.containsArabicLetters(submitted)
                     emit(
                         InstantTranslationResult(
-                            query = trimmed,
+                            query = submitted,
                             isArabicSource = isArabic,
                             isLoading = true
                         )
                     )
                     try {
-                        emit(repository.instantTranslateForSearch(trimmed))
+                        emit(repository.instantTranslateForSearch(submitted))
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
                         emit(
                             InstantTranslationResult(
-                                query = trimmed,
+                                query = submitted,
                                 isArabicSource = isArabic,
                                 isLoading = false
                             )
@@ -130,8 +196,18 @@ class QuickTranslateViewModel(
             initialValue = null
         )
 
+    fun submitSearch() {
+        val trimmed = _query.value.trim()
+        if (trimmed.isNotEmpty()) {
+            _submittedQuery.value = trimmed
+        }
+    }
+
     fun onQueryChange(newValue: String) {
         _query.value = newValue
+        if (newValue.trim() != _submittedQuery.value) {
+            _submittedQuery.value = null
+        }
         if (newValue.isNotBlank()) {
             // Section 15.1: Auto-detect direction from script
             _direction.value = if (ArabicTextUtils.containsArabicLetters(newValue)) {
@@ -140,7 +216,11 @@ class QuickTranslateViewModel(
                 LanguageDirection.EN_TO_AR
             }
         } else {
+            _submittedQuery.value = null
             _isLoading.value = false
+            _isLoadingMore.value = false
+            _hasMoreSuggestions.value = false
+            _suggestions.value = emptyList()
         }
     }
 
@@ -161,6 +241,10 @@ class QuickTranslateViewModel(
         viewModelScope.launch {
             repository.clearHistory()
         }
+    }
+
+    companion object {
+        const val PAGE_SIZE = 50
     }
 
     class Factory(

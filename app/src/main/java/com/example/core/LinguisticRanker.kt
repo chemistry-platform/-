@@ -198,15 +198,22 @@ object LinguisticRanker {
 
     private fun mergeTwoSenses(primary: SenseItem, secondary: SenseItem): SenseItem {
         val keepPrimaryDef = sourcePreference(primary.source) >= sourcePreference(secondary.source)
+        val primaryAr = primary.definitionArabic?.trim().orEmpty()
+        val secondaryAr = secondary.definitionArabic?.trim().orEmpty()
         val bestArabic = when {
-            !primary.definitionArabic.isNullOrBlank() && !primary.definitionArabicIsMachine -> primary.definitionArabic
-            !secondary.definitionArabic.isNullOrBlank() && !secondary.definitionArabicIsMachine -> secondary.definitionArabic
-            !primary.definitionArabic.isNullOrBlank() -> primary.definitionArabic
+            primaryAr.isNotEmpty() && !primary.definitionArabicIsMachine &&
+                secondaryAr.isNotEmpty() && !secondary.definitionArabicIsMachine ->
+                mergeDistinctArabicMeanings(primaryAr, secondaryAr)
+            primaryAr.isNotEmpty() && !primary.definitionArabicIsMachine -> primaryAr
+            secondaryAr.isNotEmpty() && !secondary.definitionArabicIsMachine -> secondaryAr
+            primaryAr.isNotEmpty() && secondaryAr.isNotEmpty() ->
+                mergeDistinctArabicMeanings(primaryAr, secondaryAr)
+            primaryAr.isNotEmpty() -> primaryAr
             else -> secondary.definitionArabic
         }
         val bestArabicIsMachine = when {
-            !primary.definitionArabic.isNullOrBlank() && !primary.definitionArabicIsMachine -> false
-            !secondary.definitionArabic.isNullOrBlank() && !secondary.definitionArabicIsMachine -> false
+            primaryAr.isNotEmpty() && !primary.definitionArabicIsMachine -> false
+            secondaryAr.isNotEmpty() && !secondary.definitionArabicIsMachine -> false
             bestArabic.isNullOrBlank() -> false
             else -> primary.definitionArabicIsMachine && secondary.definitionArabicIsMachine
         }
@@ -415,7 +422,7 @@ object LinguisticRanker {
      */
     fun extractPosHeadwordMeanings(
         entry: WordEntry,
-        maxPerPos: Int = 8,
+        maxPerPos: Int = Int.MAX_VALUE,
         language: AppLanguage = AppLanguage.ENGLISH
     ): List<PosHeadwordMeanings> {
         if (entry.posGroups.isEmpty() || maxPerPos <= 0) return emptyList()
@@ -474,7 +481,7 @@ object LinguisticRanker {
                 val pieces = splitConciseGlosses(mt, isTargetArabic)
                 for (piece in pieces) {
                     val key = meaningDedupKey(piece, isTargetArabic)
-                    if (key.isNotEmpty() && key !in allExistingKeys && primaryBucket.keyToValue.size < maxPerPos + 2) {
+                    if (key.isNotEmpty() && key !in allExistingKeys && primaryBucket.keyToValue.size < maxPerPos) {
                         primaryBucket.keyToValue[key] = piece
                         allExistingKeys.add(key)
                         primaryBucket.hasMachine = true
@@ -545,5 +552,96 @@ object LinguisticRanker {
         } else {
             cleaned.lowercase(Locale.US)
         }
+    }
+
+    fun abbreviatePosTag(pos: String): String {
+        return when (pos.trim().lowercase(Locale.US)) {
+            "verb", "فعل" -> "v."
+            "noun", "اسم" -> "n."
+            "adjective", "صفة" -> "adj."
+            "adverb", "ظرف" -> "adv."
+            "preposition", "حرف جر" -> "prep."
+            "conjunction", "أداة ربط" -> "conj."
+            "pronoun", "ضمير" -> "pron."
+            "interjection", "exclamation", "صيغة تعجب" -> "interj."
+            "determiner", "محدد" -> "det."
+            "particle", "أداة" -> "part."
+            "numeral", "عدد" -> "num."
+            "idiom", "تعبير اصطلاحي" -> "idiom"
+            "phrase", "عبارة" -> "phr."
+            "proverb", "مَثَل", "مثل" -> "prov."
+            "", "word", "كلمة" -> ""
+            else -> pos.trim().lowercase(Locale.US).take(4) + "."
+        }
+    }
+
+    /**
+     * Formats meanings grouped by part of speech separated by "؛"
+     * preserving all meanings unless an explicit maxLength cap is requested.
+     */
+    fun buildPosPreviewString(
+        posGroups: List<PosSenseGroup>,
+        isArabicHeadword: Boolean = false,
+        maxLength: Int = Int.MAX_VALUE
+    ): String {
+        if (posGroups.isEmpty()) return ""
+        val isTargetArabic = !isArabicHeadword
+        val sections = ArrayList<String>(posGroups.size)
+
+        for (group in posGroups) {
+            val abbr = abbreviatePosTag(group.partOfSpeech)
+            val seenKeys = HashSet<String>()
+            val glosses = ArrayList<String>()
+            val orderedSenses = group.senses.sortedBy { if (it.definitionArabicIsMachine) 1 else 0 }
+            for (sense in orderedSenses) {
+                val rawGloss = sense.definitionArabic?.takeIf { it.isNotBlank() }
+                    ?: if (isArabicHeadword) sense.definition else ""
+                if (rawGloss.isBlank()) continue
+                val parts = splitConciseGlosses(rawGloss, isTargetArabic)
+                for (p in parts) {
+                    val k = meaningDedupKey(p, isTargetArabic)
+                    if (k.isNotEmpty() && seenKeys.add(k)) {
+                        glosses.add(p)
+                    }
+                }
+            }
+            if (glosses.isNotEmpty()) {
+                val joined = glosses.joinToString("؛ ")
+                sections.add(if (abbr.isNotEmpty()) "$abbr $joined" else joined)
+            }
+            if (maxLength < Int.MAX_VALUE && sections.sumOf { it.length } >= maxLength) break
+        }
+        val combined = sections.joinToString("؛ ")
+        return if (maxLength < Int.MAX_VALUE) combined.take(maxLength) else combined
+    }
+
+    fun buildPosPreviewFromEntry(entry: WordEntry, maxLength: Int = Int.MAX_VALUE): String {
+        val fromGroups = buildPosPreviewString(entry.posGroups, entry.isArabicWord, maxLength)
+        if (fromGroups.isNotBlank()) return fromGroups
+        if (entry.machineTranslations.isNotEmpty()) {
+            val combined = entry.machineTranslations.joinToString("؛ ")
+            return if (maxLength < Int.MAX_VALUE) combined.take(maxLength) else combined
+        }
+        val fallback = entry.posGroups.firstOrNull()?.senses?.firstOrNull()?.definition.orEmpty()
+        return if (maxLength < Int.MAX_VALUE) fallback.take(maxLength) else fallback
+    }
+
+    private fun mergeDistinctArabicMeanings(first: String, second: String): String {
+        val seen = LinkedHashMap<String, String>()
+        for (raw in listOf(first, second)) {
+            for (part in splitConciseGlosses(raw, isTargetArabic = true)) {
+                val key = meaningDedupKey(part, isTargetArabic = true)
+                if (key.isEmpty()) continue
+                val existing = seen[key]
+                if (existing == null) {
+                    seen[key] = part
+                } else if (!ArabicTextUtils.hasArabicDiacritics(existing) &&
+                    ArabicTextUtils.hasArabicDiacritics(part)
+                ) {
+                    seen[key] = part
+                }
+            }
+        }
+        return if (seen.isEmpty()) first else seen.values.joinToString("؛ ")
     }
 }

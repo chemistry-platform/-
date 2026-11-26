@@ -3,6 +3,8 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.core.OfflinePackManager
+import com.example.core.OfflinePackState
 import com.example.data.repository.LexiconRepository
 import com.example.domain.model.LanguageDirection
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,11 +14,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 
 class HomeViewModel(
-    repository: LexiconRepository
+    repository: LexiconRepository,
+    offlinePackManager: OfflinePackManager? = null
 ) : ViewModel() {
 
     private val _languageDirection = MutableStateFlow(LanguageDirection.EN_TO_AR)
     val languageDirection: StateFlow<LanguageDirection> = _languageDirection.asStateFlow()
+
+    val offlinePackState: StateFlow<OfflinePackState>? = offlinePackManager?.state
 
     val isOnline: StateFlow<Boolean> = repository.isOnlineFlow
         .stateIn(
@@ -32,10 +37,13 @@ class HomeViewModel(
         }
     }
 
-    class Factory(private val repository: LexiconRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: LexiconRepository,
+        private val offlinePackManager: OfflinePackManager? = null
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return HomeViewModel(repository) as T
+            return HomeViewModel(repository, offlinePackManager) as T
         }
     }
 }

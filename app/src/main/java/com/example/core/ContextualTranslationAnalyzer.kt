@@ -329,6 +329,55 @@ object ContextualTranslationAnalyzer {
             arabicMeaning = "يَخْرُجُ عَنِ السَّيْطَرَةِ",
             example = "The argument quickly got out of hand.",
             usageNote = "تعبير اصطلاحي يدل على فقدان السيطرة"
+        ),
+        IdiomKnowledge(
+            phrase = "hit the town",
+            englishMeaning = "to go out and enjoy oneself enthusiastically at restaurants, bars, clubs, or entertainment venues",
+            arabicMeaning = "يخرج للسهر والاستمتاع في المدينة",
+            example = "Let's hit the town tonight to celebrate your new job.",
+            usageNote = "تعبير اصطلاحي يعني الخروج ليلاً للتنزه والسهر والاحتفال في المدينة"
+        ),
+        IdiomKnowledge(
+            phrase = "hit the road",
+            englishMeaning = "to begin a journey or leave a place",
+            arabicMeaning = "يَنطَلِقُ فِي رِحْلَةٍ؛ يَبْدَأُ السَّفَرَ",
+            example = "We should hit the road early before traffic builds up.",
+            usageNote = "تعبير اصطلاحي غير رسمي يعني الانطلاق في السفر"
+        ),
+        IdiomKnowledge(
+            phrase = "hit the sack",
+            englishMeaning = "to go to bed in order to sleep",
+            arabicMeaning = "يَذْهَبُ إِلَى النَّوْمِ؛ يَأْوِي إِلَى فِرَاشِهِ",
+            example = "I'm exhausted after work, so I'm going to hit the sack.",
+            usageNote = "تعبير اصطلاحي غير رسمي يعني الخلود للنوم"
+        ),
+        IdiomKnowledge(
+            phrase = "hit the books",
+            englishMeaning = "to study very hard and seriously",
+            arabicMeaning = "يَنْكَبُّ عَلَى الدِّرَاسَةِ وَالمُذَاكَرَةِ بِجِدٍّ",
+            example = "Finals start next week, so it's time to hit the books.",
+            usageNote = "تعبير اصطلاحي طلابي شائع"
+        ),
+        IdiomKnowledge(
+            phrase = "out of the blue",
+            englishMeaning = "completely unexpectedly and without warning",
+            arabicMeaning = "فَجْأَةً دُونَ سَابِقِ إِنْذَارٍ",
+            example = "An old college friend called me out of the blue.",
+            usageNote = "تعبير اصطلاحي يدل على المفاجأة"
+        ),
+        IdiomKnowledge(
+            phrase = "in the same boat",
+            englishMeaning = "in the same difficult or unpleasant situation as others",
+            arabicMeaning = "فِي نَفْسِ الوَضْعِ أَوِ المَأْزِقِ",
+            example = "Everyone on the team is in the same boat before the deadline.",
+            usageNote = "تعبير اصطلاحي يدل على الاشتراك في نفس الظرف"
+        ),
+        IdiomKnowledge(
+            phrase = "cut corners",
+            englishMeaning = "to do something in the easiest, cheapest, or fastest way by sacrificing quality",
+            arabicMeaning = "يَخْتَصِرُ الجُهْدَ وَالتَّكْلِفَةَ عَلَى حِسَابِ الجَوْدَةِ",
+            example = "Never cut corners when it comes to safety.",
+            usageNote = "تعبير اصطلاحي"
         )
     )
 
@@ -427,6 +476,10 @@ object ContextualTranslationAnalyzer {
         "break the ice" to "يكسر الحاجز ويمهّد للحديث",
         "bite the bullet" to "يتجرّع الصعب بشجاعة",
         "hit the nail on the head" to "أصاب كبد الحقيقة",
+        "hit the town" to "يخرج للسهر والاستمتاع في المدينة",
+        "hit the road" to "ينطلق في رحلة",
+        "hit the sack" to "يذهب إلى النوم",
+        "hit the books" to "ينكبّ على الدراسة",
         "spill the beans" to "يفشي السر",
         "burn the midnight oil" to "يسهر في العمل أو الدراسة"
     )
@@ -440,7 +493,7 @@ object ContextualTranslationAnalyzer {
         "على احر من الجمر" to "Waiting eagerly on tenterhooks.",
         "في غمضة عين" to "In the blink of an eye.",
         "لا يمت بصلة" to "Has nothing to do with it."
-    )
+    ).mapKeys { ArabicTextUtils.normalizeArabicForMatching(it.key) }
 
     private val MANAGEMENT_OBJECTS =
         "company|companies|business|businesses|firm|firms|corporation|enterprise|startup|factory|factories|organization|organisation|department|school|shop|store|hotel|restaurant|clinic|hospital|team|project|projects|campaign|operation|operations|agency|office|plant|bank|branch"
@@ -614,6 +667,18 @@ object ContextualTranslationAnalyzer {
         EnContextRewriteRule(
             regex = Regex("\\bran\\s+wild\\b", RegexOption.IGNORE_CASE),
             replacementBuilder = { "went completely out of restraint" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bhit(?:s|ting)?\\s+the\\s+town\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "go out to enjoy the nightlife and entertainment in the city" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bhit(?:s|ting)?\\s+the\\s+road\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "begin the journey" }
+        ),
+        EnContextRewriteRule(
+            regex = Regex("\\bhit(?:s|ting)?\\s+the\\s+sack\\b", RegexOption.IGNORE_CASE),
+            replacementBuilder = { "go to bed to sleep" }
         )
     )
 
@@ -829,6 +894,17 @@ object ContextualTranslationAnalyzer {
             val words = item.phrase.lowercase(Locale.US).split(Regex("\\s+"))
             words.any { w -> w == lower || (lower == "action" && w == "actions") }
         }
+    }
+
+    fun lookupCuratedIdiom(phrase: String, isArabic: Boolean): IdiomKnowledge? {
+        if (isArabic) {
+            val norm = ArabicTextUtils.normalizeArabicForMatching(phrase).trimEnd('.', '!', '؟')
+            return CURATED_AR_IDIOMS.firstOrNull {
+                ArabicTextUtils.normalizeArabicForMatching(it.phrase) == norm
+            }
+        }
+        val lower = phrase.trim().lowercase(Locale.US).replace(Regex("\\s+"), " ").trimEnd('.', '!', '?')
+        return CURATED_EN_IDIOMS.firstOrNull { it.phrase.lowercase(Locale.US) == lower }
     }
 
     private fun buildInflectedPhraseRegex(phrase: String): Regex? {

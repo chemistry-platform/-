@@ -1,0 +1,50 @@
+name: Build Offline Dictionary Pack
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-dictionary-pack:
+    name: Build & Publish Dictionary Pack Pre-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip nltk
+
+      - name: Build dictionary-pack.json.gz (< 80 MB)
+        run: python .github/scripts/build_dictionary_pack.py --out dictionary-pack.json.gz
+
+      - name: Verify file size is under 80 MB
+        run: |
+          SIZE=$(stat -c%s dictionary-pack.json.gz)
+          echo "dictionary-pack.json.gz size: $SIZE bytes"
+          if [ "$SIZE" -ge 83886080 ]; then
+            echo "::error::dictionary-pack.json.gz is >= 80 MB ($SIZE bytes)."
+            exit 1
+          fi
+
+      - name: Publish Pre-release "dictionary-pack"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dictionary-pack
+          name: "Offline Dictionary Pack (v2)"
+          prerelease: true
+          files: dictionary-pack.json.gz
+          body: |
+            Automated offline English-Arabic dictionary pack built from free open sources:
+            - Wiktionary (via kaikki.org dump, CC BY-SA 4.0)
+            - Princeton WordNet & Open Multilingual WordNet Arabic
+            - Tatoeba bilingual examples
+            - Includes headwords, POS previews, vocalized Arabic meanings, synonyms/antonyms, >= 30,000 idioms & phrases, and grouped reverse Arabic index.

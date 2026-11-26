@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,6 +36,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.LocalAppLanguage
+import com.example.core.OfflinePackState
 import com.example.core.tr
 import com.example.domain.model.LanguageDirection
 import com.example.ui.components.AppIcons
@@ -57,6 +59,7 @@ fun HomeScreen(
     val lang = LocalAppLanguage.current
     val direction by viewModel.languageDirection.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
+    val packState = viewModel.offlinePackState?.collectAsStateWithLifecycle()?.value
 
     Box(
         modifier = modifier
@@ -88,6 +91,44 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant
                     )
+                }
+            }
+
+            if (packState is OfflinePackState.Downloading) {
+                item(key = "home_pack_download", contentType = "banner") {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("home_pack_download_card"),
+                        color = colors.primaryContainer.copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = packState.statusText.ifBlank {
+                                    tr(lang, "Downloading offline dictionary pack...", "جاري تحميل القاموس المحلي...")
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colors.onPrimaryContainer
+                            )
+                            if (packState.indeterminate) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = colors.primary
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    progress = { packState.progress.coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = colors.primary
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

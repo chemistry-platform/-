@@ -86,7 +86,7 @@ object ArabicTextUtils {
 
     /**
      * Section 15.2: Normalize Arabic for matching only (never display):
-     * remove tashkeel & tatweel, unify أ إ آ ٱ -> ا.
+     * remove tashkeel & tatweel, unify أ إ آ ٱ -> ا, ى -> ي, ة -> ه, ؤ -> و, ئ -> ي.
      */
     fun normalizeArabicForMatching(text: String): String {
         val stripped = stripArabicDiacriticsKeepHamza(text)
@@ -94,10 +94,28 @@ object ArabicTextUtils {
         for (ch in stripped) {
             when (ch) {
                 'أ', 'إ', 'آ', 'ٱ' -> sb.append('ا')
+                'ى' -> sb.append('ي')
+                'ة' -> sb.append('ه')
+                'ؤ' -> sb.append('و')
+                'ئ' -> sb.append('ي')
                 else -> sb.append(ch)
             }
         }
         return sb.toString().replace(MULTI_SPACE_REGEX, " ").trim()
+    }
+
+    /**
+     * Computes exclusive upper bound string for SQLite B-tree prefix range scans:
+     * WHERE normalizedWord >= prefix AND normalizedWord < prefixEnd.
+     */
+    fun computePrefixUpperBound(prefix: String): String {
+        if (prefix.isEmpty()) return "\uFFFF"
+        val last = prefix.last()
+        return if (last == Char.MAX_VALUE) {
+            prefix + "\uFFFF"
+        } else {
+            prefix.dropLast(1) + (last.code + 1).toChar()
+        }
     }
 
     fun normalizeForKey(text: String): String {

@@ -101,7 +101,8 @@ data class PhraseDetailItem(
     val isIdiom: Boolean = false,
     val category: String = "",
     val usageExplanation: String? = null,
-    val grammarStructure: String? = null
+    val grammarStructure: String? = null,
+    val noMeaningFound: Boolean = false
 )
 
 @Immutable
@@ -119,9 +120,11 @@ data class DetectedIdiom(
 @Immutable
 data class PhraseSheetData(
     val phrase: String,
+    val englishMeaning: String = "",
     val arabicMeaning: String? = null,
     val isArabicMachine: Boolean = false,
     val missingArabicPack: Boolean = false,
+    val noMeaningFound: Boolean = false,
     val example: String = "",
     val exampleArabic: String? = null,
     val exampleIsMachine: Boolean = false,
@@ -138,9 +141,29 @@ data class InstantTranslationResult(
     val isArabicSource: Boolean = false,
     val isMachine: Boolean = true,
     val missingPack: Boolean = false,
+    val noMeaningFound: Boolean = false,
     val usAudioUrl: String? = null,
     val ukAudioUrl: String? = null,
     val isLoading: Boolean = false
+)
+
+@Immutable
+@Serializable
+data class ReverseEnglishMatch(
+    val englishWord: String,
+    val partOfSpeech: String = "",
+    val englishDefinition: String = "",
+    val usAudioUrl: String? = null,
+    val ukAudioUrl: String? = null,
+    val source: String = "pack"
+)
+
+@Immutable
+@Serializable
+data class ArabicVocalizedGroup(
+    val vocalizedForm: String,
+    val normalizedForm: String = "",
+    val matches: List<ReverseEnglishMatch> = emptyList()
 )
 
 @Immutable
@@ -152,6 +175,7 @@ data class WordEntry(
     val lang: String = "en",
     val transliteration: String = "",
     val vocalizedForms: List<String> = emptyList(),
+    val reverseArabicGroups: List<ArabicVocalizedGroup> = emptyList(),
     val usIpa: String = "",
     val ukIpa: String = "",
     val usAudioUrl: String? = null,
@@ -187,10 +211,13 @@ data class SearchSuggestion(
     val word: String,
     val partOfSpeech: String = "",
     val summaryDefinition: String = "",
+    val posPreview: String = "",
+    val frequencyRank: Int = Int.MAX_VALUE,
     val usAudioUrl: String? = null,
     val ukAudioUrl: String? = null,
     val isArabic: Boolean = false,
-    val isLocal: Boolean = false
+    val isLocal: Boolean = false,
+    val isIdiom: Boolean = false
 )
 
 @Immutable
@@ -213,4 +240,10 @@ data class SentenceLookupResult(
     val tatoebaSentences: List<TatoebaSentence> = emptyList(),
     val isUpdating: Boolean = false,
     val directPhraseEntryAvailable: Boolean = false
+)
+
+@Immutable
+data class LiveSearchPage(
+    val items: List<SearchSuggestion>,
+    val hasMore: Boolean = false
 )

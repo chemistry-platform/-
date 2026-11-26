@@ -1368,6 +1368,16 @@ fun InstantTranslationCard(
                             .testTag("instant_translation_text")
                     )
                 }
+            } else if (result.noMeaningFound) {
+                Text(
+                    text = tr(
+                        "no idiom meaning found",
+                        "لم يُعثر على معنى للتعبير الاصطلاحي"
+                    ),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.testTag("instant_no_idiom_meaning")
+                )
             } else if (result.missingPack) {
                 Text(
                     text = tr(
@@ -1516,6 +1526,18 @@ fun PhraseFallbackBottomSheet(
                         color = colors.onSurfaceVariant
                     )
                 }
+            } else if (sheetData.noMeaningFound) {
+                Text(
+                    text = tr(
+                        "no idiom meaning found",
+                        "لم يُعثر على معنى للتعبير الاصطلاحي"
+                    ),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("phrase_sheet_no_idiom_meaning")
+                )
             } else {
                 val meaning = sheetData.arabicMeaning?.takeIf { it.isNotBlank() }
                 if (meaning != null) {
@@ -1547,6 +1569,17 @@ fun PhraseFallbackBottomSheet(
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.tertiary
                     )
+                }
+
+                if (sheetData.englishMeaning.isNotBlank()) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = sheetData.englishMeaning,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.onSurface,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
 
                 if (sheetData.example.isNotBlank()) {
