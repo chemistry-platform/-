@@ -9,7 +9,9 @@ import com.example.core.UserSettingsPreferences
 import com.example.data.repository.LexiconRepository
 import com.example.domain.model.InstantTranslationResult
 import com.example.domain.model.LanguageDirection
+import com.example.domain.model.LiveSearchPage
 import com.example.domain.model.PhraseSheetData
+import com.example.domain.model.SearchSuggestion
 import com.example.domain.model.SentenceLookupResult
 import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.CancellationException
@@ -24,9 +26,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -43,6 +48,28 @@ class SentenceLookupViewModel(
     val query: StateFlow<String> = _query.asStateFlow()
 
     private val _inlineQuery = MutableStateFlow(initialQuery)
+    val inlineQuery: StateFlow<String> = _inlineQuery.asStateFlow()
+
+    private val _isSearchingInline = MutableStateFlow(false)
+    val isSearchingInline: StateFlow<Boolean> = _isSearchingInline.asStateFlow()
+
+    private val _isLoadingInline = MutableStateFlow(false)
+    val isLoadingInline: StateFlow<Boolean> = _isLoadingInline.asStateFlow()
+
+    private val _inlineSuggestions = MutableStateFlow<List<SearchSuggestion>>(emptyList())
+    val inlineSuggestions: StateFlow<List<SearchSuggestion>> = _inlineSuggestions.asStateFlow()
+
+    private val _hasMoreInlineSuggestions = MutableStateFlow(false)
+    val hasMoreInlineSuggestions: StateFlow<Boolean> = _hasMoreInlineSuggestions.asStateFlow()
+
+    private val _isExpandedAllInline = MutableStateFlow(false)
+    val isExpandedAllInline: StateFlow<Boolean> = _isExpandedAllInline.asStateFlow()
+
+    private val _isLoadingMoreInline = MutableStateFlow(false)
+    val isLoadingMoreInline: StateFlow<Boolean> = _isLoadingMoreInline.asStateFlow()
+
+    private var cachedFullInlineQuery: String = ""
+    private var cachedFullInlineSuggestions: List<SearchSuggestion> = emptyList()
 
     private val _direction = MutableStateFlow(
         if (ArabicTextUtils.containsArabicLetters(initialQuery)) {
@@ -72,24 +99,7 @@ class SentenceLookupViewModel(
     private val _openWordEvent = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val openWordEvent: SharedFlow<String> = _openWordEvent.asSharedFlow()
 
-    val inlineTranslation: StateFlow<InstantTranslationResult?> = _inlineQuery
-        .debounce(300L)
-        .flatMapLatest { raw ->
-            flow {
-                val trimmed = raw.trim()
-                if (trimmed.isEmpty() || trimmed.equals(_query.value.trim(), ignoreCase = true)) {
-                    emit(null)
-                } else {
-                    try {
-                        emit(repository.instantTranslateForSearch(trimmed))
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        emit(null)
-                    }
-                }
-            }
-        }
+    val inlineTranslation: StateFlow<InstantTranslationResult?> = flowOf(null)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000L),
@@ -114,16 +124,150 @@ class SentenceLookupViewModel(
     private var chipTapJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            _inlineQuery
+                .debounce(80L)
+                .flatMapLatest { raw ->
+                    val trimmed = raw.trim()
+                    if (!_isSearchingInline.value || trimmed.isEmpty()) {
+                        _isLoadingInline.value = false
+                        _hasMoreInlineSuggestions.value = false
+                        flowOf(Triple(trimmed, emptyList<SearchSuggestion>(), false))
+                    } else {
+                        _isLoadingInline.value = true
+                        repository.observeLiveSuggestions(
+                            query = trimmed,
+                            limit = QuickTranslateViewModel.INITIAL_PAGE_SIZE
+                        ).onEach {
+                            _isLoadingInline.value = false
+                        }.catch { e ->
+                            if (e is CancellationException) throw e
+                            _isLoadingInline.value = false
+                            emit(LiveSearchPage(emptyList(), hasMore = false))
+                        }.let { sugFlow ->
+                            flow {
+                                sugFlow.collect { page ->
+                                    emit(Triple(trimmed, page.items, page.hasMore))
+                                }
+                            }
+                        }
+                    }
+                }
+                .collect { (activeQuery, items, hasMore) ->
+                    val currentTrimmed = _inlineQuery.value.trim()
+                    if (!_isSearchingInline.value || currentTrimmed.isEmpty() || currentTrimmed != activeQuery) {
+                        return@collect
+                    }
+                    if (_isExpandedAllInline.value &&
+                        cachedFullInlineQuery == currentTrimmed &&
+                        cachedFullInlineSuggestions.isNotEmpty()
+                    ) {
+                        _inlineSuggestions.value = cachedFullInlineSuggestions
+                        _hasMoreInlineSuggestions.value = false
+                    } else {
+                        _inlineSuggestions.value = items
+                        _hasMoreInlineSuggestions.value = hasMore
+                        _isExpandedAllInline.value = false
+                    }
+                    _isLoadingInline.value = false
+                    _isLoadingMoreInline.value = false
+                }
+        }
+
         lookupSentence(initialQuery)
     }
 
     fun onInlineQueryChanged(value: String) {
+        val changed = value != _inlineQuery.value
         _inlineQuery.value = value
+        if (changed) {
+            _isSearchingInline.value = true
+            _inlineSuggestions.value = emptyList()
+            _hasMoreInlineSuggestions.value = false
+            _isExpandedAllInline.value = false
+            _isLoadingMoreInline.value = false
+            cachedFullInlineQuery = ""
+            cachedFullInlineSuggestions = emptyList()
+            if (value.isNotBlank()) {
+                _direction.value = if (ArabicTextUtils.containsArabicLetters(value)) {
+                    LanguageDirection.AR_TO_EN
+                } else {
+                    LanguageDirection.EN_TO_AR
+                }
+            } else {
+                _isLoadingInline.value = false
+            }
+        }
+    }
+
+    fun clearInlineSearch() {
+        _inlineQuery.value = ""
+        _isSearchingInline.value = true
+        _inlineSuggestions.value = emptyList()
+        _hasMoreInlineSuggestions.value = false
+        _isExpandedAllInline.value = false
+        _isLoadingInline.value = false
+        _isLoadingMoreInline.value = false
+        cachedFullInlineQuery = ""
+        cachedFullInlineSuggestions = emptyList()
+    }
+
+    fun expandAllInlineSuggestions() {
+        val trimmed = _inlineQuery.value.trim()
+        if (trimmed.isEmpty() || _isLoadingMoreInline.value) return
+        if (cachedFullInlineQuery == trimmed &&
+            cachedFullInlineSuggestions.size > QuickTranslateViewModel.INITIAL_PAGE_SIZE
+        ) {
+            _isExpandedAllInline.value = true
+            _inlineSuggestions.value = cachedFullInlineSuggestions
+            _hasMoreInlineSuggestions.value = false
+            return
+        }
+        _isLoadingMoreInline.value = true
+        viewModelScope.launch {
+            try {
+                val page = repository.getLiveSuggestionsPaged(
+                    query = trimmed,
+                    offset = 0,
+                    limit = QuickTranslateViewModel.EXPANDED_PAGE_SIZE
+                )
+                if (_inlineQuery.value.trim() == trimmed && _isSearchingInline.value) {
+                    cachedFullInlineQuery = trimmed
+                    cachedFullInlineSuggestions = page.items
+                    _inlineSuggestions.value = page.items
+                    _isExpandedAllInline.value = true
+                    _hasMoreInlineSuggestions.value = false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Ignore
+            } finally {
+                _isLoadingMoreInline.value = false
+            }
+        }
+    }
+
+    fun collapseInlineSuggestions() {
+        if (!_isExpandedAllInline.value) return
+        val current = _inlineSuggestions.value
+        val trimmed = _inlineQuery.value.trim()
+        if (cachedFullInlineQuery != trimmed || cachedFullInlineSuggestions.size < current.size) {
+            cachedFullInlineQuery = trimmed
+            cachedFullInlineSuggestions = current
+        }
+        _inlineSuggestions.value = current.take(QuickTranslateViewModel.INITIAL_PAGE_SIZE)
+        _isExpandedAllInline.value = false
+        _hasMoreInlineSuggestions.value = current.size > QuickTranslateViewModel.INITIAL_PAGE_SIZE
     }
 
     fun lookupSentence(text: String) {
         val cleaned = text.trim()
         if (cleaned.isEmpty()) return
+        _isSearchingInline.value = false
+        _inlineSuggestions.value = emptyList()
+        _hasMoreInlineSuggestions.value = false
+        _isExpandedAllInline.value = false
         _query.value = cleaned
         _inlineQuery.value = cleaned
         _direction.value = if (ArabicTextUtils.containsArabicLetters(cleaned)) {

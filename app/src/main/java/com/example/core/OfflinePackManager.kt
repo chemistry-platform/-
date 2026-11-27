@@ -577,6 +577,9 @@ class OfflinePackManager(
                 "collocations", "phrases", "idioms", "family", "confusables", "synonyms", "antonyms" -> {
                     root.put(name, readStringArray(reader))
                 }
+                "forms" -> {
+                    root.put("forms", readFormsArray(reader))
+                }
                 else -> reader.skipValue()
             }
         }
@@ -886,6 +889,48 @@ class OfflinePackManager(
         while (reader.hasNext()) {
             val v = readStringOrNull(reader)
             if (!v.isNullOrBlank()) array.put(v.trim())
+        }
+        reader.endArray()
+        return array
+    }
+
+    private fun readFormsArray(reader: JsonReader): JSONArray {
+        val array = JSONArray()
+        if (reader.peek() == JsonToken.NULL) {
+            reader.nextNull()
+            return array
+        }
+        reader.beginArray()
+        while (reader.hasNext()) {
+            when (reader.peek()) {
+                JsonToken.BEGIN_OBJECT -> {
+                    reader.beginObject()
+                    var formText = ""
+                    var labelText = ""
+                    while (reader.hasNext()) {
+                        when (reader.nextName()) {
+                            "form", "word" -> formText = readStringOrNull(reader).orEmpty().trim()
+                            "label", "tag" -> labelText = readStringOrNull(reader).orEmpty().trim()
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                    if (formText.isNotEmpty()) {
+                        array.put(
+                            JSONObject().apply {
+                                put("form", formText)
+                                if (labelText.isNotEmpty()) put("label", labelText)
+                            }
+                        )
+                    }
+                }
+                else -> {
+                    val v = readStringOrNull(reader)?.trim().orEmpty()
+                    if (v.isNotEmpty()) {
+                        array.put(JSONObject().apply { put("form", v) })
+                    }
+                }
+            }
         }
         reader.endArray()
         return array

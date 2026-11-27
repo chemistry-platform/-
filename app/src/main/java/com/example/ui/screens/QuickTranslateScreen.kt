@@ -1,8 +1,11 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,8 +15,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -47,7 +50,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -56,32 +58,28 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.core.Accent
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.OfflinePackState
 import com.example.core.tr
 import com.example.data.local.SearchHistoryEntity
-import com.example.domain.model.SearchSuggestion
 import com.example.ui.components.AppIcons
-import com.example.ui.components.CompactWordAudioButtons
 import com.example.ui.components.DirectionToggleChip
+import com.example.ui.components.FullWidthSeeMoreFooter
 import com.example.ui.components.InstantTranslationCard
 import com.example.ui.components.LanguageSwapBar
+import com.example.ui.components.LiveSearchSuggestionRow
 import com.example.ui.components.NoInternetBanner
+import com.example.ui.components.OfflineDictionaryPackBanner
 import com.example.ui.viewmodel.QuickTranslateViewModel
-import kotlinx.coroutines.flow.distinctUntilChanged
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QuickTranslateScreen(
     viewModel: QuickTranslateViewModel,
@@ -97,6 +95,7 @@ fun QuickTranslateScreen(
     val direction by viewModel.direction.collectAsStateWithLifecycle()
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val hasMoreSuggestions by viewModel.hasMoreSuggestions.collectAsStateWithLifecycle()
+    val isExpandedAll by viewModel.isExpandedAll.collectAsStateWithLifecycle()
     val isLoadingMore by viewModel.isLoadingMore.collectAsStateWithLifecycle()
     val instantTranslation by viewModel.instantTranslation.collectAsStateWithLifecycle()
     val isSearchSubmitted by viewModel.isSearchSubmitted.collectAsStateWithLifecycle()
@@ -104,6 +103,8 @@ fun QuickTranslateScreen(
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
+    val vmPackState = viewModel.offlinePackState?.collectAsStateWithLifecycle()?.value
+    val effectivePackState = offlinePackState ?: vmPackState
 
     var isFieldFocused by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -115,19 +116,8 @@ fun QuickTranslateScreen(
         runCatching { focusRequester.requestFocus() }
     }
 
-    LaunchedEffect(listState, hasMoreSuggestions, isLoadingMore, suggestions.size) {
-        snapshotFlow {
-            val layoutInfo = listState.layoutInfo
-            val total = layoutInfo.totalItemsCount
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            total to lastVisible
-        }
-            .distinctUntilChanged()
-            .collect { (total, lastVisible) ->
-                if (hasMoreSuggestions && !isLoadingMore && total > 0 && lastVisible >= total - 5) {
-                    viewModel.loadMoreSuggestions()
-                }
-            }
+    val collapseExpandedList: (() -> Unit)? = remember(isExpandedAll, viewModel) {
+        if (isExpandedAll) ({ viewModel.collapseSuggestions() }) else null
     }
 
     Box(
@@ -135,6 +125,7 @@ fun QuickTranslateScreen(
             .fillMaxSize()
             .background(colors.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .imePadding(),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -279,56 +270,34 @@ fun QuickTranslateScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            if (offlinePackState is OfflinePackState.Downloading) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .testTag("pack_download_banner"),
-                    color = colors.surfaceVariant,
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, colors.outline)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = offlinePackState.statusText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (offlinePackState.indeterminate) {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(3.dp),
-                                color = colors.primary,
-                                trackColor = colors.outline
-                            )
-                        } else {
-                            LinearProgressIndicator(
-                                progress = { offlinePackState.progress.coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(3.dp),
-                                color = colors.primary,
-                                trackColor = colors.outline
-                            )
-                        }
-                    }
-                }
-            }
+            OfflineDictionaryPackBanner(
+                isOnline = isOnline,
+                packState = effectivePackState,
+                onDownloadClick = { viewModel.requestOfflinePackDownload() },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
 
+            val listInteractionSource = remember { MutableInteractionSource() }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .then(
+                        if (collapseExpandedList != null) {
+                            Modifier.combinedClickable(
+                                interactionSource = listInteractionSource,
+                                indication = null,
+                                onClick = {},
+                                onDoubleClick = collapseExpandedList
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
                     .testTag("quick_translate_list"),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 if (!isOnline) {
                     item(key = "offline_banner", contentType = "banner") { NoInternetBanner() }
@@ -344,7 +313,7 @@ fun QuickTranslateScreen(
                             item(key = "instant_translation", contentType = "instant_translation") {
                                 InstantTranslationCard(
                                     result = instant,
-                                    showMachineLabel = true,
+                                    showMachineLabel = false,
                                     audioManager = audioManager,
                                     playingKey = playingKey,
                                     onOpenFull = {
@@ -363,6 +332,7 @@ fun QuickTranslateScreen(
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
                                     .clickable {
                                         if (isSentence) onOpenSentence(trimmedQuery)
                                         else onOpenWord(trimmedQuery)
@@ -405,20 +375,21 @@ fun QuickTranslateScreen(
                         }
                     }
 
-                    // Live prefix suggestions (screenshot-style POS-grouped single-line preview rows, 40/page)
+                    // Live prefix suggestions (single-row word + US/UK + POS meanings)
                     itemsIndexed(
                         items = suggestions,
                         key = { idx, item -> "sug_${idx}_${item.word}" },
                         contentType = { _, _ -> "suggestion_row" }
                     ) { index, item ->
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            SuggestionResultRow(
+                            LiveSearchSuggestionRow(
                                 suggestion = item,
                                 audioManager = audioManager,
-                                onOpenWord = { onOpenWord(item.word) }
+                                onOpenWord = { onOpenWord(item.word) },
+                                onDoubleTapCollapse = collapseExpandedList
                             )
                             if (index < suggestions.lastIndex) {
-                                HorizontalDivider(color = colors.outline.copy(alpha = 0.6f), thickness = 1.dp)
+                                HorizontalDivider(color = colors.outline.copy(alpha = 0.45f), thickness = 1.dp)
                             }
                         }
                     }
@@ -437,6 +408,20 @@ fun QuickTranslateScreen(
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
+                        }
+                    } else if (hasMoreSuggestions || isExpandedAll) {
+                        item(key = "see_more_suggestions_footer", contentType = "see_more_footer") {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FullWidthSeeMoreFooter(
+                                isExpanded = isExpandedAll,
+                                onClick = {
+                                    if (isExpandedAll) viewModel.collapseSuggestions()
+                                    else viewModel.expandAllSuggestions()
+                                },
+                                testTag = "quick_translate_see_more",
+                                onDoubleTapCollapse = collapseExpandedList
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
                     }
                 } else if (isFieldFocused && recentHistory.isNotEmpty()) {
@@ -524,142 +509,6 @@ fun QuickTranslateScreen(
     }
 }
 
-private val POS_SEGMENT_SPLIT_REGEX =
-    Regex("؛\\s+(?=(?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom\\s|phr\\.|prov\\.))")
-
-private val POS_LEADING_TAG_REGEX =
-    Regex("^((?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom|phr\\.|prov\\.)\\s*)(.*)$")
-
-private fun splitPreviewByPos(preview: String): List<String> {
-    if (preview.isBlank()) return emptyList()
-    return preview.split(POS_SEGMENT_SPLIT_REGEX)
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-}
-
-@Composable
-private fun SuggestionResultRow(
-    suggestion: SearchSuggestion,
-    audioManager: AudioPlayerManager,
-    onOpenWord: () -> Unit
-    val colors = MaterialTheme.colorScheme
-    val previewText = remember(suggestion.posPreview, suggestion.summaryDefinition, suggestion.isArabic) {
-        if (suggestion.posPreview.isNotBlank()) {
-            suggestion.posPreview
-        } else if (suggestion.isArabic) {
-            suggestion.summaryDefinition.takeIf { it.any { c -> c in 'a'..'z' || c in 'A'..'Z' } }.orEmpty()
-        } else {
-            suggestion.summaryDefinition.takeIf { ArabicTextUtils.containsArabicLetters(it) }.orEmpty()
-        }
-    }
-    val posLines = remember(previewText) { splitPreviewByPos(previewText) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 52.dp)
-            .clickable(onClick = onOpenWord)
-            .padding(horizontal = 6.dp, vertical = 10.dp)
-            .testTag("suggestion_${suggestion.word}"),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Inline status badge ("local" for offline pack / Room, "on" for network suggestion)
-            Surface(
-                color = if (suggestion.isLocal) colors.primaryContainer else colors.errorContainer,
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text(
-                    text = if (suggestion.isLocal) "local" else "on",
-                    fontSize = 9.sp,
-                    lineHeight = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (suggestion.isLocal) colors.primary else colors.error,
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                )
-            }
-
-            // Headword
-            CompositionLocalProvider(
-                LocalLayoutDirection provides if (suggestion.isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
-            ) {
-                Text(
-                    text = suggestion.word,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                    color = colors.onSurface,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            if (!suggestion.isArabic && !suggestion.isIdiom) {
-                CompactWordAudioButtons(
-                    hasUsAudio = true,
-                    hasUkAudio = true,
-                    onPlayUs = {
-                        audioManager.playHumanPronunciation(
-                            word = suggestion.word,
-                            accent = Accent.US,
-                            audioUrl = suggestion.usAudioUrl,
-                            key = "sug_us_${suggestion.word}"
-                        )
-                    },
-                    onPlayUk = {
-                        audioManager.playHumanPronunciation(
-                            word = suggestion.word,
-                            accent = Accent.UK,
-                            audioUrl = suggestion.ukAudioUrl,
-                            key = "sug_uk_${suggestion.word}"
-                        )
-                    }
-                )
-            }
-        }
-
-        // All meanings written underneath the headword grouped by POS, never truncated to 1 line
-        if (posLines.isNotEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 4.dp, end = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                posLines.forEach { segment ->
-                    val segIsArabic = ArabicTextUtils.containsArabicLetters(segment)
-                    val match = POS_LEADING_TAG_REGEX.find(segment)
-                    val styledText = buildAnnotatedString {
-                        if (match != null) {
-                            withStyle(
-                                SpanStyle(
-                                    fontWeight = FontWeight.Bold,
-                                    color = colors.primary
-                                )
-                            ) {
-                                append(match.groupValues[1])
-                            }
-                            append(match.groupValues[2])
-                        } else {
-                            append(segment)
-                        }
-                    }
-                    CompositionLocalProvider(
-                        LocalLayoutDirection provides if (segIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
-                    ) {
-                        Text(
-                            text = styledText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.onSurfaceVariant,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun HistoryRow(

@@ -9,6 +9,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -230,6 +232,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             if (currentBottomTab != null) {
@@ -258,7 +261,9 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
         NavHost(
             navController = navController,
             startDestination = HomeRoute,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
         ) {
             composable<HomeRoute> {
                 LaunchedEffect(Unit) {
@@ -364,7 +369,8 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     factory = QuickTranslateViewModel.Factory(
                         repository = appContainer.repository,
                         initialQuery = args.initialQuery,
-                        initialDirection = direction
+                        initialDirection = direction,
+                        offlinePackManager = appContainer.offlinePackManager
                     )
                 )
                 QuickTranslateScreen(
@@ -444,7 +450,8 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                         settingsPreferences = appContainer.userSettingsPreferences,
                         initialQuery = args.query,
                         fallbackBaseWord = args.fallbackBaseWord,
-                        initialHighlightChip = args.highlightChip
+                        initialHighlightChip = args.highlightChip,
+                        offlinePackManager = appContainer.offlinePackManager
                     )
                 )
                 WordDetailScreen(

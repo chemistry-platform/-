@@ -406,37 +406,6 @@ fun MoreScreen(
 
                         HorizontalDivider(color = colors.outline)
 
-                        // Show "Machine translated" label toggle (ON by default)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text(
-                                    text = tr("Show \"Machine translated\" Badge", "إظهار وسم \"ترجمة آلية\""),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = colors.onSurface
-                                )
-                                Text(
-                                    text = tr(
-                                        "Mark machine-generated translations with a small inline tag",
-                                        "تمييز الترجمات المولّدة آلياً بوسم صغير بجانبها"
-                                    ),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = showMachineTranslationLabel,
-                                onCheckedChange = { viewModel.setShowMachineTranslationLabel(it) },
-                                colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
-                                modifier = Modifier.testTag("setting_show_machine_label_switch")
-                            )
-                        }
-
-                        HorizontalDivider(color = colors.outline)
-
                         // Literal word-by-word translation toggle (OFF = contextual by default)
                         Row(
                             modifier = Modifier.fillMaxWidth(),

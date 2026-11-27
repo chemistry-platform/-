@@ -746,7 +746,6 @@ private fun TranslatedPageCard(
                     if (page.usedOcr) {
                         UsageLabelChip(text = "OCR")
                     }
-                    UsageLabelChip(text = tr("Machine translated", "ترجمة آلية"))
                 }
             }
 

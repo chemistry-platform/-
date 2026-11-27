@@ -71,11 +71,12 @@ object LocalizedLabels {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun phraseBadge(category: String, isIdiom: Boolean, language: AppLanguage): String {
         return when {
-            category == "COMPOUND" -> tr(language, "Compound Expression", "تعبير مركب")
-            isIdiom || category == "IDIOM" -> tr(language, "Idiom", "تعبير اصطلاحي")
-            else -> tr(language, "Phrasal Verb", "فعل مركب")
+            category == "COMPOUND" -> "Compound noun"
+            isIdiom || category == "IDIOM" -> "Idiom"
+            else -> "Phrasal verb"
         }
     }
 

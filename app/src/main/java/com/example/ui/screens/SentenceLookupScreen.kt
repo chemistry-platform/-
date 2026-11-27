@@ -797,7 +797,7 @@ fun SentenceLookupScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
-                                    text = tr("More Examples (Tatoeba)", "أمثلة إضافية (ترجمة بشرية من Tatoeba)"),
+                                    text = tr("More Examples", "أمثلة إضافية"),
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.primary
                                 )
@@ -908,11 +908,6 @@ fun SentenceLookupScreen(
                                         HorizontalDivider(color = colors.outline, thickness = 1.dp)
                                     }
                                 }
-                                Text(
-                                    text = tr("Source: Tatoeba • CC BY 2.0 FR", "المصدر: Tatoeba • CC BY 2.0 FR"),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.onSurfaceVariant
-                                )
                             }
                         }
                     }

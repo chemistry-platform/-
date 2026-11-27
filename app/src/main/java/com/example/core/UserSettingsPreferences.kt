@@ -48,7 +48,7 @@ class UserSettingsPreferences(context: Context) {
     val showArabicTranslations: StateFlow<Boolean> = _showArabicTranslations.asStateFlow()
 
     private val _showMachineTranslationLabel = MutableStateFlow(
-        prefs.getBoolean(KEY_SHOW_MACHINE_LABEL, true)
+        false
     )
     val showMachineTranslationLabel: StateFlow<Boolean> = _showMachineTranslationLabel.asStateFlow()
 

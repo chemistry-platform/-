@@ -60,6 +60,14 @@ data class WordFamilyItem(
 
 @Immutable
 @Serializable
+data class WordFormItem(
+    val form: String,
+    val label: String = "",
+    val labelArabic: String = ""
+)
+
+@Immutable
+@Serializable
 data class ConfusableCandidate(
     val word: String,
     val labels: List<String>
@@ -181,6 +189,8 @@ data class WordEntry(
     val usAudioUrl: String? = null,
     val ukAudioUrl: String? = null,
     val tags: List<String> = emptyList(),
+    val frequencyRank: Int = Int.MAX_VALUE,
+    val wordForms: List<WordFormItem> = emptyList(),
     val machineTranslations: List<String> = emptyList(),
     val missingTranslationPack: Boolean = false,
     val posGroups: List<PosSenseGroup> = emptyList(),

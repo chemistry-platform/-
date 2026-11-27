@@ -19,11 +19,17 @@ import com.example.core.OfflinePackManager
 import com.example.core.TranslationManager
 import com.example.core.UserSettingsPreferences
 import com.example.data.local.AppDatabase
+import androidx.compose.ui.test.onAllNodesWithText
 import com.example.data.remote.DatamuseApi
 import com.example.data.remote.FreeDictionaryApi
+import com.example.data.remote.MyMemoryApi
 import com.example.data.remote.TatoebaApi
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody
+import okhttp3.ResponseBody.Companion.toResponseBody
 import com.example.data.remote.WiktionaryApi
 import com.example.data.repository.LexiconRepository
+import com.example.data.repository.WiktionaryHtmlParser
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.LanguageDirection
 import com.example.ui.screens.QuickTranslateScreen
@@ -39,6 +45,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -223,6 +230,10 @@ class DictionaryPackAndSearchTest {
               "word": "run",
               "lang": "en",
               "rank": 50,
+              "forms": [
+                {"form": "run", "label": "pa. pple."},
+                {"form": "ran", "label": "pa. t."}
+              ],
               "preview": "v. يَجْرِي؛ يَرْكُضُ؛ يُدِيرُ؛ يَتَحَكَّمُ؛ يَتَدَفَّقُ؛ n. جَرْي؛ مَسَار",
               "senses": [
                 {"pos": "verb", "def": "To move rapidly on foot.", "ar": "يَجْرِي؛ يَرْكُضُ؛ يُدِيرُ؛ يَتَحَكَّمُ؛ يَتَدَفَّقُ"},
@@ -541,5 +552,95 @@ class DictionaryPackAndSearchTest {
         assertEquals(0, composeRule.onAllNodesWithTag("instant_translation_card").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithTag("suggestion_concern").fetchSemanticsNodes().size)
         composeRule.onNodeWithTag("quick_translate_input").assertIsFocused()
+
+        // Confirm forbidden labels never appear in UI
+        assertEquals(0, composeRule.onAllNodesWithText("ترجمة آلية", substring = true).fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Machine translated", substring = true).fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("Tatoeba", substring = true).fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun wordFormsAndFrequencyRank_parsedFromOfflinePack() = runBlocking {
+        packManager.importPackFromJsonStream(ByteArrayInputStream(sampleV2PackJson().toByteArray()))
+        val state = repository.observeWordEntry("run")
+            .first { it is WordLoadState.Success && !it.isUpdating } as WordLoadState.Success
+        val entry = state.entry
+        assertEquals(50, entry.frequencyRank)
+        assertTrue(entry.wordForms.any { it.form == "run" && it.label == "pa. pple." })
+        assertTrue(entry.wordForms.any { it.form == "ran" && it.label == "pa. t." })
+    }
+
+    @Test
+    fun wiktionaryParser_extractsHeadwordFormsAndArabicTranslations() {
+        val sampleHtml = """
+            <p><strong class="Latn headword" lang="en">run</strong> (<i>third-person singular simple present</i> <b class="Latn form-of" lang="en"><a href="/wiki/runs">runs</a></b>, <i>simple past</i> <b class="Latn form-of" lang="en"><a href="/wiki/ran">ran</a></b>, <i>past participle</i> <b class="Latn form-of" lang="en"><a href="/wiki/run">run</a></b>)</p>
+            <div class="NavFrame"><div class="NavHead">move swiftly</div><div class="NavContent"><ul><li>Arabic: <span class="Arab" lang="ar">يَجْرِي</span>, <span class="Arab" lang="ar">يَرْكُضُ</span>, <span class="Arab" lang="ar">يُدِيرُ</span></li></ul></div></div>
+        """.trimIndent()
+        val forms = WiktionaryHtmlParser.parseEnglishHeadwordForms(sampleHtml, "run")
+        assertTrue(forms.any { it.form == "ran" && it.label == "pa. t." })
+        val glosses = WiktionaryHtmlParser.parseEnglishTranslationsHtml(sampleHtml)
+        assertTrue(glosses.isNotEmpty())
+        val allAr = glosses.flatMap { it.arabicTerms }
+        assertTrue("يَجْرِي" in allAr)
+        assertTrue("يَرْكُضُ" in allAr)
+        assertTrue("يُدِيرُ" in allAr)
+    }
+
+    @Test
+    fun onlineMyMemoryApi_translatesWithoutMlKitAndCachesInRoom() = runBlocking {
+        val okHttp = OkHttpClient.Builder().build()
+        val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+        val offlineRetrofit = Retrofit.Builder()
+            .baseUrl("http://127.0.0.1:1/")
+            .client(okHttp)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+        val offlineScalarRetrofit = Retrofit.Builder()
+            .baseUrl("http://127.0.0.1:1/")
+            .client(okHttp)
+            .build()
+        val fakeMyMemory = object : MyMemoryApi {
+            override suspend fun translate(query: String, langPair: String): ResponseBody {
+                return """{"responseData":{"translatedText":"المَعْنَى العَرَبِي"},"responseStatus":200}"""
+                    .toResponseBody("application/json".toMediaType())
+            }
+        }
+        val settings = UserSettingsPreferences(context)
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNet = cm.activeNetwork
+        if (activeNet != null) {
+            val nc = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+            org.robolectric.Shadows.shadowOf(nc)
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            org.robolectric.Shadows.shadowOf(cm).setNetworkCapabilities(activeNet, nc)
+        }
+        val networkMonitor = NetworkMonitor(context)
+        assertTrue("Expected NetworkMonitor to report online in test", networkMonitor.isOnline())
+        val translationManager = TranslationManager(context, networkMonitor, settings)
+        val onlineRepo = LexiconRepository(
+            dao = db.lexiconDao(),
+            dictionaryApi = offlineRetrofit.create(FreeDictionaryApi::class.java),
+            datamuseApi = offlineRetrofit.create(DatamuseApi::class.java),
+            wiktionaryApi = offlineScalarRetrofit.create(WiktionaryApi::class.java),
+            tatoebaApi = offlineScalarRetrofit.create(TatoebaApi::class.java),
+            translationManager = translationManager,
+            audioPlayerManager = audioManager,
+            networkMonitor = networkMonitor,
+            myMemoryApi = fakeMyMemory
+        )
+        val sentence = "I run quickly to work every morning."
+        val result = onlineRepo.instantTranslateForSearch(sentence)
+        assertEquals("المَعْنَى العَرَبِي", result.translation)
+        assertFalse(result.missingPack)
+
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(sentence.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+            .take(32)
+        val cached = db.lexiconDao().getTranslationCacheBatch(
+            listOf("whole|en|ar|$digest")
+        )
+        assertEquals(1, cached.size)
+        assertEquals("المَعْنَى العَرَبِي", cached.first().translatedText)
     }
 }

@@ -485,6 +485,34 @@ def process_kaikki_english(
             if not parsed_senses:
                 continue
 
+            # Ensure remaining unmatched Arabic translations from Wiktionary translation tables are preserved
+            if all_tr_flat and parsed_senses:
+                already_ar = set()
+                for ps in parsed_senses:
+                    if ps.get("ar"):
+                        for part in ps["ar"].split("؛"):
+                            already_ar.add(part.strip())
+                extra_ar = [w for w in all_tr_flat if w not in already_ar]
+                if extra_ar:
+                    cur = parsed_senses[0].get("ar", "")
+                    merged_ar = (cur.split("؛ ") if cur else []) + extra_ar[:100]
+                    parsed_senses[0]["ar"] = "؛ ".join(x for x in merged_ar if x)
+                    if not first_ar_meaning:
+                        first_ar_meaning = parsed_senses[0]["ar"]
+                    for aw in extra_ar[:100]:
+                        norm_ar = normalize_arabic_key(aw)
+                        if norm_ar:
+                            bucket = reverse_ar[(norm_ar, aw)]
+                            if len(bucket) < 100:
+                                rank_val = freq_ranks.get(lower, 999999)
+                                bucket[lower] = {
+                                    "en": lower,
+                                    "pos": pos,
+                                    "def": parsed_senses[0]["def"][:140],
+                                    "rank": rank_val,
+                                    "src": "wiktionary",
+                                }
+
             rank = freq_ranks.get(lower, 999999)
 
             # Collect multi-word idioms / phrasal verbs / collocations
@@ -519,9 +547,34 @@ def process_kaikki_english(
                     parsed_senses[0]["examples"] = [tatoeba_examples[lower][0][0]]
 
                 related_forms = []
-                for frm in (obj.get("forms") or [])[:6]:
+                structured_forms = []
+                seen_form_keys = set()
+                for frm in (obj.get("forms") or [])[:16]:
                     fw = (frm.get("form") or "").strip()
-                    if fw and fw.lower() != lower and len(fw) <= 40 and fw not in related_forms:
+                    if not fw or len(fw) > 40:
+                        continue
+                    ftags = {str(t).lower() for t in (frm.get("tags") or [])}
+                    form_label = ""
+                    if "past" in ftags and "participle" in ftags:
+                        form_label = "pa. pple."
+                    elif "past" in ftags:
+                        form_label = "pa. t."
+                    elif "third-person" in ftags and "singular" in ftags:
+                        form_label = "3rd sg."
+                    elif "present" in ftags and "participle" in ftags:
+                        form_label = "pres. pple."
+                    elif "plural" in ftags:
+                        form_label = "pl."
+                    elif "comparative" in ftags:
+                        form_label = "comp."
+                    elif "superlative" in ftags:
+                        form_label = "sup."
+                    if form_label and (fw.lower() != lower or form_label == "pa. pple."):
+                        fk = f"{fw.lower()}|{form_label}"
+                        if fk not in seen_form_keys and len(structured_forms) < 10:
+                            seen_form_keys.add(fk)
+                            structured_forms.append({"form": fw, "label": form_label})
+                    if fw.lower() != lower and fw not in related_forms:
                         related_forms.append(fw)
                 for dr in (obj.get("derived") or [])[:6]:
                     dw = (dr.get("word") or "").strip()
@@ -542,12 +595,14 @@ def process_kaikki_english(
                         w_entry["ukIpa"] = uk_ipa
                     if entry_tags:
                         w_entry["tags"] = entry_tags
+                    if structured_forms:
+                        w_entry["forms"] = structured_forms
                     if related_forms:
                         w_entry["family"] = related_forms[:6]
                     if word_synonyms:
-                        w_entry["synonyms"] = word_synonyms[:8]
+                        w_entry["synonyms"] = word_synonyms[:25]
                     if word_antonyms:
-                        w_entry["antonyms"] = word_antonyms[:8]
+                        w_entry["antonyms"] = word_antonyms[:25]
                     words_map[lower] = w_entry
                 else:
                     if us_ipa and "phonetic" not in w_entry:
@@ -556,6 +611,14 @@ def process_kaikki_english(
                         w_entry["ukIpa"] = uk_ipa
                     if rank < w_entry.get("rank", 999999):
                         w_entry["rank"] = rank
+                    if structured_forms:
+                        cur_forms = w_entry.setdefault("forms", [])
+                        cur_f_keys = {f"{x.get('form', '').lower()}|{x.get('label', '')}" for x in cur_forms}
+                        for sf in structured_forms:
+                            sfk = f"{sf['form'].lower()}|{sf['label']}"
+                            if sfk not in cur_f_keys and len(cur_forms) < 10:
+                                cur_f_keys.add(sfk)
+                                cur_forms.append(sf)
                     if related_forms:
                         cur_fam = w_entry.setdefault("family", [])
                         for rf in related_forms:
@@ -564,12 +627,12 @@ def process_kaikki_english(
                     if word_synonyms:
                         cur_syn = w_entry.setdefault("synonyms", [])
                         for ws in word_synonyms:
-                            if ws not in cur_syn and len(cur_syn) < 8:
+                            if ws not in cur_syn and len(cur_syn) < 25:
                                 cur_syn.append(ws)
                     if word_antonyms:
                         cur_ant = w_entry.setdefault("antonyms", [])
                         for wa in word_antonyms:
-                            if wa not in cur_ant and len(cur_ant) < 8:
+                            if wa not in cur_ant and len(cur_ant) < 25:
                                 cur_ant.append(wa)
 
                 for ps in parsed_senses:

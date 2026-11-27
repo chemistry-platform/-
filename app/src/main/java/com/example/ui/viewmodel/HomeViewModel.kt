@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.stateIn
 
 class HomeViewModel(
     repository: LexiconRepository,
-    offlinePackManager: OfflinePackManager? = null
+    private val offlinePackManager: OfflinePackManager? = null
 ) : ViewModel() {
 
     private val _languageDirection = MutableStateFlow(LanguageDirection.EN_TO_AR)
@@ -35,6 +35,10 @@ class HomeViewModel(
             LanguageDirection.EN_TO_AR -> LanguageDirection.AR_TO_EN
             LanguageDirection.AR_TO_EN -> LanguageDirection.EN_TO_AR
         }
+    }
+
+    fun requestOfflinePackDownload() {
+        offlinePackManager?.startDownload()
     }
 
     class Factory(

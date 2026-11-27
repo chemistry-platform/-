@@ -11,6 +11,7 @@ import com.example.core.UserSettingsPreferences
 import com.example.data.local.AppDatabase
 import com.example.data.remote.DatamuseApi
 import com.example.data.remote.FreeDictionaryApi
+import com.example.data.remote.MyMemoryApi
 import com.example.data.remote.TatoebaApi
 import com.example.data.remote.WikimediaCommonsApi
 import com.example.data.remote.WiktionaryApi
@@ -90,6 +91,14 @@ class AppContainer(context: Context) {
             .create(WikimediaCommonsApi::class.java)
     }
 
+    private val myMemoryApi: MyMemoryApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://api.mymemory.translated.net/")
+            .client(okHttpClient)
+            .build()
+            .create(MyMemoryApi::class.java)
+    }
+
     private val database: AppDatabase by lazy {
         AppDatabase.getInstance(appContext)
     }
@@ -156,7 +165,8 @@ class AppContainer(context: Context) {
             wikimediaCommonsApi = wikimediaCommonsApi,
             translationManager = translationManager,
             audioPlayerManager = audioPlayerManager,
-            networkMonitor = networkMonitor
+            networkMonitor = networkMonitor,
+            myMemoryApi = myMemoryApi
         )
     }
 

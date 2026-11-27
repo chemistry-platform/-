@@ -167,9 +167,20 @@ class AudioPlayerManager(
                     existingCache
                 } else if (normalizedUrl != null) {
                     val downloadTarget = cacheFileFor(cleaned, accent, normalizedUrl)
-                    withContext(Dispatchers.IO) {
-                        downloadToCache(normalizedUrl, downloadTarget)
+                    val fastDownload = withTimeoutOrNull(650L) {
+                        withContext(Dispatchers.IO) {
+                            downloadToCache(normalizedUrl, downloadTarget)
+                        }
                     }
+                    if (fastDownload == null) {
+                        // Cache in background for instant replay next time without delaying playback
+                        prefetchWordAudio(
+                            word = cleaned,
+                            usAudioUrl = if (accent == Accent.US) normalizedUrl else null,
+                            ukAudioUrl = if (accent == Accent.UK) normalizedUrl else null
+                        )
+                    }
+                    fastDownload
                 } else {
                     null
                 }
@@ -250,11 +261,13 @@ class AudioPlayerManager(
                 val normalizedUrl = normalizeAudioUrl(audioUrl)
                 if (normalizedUrl != null) {
                     val sentenceFile = sentenceCacheFileFor(normalizedUrl)
-                    val fileToPlay = withContext(Dispatchers.IO) {
-                        if (sentenceFile.exists() && sentenceFile.length() > 0L) {
-                            sentenceFile
-                        } else {
-                            downloadToCache(normalizedUrl, sentenceFile)
+                    val fileToPlay = withTimeoutOrNull(650L) {
+                        withContext(Dispatchers.IO) {
+                            if (sentenceFile.exists() && sentenceFile.length() > 0L) {
+                                sentenceFile
+                            } else {
+                                downloadToCache(normalizedUrl, sentenceFile)
+                            }
                         }
                     }
                     if (fileToPlay != null && fileToPlay.exists() && fileToPlay.length() > 0L) {

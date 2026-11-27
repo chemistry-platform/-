@@ -3,6 +3,7 @@ package com.example.data.repository
 import com.example.core.ArabicTextUtils
 import com.example.domain.model.SenseItem
 import com.example.domain.model.SenseSource
+import com.example.domain.model.WordFormItem
 import org.json.JSONObject
 import java.util.Locale
 
@@ -20,7 +21,8 @@ data class WiktionaryEnglishSectionData(
     val synonyms: List<String> = emptyList(),
     val antonyms: List<String> = emptyList(),
     val derivedWords: List<String> = emptyList(),
-    val relatedTerms: List<String> = emptyList()
+    val relatedTerms: List<String> = emptyList(),
+    val wordForms: List<WordFormItem> = emptyList()
 )
 
 data class WiktionaryArabicPageData(
@@ -186,6 +188,69 @@ object WiktionaryHtmlParser {
         return out.toList()
     }
 
+    private val HEADWORD_LINE_REGEX = Regex(
+        "<span[^>]*class=\"[^\"]*headword-line[^\"]*\"[^>]*>(.*?)</span>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val FORM_SPAN_PAIR_REGEX = Regex(
+        "<i[^>]*>([^<]+)</i>\\s*(?:<span[^>]*>)?\\s*<(?:b|strong|a)[^>]*class=\"[^\"]*form-of[^\"]*\"[^>]*>(?:<a[^>]*>)?([^<]+)(?:</a>)?</(?:b|strong|a)>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val FORM_PLAIN_PAIR_REGEX = Regex(
+        "<i[^>]*>([^<]+)</i>\\s*<b[^>]*>(?:<a[^>]*>)?([^<]+)(?:</a>)?</b>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    /**
+     * Parses Wiktionary `<span class="headword-line">` inflections (e.g., `ran pa. t.`, `run pa. pple.`).
+     */
+    fun parseEnglishHeadwordForms(sectionHtml: String, baseWord: String): List<WordFormItem> {
+        if (sectionHtml.isBlank()) return emptyList()
+        val seen = LinkedHashMap<String, WordFormItem>()
+        val baseLower = baseWord.trim().lowercase(Locale.US)
+
+        fun mapFormLabel(rawLabel: String): Pair<String, String>? {
+            val l = rawLabel.lowercase(Locale.US)
+            return when {
+                "past participle" in l -> "pa. pple." to "اسم المفعول"
+                "simple past" in l || "past tense" in l -> "pa. t." to "الماضي"
+                "third-person singular" in l -> "3rd sg." to "المضارع المفرد"
+                "present participle" in l -> "pres. pple." to "اسم الفاعل"
+                "plural" in l -> "pl." to "الجمع"
+                "comparative" in l -> "comp." to "المقارنة"
+                "superlative" in l -> "sup." to "التفضيل"
+                else -> null
+            }
+        }
+
+        val lines = HEADWORD_LINE_REGEX.findAll(sectionHtml).map { it.groupValues[1] }.ifEmpty {
+            sequenceOf(sectionHtml)
+        }
+        for (lineHtml in lines) {
+            for (regex in listOf(FORM_SPAN_PAIR_REGEX, FORM_PLAIN_PAIR_REGEX)) {
+                regex.findAll(lineHtml).forEach { m ->
+                    val rawLabel = stripTagsClean(m.groupValues[1])
+                    val mapped = mapFormLabel(rawLabel) ?: return@forEach
+                    val formWord = stripTagsClean(m.groupValues[2])
+                        .trim(',', ';', '(', ')', ' ')
+                    if (formWord.isBlank() || formWord.length > 40 || ArabicTextUtils.containsArabicLetters(formWord)) {
+                        return@forEach
+                    }
+                    // Include past participle even if identical to base (e.g. "run pa. pple.")
+                    val key = "${formWord.lowercase(Locale.US)}|${mapped.first}"
+                    if (!seen.containsKey(key) && (formWord.lowercase(Locale.US) != baseLower || mapped.first == "pa. pple.")) {
+                        seen[key] = WordFormItem(
+                            form = formWord,
+                            label = mapped.first,
+                            labelArabic = mapped.second
+                        )
+                    }
+                }
+            }
+        }
+        return seen.values.toList().take(12)
+    }
+
     /**
      * Parses the Arabic language block (`id="Arabic"`) from an English Wiktionary page HTML.
      * Extracts ALL vocalized headwords (e.g., "مُرّ" & "مَرَّ"), POS senses, examples,
@@ -343,7 +408,7 @@ object WiktionaryHtmlParser {
                 bestTerms = gloss.arabicTerms
             }
         }
-        return bestTerms?.take(4)?.joinToString("؛ ")
+        return bestTerms?.take(25)?.joinToString("؛ ")
     }
 
     private fun extractLanguageBlock(html: String, langName: String): String? {

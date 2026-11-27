@@ -70,7 +70,7 @@ class Section12And19Test {
         assertEquals(1.0f, prefs.audioSpeed.value, 0.001f)
         assertEquals(Accent.US, prefs.sentenceAccent.value)
         assertTrue(prefs.showArabicTranslations.value)
-        assertTrue(prefs.showMachineTranslationLabel.value)
+        assertFalse(prefs.showMachineTranslationLabel.value)
         assertFalse(prefs.literalTranslation.value)
 
         prefs.setAudioSpeed(1.75f)

@@ -282,10 +282,10 @@ class LinguisticUpgradeTest {
         assertEquals("Noun", LinguisticRanker.formatPosBadgeLabel("noun", "اسم", AppLanguage.ENGLISH))
         assertEquals("Adjective", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة", AppLanguage.ENGLISH))
         assertEquals("Adverb", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف", AppLanguage.ENGLISH))
-        assertEquals("فعل", LinguisticRanker.formatPosBadgeLabel("verb", "فعل", AppLanguage.ARABIC))
-        assertEquals("اسم", LinguisticRanker.formatPosBadgeLabel("noun", "اسم", AppLanguage.ARABIC))
-        assertEquals("صفة", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة", AppLanguage.ARABIC))
-        assertEquals("ظرف", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف", AppLanguage.ARABIC))
+        assertEquals("Verb", LinguisticRanker.formatPosBadgeLabel("verb", "فعل", AppLanguage.ARABIC))
+        assertEquals("Noun", LinguisticRanker.formatPosBadgeLabel("noun", "اسم", AppLanguage.ARABIC))
+        assertEquals("Adjective", LinguisticRanker.formatPosBadgeLabel("adjective", "صفة", AppLanguage.ARABIC))
+        assertEquals("Adverb", LinguisticRanker.formatPosBadgeLabel("adverb", "ظرف", AppLanguage.ARABIC))
 
         val enEntry = WordEntry(
             word = "run",
@@ -354,7 +354,7 @@ class LinguisticUpgradeTest {
         assertEquals(listOf("جَرْيٌ", "سِبَاقٌ", "شَوْطٌ"), enSummaries[1].meanings)
 
         val enSummariesAr = LinguisticRanker.extractPosHeadwordMeanings(enEntry, language = AppLanguage.ARABIC)
-        assertEquals("فعل", enSummariesAr[0].posBadgeLabel)
+        assertEquals("Verb", enSummariesAr[0].posBadgeLabel)
 
         val arEntry = WordEntry(
             word = "مر",

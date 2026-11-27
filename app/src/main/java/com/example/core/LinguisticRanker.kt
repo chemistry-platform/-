@@ -222,8 +222,8 @@ object LinguisticRanker {
         val mergedExTrans = primary.exampleTranslations + secondary.exampleTranslations
         val mergedExIsMachine = primary.exampleIsMachine + secondary.exampleIsMachine
         val mergedExAudio = primary.exampleAudioUrls + secondary.exampleAudioUrls
-        val mergedSyns = (primary.synonyms + secondary.synonyms).distinct().take(10)
-        val mergedAnts = (primary.antonyms + secondary.antonyms).distinct().take(10)
+        val mergedSyns = (primary.synonyms + secondary.synonyms).distinct().take(50)
+        val mergedAnts = (primary.antonyms + secondary.antonyms).distinct().take(50)
         val mergedLabels = (primary.usageLabels + secondary.usageLabels).distinct()
 
         return primary.copy(
@@ -352,6 +352,7 @@ object LinguisticRanker {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun formatPosBadgeLabel(
         partOfSpeech: String,
         partOfSpeechArabic: String,
@@ -371,12 +372,15 @@ object LinguisticRanker {
             "أداة" -> "particle"
             "عدد" -> "numeral"
             "تعبير اصطلاحي" -> "idiom"
+            "تعبير مركب", "صفة مركبة" -> "compound adjective"
+            "اسم مركب" -> "compound noun"
+            "فعل مركب" -> "phrasal verb"
             "عبارة" -> "phrase"
             "مَثَل", "مثل" -> "proverb"
             "كلمة" -> "word"
             else -> rawKey
         }
-        val englishLabel = when (posKey) {
+        return when (posKey) {
             "verb" -> "Verb"
             "noun" -> "Noun"
             "adjective" -> "Adjective"
@@ -388,31 +392,15 @@ object LinguisticRanker {
             "determiner" -> "Determiner"
             "particle" -> "Particle"
             "numeral" -> "Numeral"
+            "compound adjective", "compound_adjective" -> "Compound adjective"
+            "compound noun", "compound_noun" -> "Compound noun"
+            "phrasal verb", "phrasal_verb" -> "Phrasal verb"
             "idiom" -> "Idiom"
             "phrase" -> "Phrase"
             "proverb" -> "Proverb"
             "word" -> "Word"
             else -> posKey.replaceFirstChar { it.titlecase(Locale.US) }.ifBlank { "Word" }
         }
-        val arabicLabel = when (posKey) {
-            "verb" -> "فعل"
-            "noun" -> "اسم"
-            "adjective" -> "صفة"
-            "adverb" -> "ظرف"
-            "preposition" -> "حرف جر"
-            "pronoun" -> "ضمير"
-            "conjunction" -> "أداة ربط"
-            "interjection", "exclamation" -> "صيغة تعجب"
-            "determiner" -> "محدد"
-            "particle" -> "أداة"
-            "numeral" -> "عدد"
-            "idiom" -> "تعبير اصطلاحي"
-            "phrase" -> "عبارة"
-            "proverb" -> "مَثَل"
-            "word" -> "كلمة"
-            else -> partOfSpeechArabic.trim().ifBlank { "كلمة" }
-        }
-        return if (language == AppLanguage.ARABIC) arabicLabel else englishLabel
     }
 
     /**
@@ -624,6 +612,52 @@ object LinguisticRanker {
         }
         val fallback = entry.posGroups.firstOrNull()?.senses?.firstOrNull()?.definition.orEmpty()
         return if (maxLength < Int.MAX_VALUE) fallback.take(maxLength) else fallback
+    }
+
+    /**
+     * Caps a POS-grouped preview string to at most [maxMeanings] glosses separated by "؛",
+     * appending "..." when truncated.
+     */
+    fun capPosPreviewMeanings(preview: String, maxMeanings: Int = 6): String {
+        val trimmed = preview.trim()
+        if (trimmed.isEmpty() || maxMeanings <= 0) return ""
+        val splitRegex = Regex("؛\\s+(?=(?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom\\s|phr\\.|prov\\.))")
+        val leadTagRegex = Regex("^((?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom|phr\\.|prov\\.)\\s*)(.*)$")
+
+        val segments = trimmed.split(splitRegex).map { it.trim() }.filter { it.isNotEmpty() }
+        val resultSegments = ArrayList<String>(segments.size)
+        var usedCount = 0
+        var wasTruncated = false
+
+        for (seg in segments) {
+            if (usedCount >= maxMeanings) {
+                wasTruncated = true
+                break
+            }
+            val match = leadTagRegex.find(seg)
+            val tag = match?.groupValues?.get(1)?.trim().orEmpty()
+            val body = match?.groupValues?.get(2)?.trim() ?: seg
+            val glosses = body.split('؛', ';').map { it.trim() }.filter { it.isNotEmpty() }
+            if (glosses.isEmpty()) continue
+
+            val remainingBudget = maxMeanings - usedCount
+            val kept = if (glosses.size > remainingBudget) {
+                wasTruncated = true
+                glosses.take(remainingBudget)
+            } else {
+                glosses
+            }
+            usedCount += kept.size
+            val joined = kept.joinToString("؛ ")
+            resultSegments.add(if (tag.isNotEmpty()) "$tag $joined" else joined)
+        }
+
+        val combined = resultSegments.joinToString("؛ ")
+        return if (wasTruncated && combined.isNotEmpty() && !combined.endsWith("...")) {
+            "$combined..."
+        } else {
+            combined
+        }
     }
 
     private fun mergeDistinctArabicMeanings(first: String, second: String): String {

@@ -2,17 +2,17 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Dark Palette
-val DarkCanvas = Color(0xFF0E0E10)
-val DarkSurface = Color(0xFF1E2024)
-val DarkSurfaceElevated = Color(0xFF25282D)
-val DarkOutline = Color(0xFF2A2D33)
-val DarkTextPrimary = Color(0xFFECECEC)
-val DarkTextMuted = Color(0xFFA7ABB2)
+// Dark Palette (near-black clean high-contrast palette)
+val DarkCanvas = Color(0xFF060608)
+val DarkSurface = Color(0xFF101114)
+val DarkSurfaceElevated = Color(0xFF17191E)
+val DarkOutline = Color(0xFF22252D)
+val DarkTextPrimary = Color(0xFFF1F2F4)
+val DarkTextMuted = Color(0xFFA2A7B0)
 val DarkRedAccent = Color(0xFFF0564A)
-val DarkRedContainer = Color(0xFF421916)
+val DarkRedContainer = Color(0xFF3E1714)
 val DarkBlueLink = Color(0xFF6AA6FF)
-val DarkBlueContainer = Color(0xFF152947)
+val DarkBlueContainer = Color(0xFF142744)
 val DarkGoldRegister = Color(0xFFE8B04B)
 val DarkGoldContainer = Color(0xFF332710)
 

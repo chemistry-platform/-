@@ -4,6 +4,7 @@ import android.os.Process
 import android.util.Log
 import android.util.LruCache
 import com.example.core.Accent
+import com.example.core.AppLanguage
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.ContextualTranslationAnalyzer
@@ -23,6 +24,7 @@ import com.example.data.remote.DatamuseApi
 import com.example.data.remote.DatamuseWordDto
 import com.example.data.remote.DictionaryEntryDto
 import com.example.data.remote.FreeDictionaryApi
+import com.example.data.remote.MyMemoryApi
 import com.example.data.remote.TatoebaApi
 import com.example.data.remote.WikimediaCommonsApi
 import com.example.data.remote.WiktionaryApi
@@ -44,6 +46,7 @@ import com.example.domain.model.SentenceLookupResult
 import com.example.domain.model.TatoebaSentence
 import com.example.domain.model.WordEntry
 import com.example.domain.model.WordFamilyItem
+import com.example.domain.model.WordFormItem
 import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -54,6 +57,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -78,7 +83,7 @@ import java.util.Locale
 
 private const val TAG = "LexiconRepository"
 private const val CACHE_STALE_MS = 7L * 24L * 60L * 60L * 1000L
-private const val SOURCE_TIMEOUT_MS = 8_000L
+private const val SOURCE_TIMEOUT_MS = 4_000L
 
 private const val SRC_FREEDICT = "freedict"
 private const val SRC_WIKTIONARY = "wiktionary_v2"
@@ -151,7 +156,8 @@ private data class WiktionaryCachedPayload(
     val relatedTerms: List<String> = emptyList(),
     val arabicGlosses: List<CachedArabicGloss> = emptyList(),
     val vocalizedHeadwords: List<String> = emptyList(),
-    val transliteration: String = ""
+    val transliteration: String = "",
+    val wordForms: List<WordFormItem> = emptyList()
 )
 
 @Serializable
@@ -194,7 +200,8 @@ class LexiconRepository(
     private val translationManager: TranslationManager,
     private val audioPlayerManager: AudioPlayerManager,
     private val networkMonitor: NetworkMonitor,
-    private val wikimediaCommonsApi: WikimediaCommonsApi? = null
+    private val wikimediaCommonsApi: WikimediaCommonsApi? = null,
+    private val myMemoryApi: MyMemoryApi? = null
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -335,22 +342,66 @@ class LexiconRepository(
     suspend fun getLiveSuggestions(query: String): List<SearchSuggestion> =
         getLiveSuggestionsPaged(query = query, offset = 0, limit = 40).items
 
-    suspend fun getLiveSuggestionsPaged(
+    private fun hasValidTargetPreview(item: SearchSuggestion, isArabicQuery: Boolean): Boolean {
+        val preview = item.posPreview.ifBlank { item.summaryDefinition }.trim()
+        if (preview.isBlank()) return false
+        return if (!isArabicQuery) {
+            ArabicTextUtils.containsArabicLetters(preview) ||
+                (item.isIdiom && preview.removePrefix("idiom").trim().isNotBlank())
+        } else {
+            preview.any { it in 'a'..'z' || it in 'A'..'Z' }
+        }
+    }
+
+    /**
+     * Non-blocking live search flow: emits local/cached matches immediately, then updates
+     * in place when online sources (Datamuse + Wiktionary + free APIs) resolve additional
+     * words and Arabic/English meanings. Every emitted row is guaranteed to have meanings.
+     */
+    fun observeLiveSuggestions(
         query: String,
-        offset: Int = 0,
-        limit: Int = 40
-    ): LiveSearchPage = withContext(Dispatchers.IO) {
+        limit: Int = 18
+    ): Flow<LiveSearchPage> = flow {
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) return@withContext LiveSearchPage(emptyList(), hasMore = false)
+        if (trimmed.isEmpty()) {
+            emit(LiveSearchPage(emptyList(), hasMore = false))
+            return@flow
+        }
         val isArabic = ArabicTextUtils.containsArabicLetters(trimmed)
+        val safeLimit = limit.coerceIn(1, 500)
+
+        val localMerged = queryLocalSuggestionCandidates(trimmed, isArabic, fetchWindow = (safeLimit + 100).coerceAtMost(10_000))
+        val localEnriched = enrichSuggestionsLocalOnly(localMerged.take(safeLimit + 20), isArabicQuery = isArabic)
+            .filter { hasValidTargetPreview(it, isArabic) }
+        val localVisible = localEnriched.take(safeLimit)
+        val localHasMore = localEnriched.size > localVisible.size ||
+            (localMerged.size > safeLimit + 20)
+
+        if (localVisible.isNotEmpty() || !networkMonitor.isOnline()) {
+            emit(LiveSearchPage(items = localVisible, hasMore = localHasMore))
+        }
+
+        if (networkMonitor.isOnline()) {
+            val onlinePage = getLiveSuggestionsPaged(query = trimmed, offset = 0, limit = safeLimit)
+            if (onlinePage.items.isNotEmpty() && onlinePage != LiveSearchPage(localVisible, localHasMore)) {
+                emit(onlinePage)
+            } else if (localVisible.isEmpty()) {
+                emit(onlinePage)
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private suspend fun queryLocalSuggestionCandidates(
+        trimmed: String,
+        isArabic: Boolean,
+        fetchWindow: Int
+    ): List<SearchSuggestion> {
         val normalized = if (isArabic) {
             ArabicTextUtils.normalizeArabicForMatching(trimmed)
         } else {
             trimmed.lowercase(Locale.US)
         }
         val prefixEnd = ArabicTextUtils.computePrefixUpperBound(normalized)
-        val safeLimit = limit.coerceIn(1, 80)
-        val fetchWindow = (offset + safeLimit + 80).coerceAtMost(10_000)
 
         val candidates = ArrayList<SearchSuggestion>()
 
@@ -481,27 +532,80 @@ class LexiconRepository(
             }
         }
 
-        val dedupedLocal = deduplicateAndMergeSuggestions(candidates, isArabic)
+        return deduplicateAndMergeSuggestions(candidates, isArabic)
             .sortedWith(rankedSuggestionComparator(normalized, isArabic))
+    }
 
-        if (isArabic || offset > 0 || !networkMonitor.isOnline() || dedupedLocal.size >= safeLimit) {
-            val page = dedupedLocal.drop(offset).take(safeLimit)
-            val enriched = enrichSuggestionsWithTranslations(page, isArabicQuery = isArabic)
+    suspend fun getLiveSuggestionsPaged(
+        query: String,
+        offset: Int = 0,
+        limit: Int = 40
+    ): LiveSearchPage = withContext(Dispatchers.IO) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return@withContext LiveSearchPage(emptyList(), hasMore = false)
+        val isArabic = ArabicTextUtils.containsArabicLetters(trimmed)
+        val normalized = if (isArabic) {
+            ArabicTextUtils.normalizeArabicForMatching(trimmed)
+        } else {
+            trimmed.lowercase(Locale.US)
+        }
+        val safeLimit = limit.coerceIn(1, 500)
+        val fetchWindow = (offset + safeLimit + 100).coerceAtMost(10_000)
+
+        val dedupedLocal = queryLocalSuggestionCandidates(trimmed, isArabic, fetchWindow)
+
+        if (isArabic) {
+            val page = dedupedLocal.drop(offset).take(safeLimit).toMutableList()
+            if (offset == 0 &&
+                trimmed.length >= 2 &&
+                networkMonitor.isOnline() &&
+                page.none { ArabicTextUtils.normalizeArabicForMatching(it.word) == normalized }
+            ) {
+                val onlineOnly = enrichArabicSuggestionsWithEnglish(
+                    listOf(
+                        SearchSuggestion(
+                            word = trimmed,
+                            partOfSpeech = "",
+                            summaryDefinition = "",
+                            posPreview = "",
+                            frequencyRank = 0,
+                            isArabic = true,
+                            isLocal = false
+                        )
+                    )
+                )
+                val first = onlineOnly.firstOrNull()
+                if (first != null && hasValidTargetPreview(first, isArabicQuery = true)) {
+                    page.add(0, first)
+                }
+            }
+            val enriched = enrichSuggestionsWithTranslations(page.take(safeLimit), isArabicQuery = true)
+                .filter { hasValidTargetPreview(it, isArabicQuery = true) }
             val hasMore = dedupedLocal.size > offset + page.size
             return@withContext LiveSearchPage(items = enriched, hasMore = hasMore)
         }
 
-        // Supplement with Datamuse only on initial English page when local entries < page size
+        val localWithMeaningCount = dedupedLocal.count { hasValidTargetPreview(it, isArabicQuery = false) }
+        if (offset > 0 || !networkMonitor.isOnline() || localWithMeaningCount >= safeLimit) {
+            val page = dedupedLocal.drop(offset).take(safeLimit)
+            val enriched = enrichSuggestionsWithTranslations(page, isArabicQuery = false)
+                .filter { hasValidTargetPreview(it, isArabicQuery = false) }
+            val hasMore = dedupedLocal.size > offset + page.size
+            return@withContext LiveSearchPage(items = enriched, hasMore = hasMore)
+        }
+
+        // Supplement with Datamuse on initial English page when local translated entries < requested limit
+        val maxDatamuse = safeLimit.coerceIn(25, 60)
         val remoteWords = coroutineScope {
             val sugDeferred = async {
-                withTimeoutOrNull(3_500L) {
-                    runCatching { datamuseApi.getAutocompleteSuggestions(normalized, max = 12) }
+                withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+                    runCatching { datamuseApi.getAutocompleteSuggestions(normalized, max = maxDatamuse) }
                         .getOrDefault(emptyList())
                 }.orEmpty()
             }
             val spDeferred = async {
-                withTimeoutOrNull(3_500L) {
-                    runCatching { datamuseApi.getSpellingMatches("$normalized*", max = 12) }
+                withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+                    runCatching { datamuseApi.getSpellingMatches("$normalized*", max = maxDatamuse) }
                         .getOrDefault(emptyList())
                 }.orEmpty()
             }
@@ -535,9 +639,11 @@ class LexiconRepository(
 
         val mergedAll = deduplicateAndMergeSuggestions(dedupedLocal + remoteSuggestions, isArabic = false)
             .sortedWith(rankedSuggestionComparator(normalized, isArabic = false))
-        val page = mergedAll.drop(offset).take(safeLimit)
-        val enriched = enrichSuggestionsWithTranslations(page, isArabicQuery = false)
-        val hasMore = mergedAll.size > offset + page.size
+        val pageWindow = mergedAll.drop(offset).take((safeLimit + 10).coerceAtMost(500))
+        val enriched = enrichSuggestionsWithTranslations(pageWindow, isArabicQuery = false)
+            .filter { hasValidTargetPreview(it, isArabicQuery = false) }
+            .take(safeLimit)
+        val hasMore = mergedAll.size > offset + pageWindow.size || mergedAll.drop(offset).size > enriched.size
         LiveSearchPage(items = enriched, hasMore = hasMore)
     }
 
@@ -684,26 +790,39 @@ class LexiconRepository(
         return sections.joinToString("؛ ")
     }
 
+    private suspend fun enrichSuggestionsLocalOnly(
+        items: List<SearchSuggestion>,
+        isArabicQuery: Boolean
+    ): List<SearchSuggestion> {
+        if (items.isEmpty()) return items
+        return if (!isArabicQuery) {
+            enrichEnglishSuggestionsWithArabic(items, allowOnline = false)
+        } else {
+            enrichArabicSuggestionsWithEnglish(items, allowOnline = false)
+        }
+    }
+
     private suspend fun enrichSuggestionsWithTranslations(
         items: List<SearchSuggestion>,
         isArabicQuery: Boolean
     ): List<SearchSuggestion> {
         if (items.isEmpty()) return items
         return if (!isArabicQuery) {
-            enrichEnglishSuggestionsWithArabic(items)
+            enrichEnglishSuggestionsWithArabic(items, allowOnline = true)
         } else {
-            enrichArabicSuggestionsWithEnglish(items)
+            enrichArabicSuggestionsWithEnglish(items, allowOnline = true)
         }
     }
 
     private suspend fun enrichEnglishSuggestionsWithArabic(
-        items: List<SearchSuggestion>
+        items: List<SearchSuggestion>,
+        allowOnline: Boolean = true
     ): List<SearchSuggestion> {
         val englishWords = items.map { it.word.trim().lowercase(Locale.US) }.distinct()
         val reverseRows = dao.getReverseArabicForEnglishWords(englishWords)
         val reverseByWord = reverseRows.groupBy { it.englishWord.trim().lowercase(Locale.US) }
 
-        return items.map { item ->
+        val firstPass = items.map { item ->
             val lowerWord = item.word.trim().lowercase(Locale.US)
             val revRowsForWord = reverseByWord[lowerWord].orEmpty()
             val revMeaning = if (revRowsForWord.isNotEmpty()) formatArabicMeaningsFromReverseRows(revRowsForWord) else ""
@@ -745,6 +864,15 @@ class LexiconRepository(
                     }
                 }
 
+                if (fallbackAr.isBlank()) {
+                    val roomKey = translationCacheKey("whole|${TranslateLanguage.ENGLISH}", TranslateLanguage.ARABIC, item.word)
+                    val cachedTr = dao.getTranslationCacheBatch(listOf(roomKey)).firstOrNull()?.translatedText?.trim()
+                    if (!cachedTr.isNullOrBlank() && ArabicTextUtils.containsArabicLetters(cachedTr)) {
+                        val abbr = LinguisticRanker.abbreviatePosTag(item.partOfSpeech)
+                        fallbackAr = if (abbr.isNotBlank() && !cachedTr.startsWith(abbr)) "$abbr $cachedTr" else cachedTr
+                    }
+                }
+
                 if (fallbackAr.isBlank() && !item.isIdiom) {
                     val mtRes = translationManager.translateShortIfReady(item.word, TranslateLanguage.ENGLISH, TranslateLanguage.ARABIC)
                     val tr = mtRes.getOrNull()?.trim()
@@ -764,16 +892,48 @@ class LexiconRepository(
                 }
             }
         }
+
+        if (!allowOnline || !networkMonitor.isOnline()) return firstPass
+
+        // Online enrichment for ALL uncached English suggestions lacking Arabic meanings
+        val needOnlineIndices = firstPass.mapIndexedNotNull { idx, item ->
+            if (!ArabicTextUtils.containsArabicLetters(item.posPreview) && !item.isIdiom) idx else null
+        }
+        if (needOnlineIndices.isEmpty()) return firstPass
+
+        val semaphore = Semaphore(6)
+        val resolvedByIdx = coroutineScope {
+            needOnlineIndices.map { idx ->
+                async {
+                    val item = firstPass[idx]
+                    val preview = semaphore.withPermit {
+                        fetchOnlinePreviewEnToAr(item.word, item.partOfSpeech)
+                    }
+                    idx to preview
+                }
+            }.awaitAll().filter { !it.second.isNullOrBlank() }.toMap()
+        }
+        if (resolvedByIdx.isEmpty()) return firstPass
+
+        return firstPass.mapIndexed { idx, item ->
+            val onlinePreview = resolvedByIdx[idx]
+            if (!onlinePreview.isNullOrBlank()) {
+                item.copy(posPreview = onlinePreview, summaryDefinition = onlinePreview)
+            } else {
+                item
+            }
+        }
     }
 
     private suspend fun enrichArabicSuggestionsWithEnglish(
-        items: List<SearchSuggestion>
+        items: List<SearchSuggestion>,
+        allowOnline: Boolean = true
     ): List<SearchSuggestion> {
         val normalizedWords = items.map { ArabicTextUtils.normalizeArabicForMatching(it.word) }.distinct()
         val reverseRows = dao.getReverseArabicForNormalizedWords(normalizedWords)
         val reverseByNorm = reverseRows.groupBy { it.normalizedArabic }
 
-        return items.map { item ->
+        val firstPass = items.map { item ->
             val normKey = ArabicTextUtils.normalizeArabicForMatching(item.word)
             val revRowsForWord = reverseByNorm[normKey].orEmpty()
             val revMeaning = if (revRowsForWord.isNotEmpty()) formatReverseArabicPreview(revRowsForWord) else ""
@@ -801,14 +961,28 @@ class LexiconRepository(
                 if (packWord != null && packWord.payloadJson.isNotBlank()) {
                     val entry = parseOfflinePackEntity(packWord)
                     if (entry != null) {
-                        val enMeanings = LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = Int.MAX_VALUE, language = "en")
+                        val enMeanings = LinguisticRanker.extractPosHeadwordMeanings(
+                            entry,
+                            maxPerPos = Int.MAX_VALUE,
+                            language = AppLanguage.ENGLISH
+                        )
                         val fromEntry = enMeanings.joinToString("؛ ") { group ->
+                            val abbr = LinguisticRanker.abbreviatePosTag(group.partOfSpeech)
                             val joined = group.meanings.joinToString("؛ ")
-                            if (group.posAbbr.isNotBlank()) "${group.posAbbr} $joined" else joined
-                        }
+                            if (abbr.isNotBlank()) "$abbr $joined" else joined
+                        }.ifBlank { LinguisticRanker.buildPosPreviewFromEntry(entry) }
                         if (fromEntry.any { it in 'a'..'z' || it in 'A'..'Z' }) {
                             fallbackEn = fromEntry
                         }
+                    }
+                }
+
+                if (fallbackEn.isBlank()) {
+                    val roomKey = translationCacheKey("whole|${TranslateLanguage.ARABIC}", TranslateLanguage.ENGLISH, item.word)
+                    val cachedTr = dao.getTranslationCacheBatch(listOf(roomKey)).firstOrNull()?.translatedText?.trim()
+                    if (!cachedTr.isNullOrBlank() && cachedTr.any { it in 'a'..'z' || it in 'A'..'Z' }) {
+                        val abbr = LinguisticRanker.abbreviatePosTag(item.partOfSpeech)
+                        fallbackEn = if (abbr.isNotBlank() && !cachedTr.startsWith(abbr)) "$abbr $cachedTr" else cachedTr
                     }
                 }
 
@@ -829,6 +1003,38 @@ class LexiconRepository(
                 } else {
                     item
                 }
+            }
+        }
+
+        if (!allowOnline || !networkMonitor.isOnline()) return firstPass
+
+        // Online enrichment for ALL Arabic suggestions missing English preview
+        val needOnlineIndices = firstPass.mapIndexedNotNull { idx, item ->
+            val hasEn = item.posPreview.any { it in 'a'..'z' || it in 'A'..'Z' }
+            if (!hasEn && !item.isIdiom) idx else null
+        }
+        if (needOnlineIndices.isEmpty()) return firstPass
+
+        val semaphore = Semaphore(6)
+        val resolvedByIdx = coroutineScope {
+            needOnlineIndices.map { idx ->
+                async {
+                    val item = firstPass[idx]
+                    val preview = semaphore.withPermit {
+                        fetchOnlinePreviewArToEn(item.word, item.partOfSpeech)
+                    }
+                    idx to preview
+                }
+            }.awaitAll().filter { !it.second.isNullOrBlank() }.toMap()
+        }
+        if (resolvedByIdx.isEmpty()) return firstPass
+
+        return firstPass.mapIndexed { idx, item ->
+            val onlinePreview = resolvedByIdx[idx]
+            if (!onlinePreview.isNullOrBlank()) {
+                item.copy(posPreview = onlinePreview, summaryDefinition = onlinePreview)
+            } else {
+                item
             }
         }
     }
@@ -960,7 +1166,7 @@ class LexiconRepository(
         if (!isSingleWord && !isArabic && !literalMode && looksLikePhraseOrIdiomNotSentence(cleaned)) {
             val wikDef = withContext(Dispatchers.IO) {
                 if (!networkMonitor.isOnline()) null
-                else withTimeoutOrNull(3_500L) {
+                else withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
                     fetchWiktionaryByLanguageBlock(
                         slug = cleaned.lowercase(Locale.US).replace(Regex("\\s+"), "_"),
                         langBlockKey = "en",
@@ -1000,12 +1206,21 @@ class LexiconRepository(
         val packReady = withContext(Dispatchers.IO) {
             translationManager.isPairDownloaded(srcLang, tgtLang)
         }
-        if (!packReady) {
+        val online = networkMonitor.isOnline()
+        val (mt, _) = translateOnlineOrLocal(
+            text = cleaned,
+            sourceCode = srcLang,
+            targetCode = tgtLang,
+            cacheScope = cacheScope,
+            packReadyHint = packReady
+        )
+
+        if (mt.isNullOrBlank() && !packReady && !online) {
             return InstantTranslationResult(
                 query = cleaned,
                 translation = null,
                 isArabicSource = isArabic,
-                isMachine = true,
+                isMachine = false,
                 missingPack = true,
                 usAudioUrl = usAudio,
                 ukAudioUrl = ukAudio,
@@ -1013,28 +1228,11 @@ class LexiconRepository(
             )
         }
 
-        val mt = withContext(Dispatchers.Default) {
-            translationManager.translateShortIfReady(
-                text = cleaned,
-                sourceCode = srcLang,
-                targetCode = tgtLang
-            ).getOrNull()?.trim()?.takeIf { it.isNotBlank() }
-        }
-
-        if (!mt.isNullOrBlank()) {
-            withContext(Dispatchers.IO) {
-                val roomKey = translationCacheKey(cacheScope, tgtLang, cleaned)
-                dao.upsertTranslationCacheBatch(
-                    listOf(TranslationCacheEntity(roomKey, mt, System.currentTimeMillis()))
-                )
-            }
-        }
-
         return InstantTranslationResult(
             query = cleaned,
             translation = mt,
             isArabicSource = isArabic,
-            isMachine = true,
+            isMachine = false,
             missingPack = false,
             usAudioUrl = usAudio,
             ukAudioUrl = ukAudio,
@@ -1124,50 +1322,40 @@ class LexiconRepository(
         val now = System.currentTimeMillis()
 
         if (enMissing.isNotEmpty()) {
-            val packReady = withContext(Dispatchers.IO) {
-                translationManager.isPairDownloaded(TranslateLanguage.ENGLISH, TranslateLanguage.ARABIC)
-            }
-            if (packReady) {
-                val translated = translationManager.translateBatchIfReady(
-                    texts = enMissing,
-                    sourceCode = TranslateLanguage.ENGLISH,
-                    targetCode = TranslateLanguage.ARABIC,
-                    concurrency = 4
-                )
-                translated.forEach { (src, ar) ->
-                    mergedOut[src.lowercase(Locale.US)] = ar
-                    cacheEntities.add(
-                        TranslationCacheEntity(
-                            cacheKey = translationCacheKey("whole|${TranslateLanguage.ENGLISH}", TranslateLanguage.ARABIC, src),
-                            translatedText = ar,
-                            timestampMs = now
-                        )
+            val translated = translateBatchOnlineOrLocal(
+                texts = enMissing,
+                sourceCode = TranslateLanguage.ENGLISH,
+                targetCode = TranslateLanguage.ARABIC,
+                concurrency = 4
+            )
+            translated.forEach { (src, ar) ->
+                mergedOut[src.lowercase(Locale.US)] = ar
+                cacheEntities.add(
+                    TranslationCacheEntity(
+                        cacheKey = translationCacheKey("whole|${TranslateLanguage.ENGLISH}", TranslateLanguage.ARABIC, src),
+                        translatedText = ar,
+                        timestampMs = now
                     )
-                }
+                )
             }
         }
 
         if (arMissing.isNotEmpty()) {
-            val packReady = withContext(Dispatchers.IO) {
-                translationManager.isPairDownloaded(TranslateLanguage.ARABIC, TranslateLanguage.ENGLISH)
-            }
-            if (packReady) {
-                val translated = translationManager.translateBatchIfReady(
-                    texts = arMissing,
-                    sourceCode = TranslateLanguage.ARABIC,
-                    targetCode = TranslateLanguage.ENGLISH,
-                    concurrency = 4
-                )
-                translated.forEach { (src, en) ->
-                    mergedOut[src.lowercase(Locale.US)] = en
-                    cacheEntities.add(
-                        TranslationCacheEntity(
-                            cacheKey = translationCacheKey("whole|${TranslateLanguage.ARABIC}", TranslateLanguage.ENGLISH, src),
-                            translatedText = en,
-                            timestampMs = now
-                        )
+            val translated = translateBatchOnlineOrLocal(
+                texts = arMissing,
+                sourceCode = TranslateLanguage.ARABIC,
+                targetCode = TranslateLanguage.ENGLISH,
+                concurrency = 4
+            )
+            translated.forEach { (src, en) ->
+                mergedOut[src.lowercase(Locale.US)] = en
+                cacheEntities.add(
+                    TranslationCacheEntity(
+                        cacheKey = translationCacheKey("whole|${TranslateLanguage.ARABIC}", TranslateLanguage.ENGLISH, src),
+                        translatedText = en,
+                        timestampMs = now
                     )
-                }
+                )
             }
         }
 
@@ -1194,23 +1382,24 @@ class LexiconRepository(
             val packReady = withContext(Dispatchers.IO) {
                 translationManager.isPairDownloaded(TranslateLanguage.ENGLISH, TranslateLanguage.ARABIC)
             }
+            val online = networkMonitor.isOnline()
             val strictItem = resolveEnglishIdiomStrict(
                 phrase = phrase,
                 baseWord = "",
                 category = "IDIOM",
-                isOnline = networkMonitor.isOnline(),
+                isOnline = online,
                 packReady = packReady
             )
             return false to PhraseSheetData(
                 phrase = phrase,
                 englishMeaning = strictItem.englishMeaning,
                 arabicMeaning = strictItem.arabicMeaning,
-                isArabicMachine = strictItem.isArabicMachine,
-                missingArabicPack = !packReady && strictItem.englishMeaning.isNotBlank() && strictItem.arabicMeaning.isNullOrBlank(),
+                isArabicMachine = false,
+                missingArabicPack = !online && !packReady && strictItem.englishMeaning.isNotBlank() && strictItem.arabicMeaning.isNullOrBlank(),
                 noMeaningFound = strictItem.noMeaningFound,
                 example = strictItem.example,
                 exampleArabic = strictItem.exampleArabic,
-                exampleIsMachine = strictItem.exampleIsMachine,
+                exampleIsMachine = false,
                 exampleAudioUrl = strictItem.exampleAudioUrl,
                 isLoading = false
             )
@@ -1236,21 +1425,16 @@ class LexiconRepository(
                 .firstOrNull()?.translatedText?.takeIf { it.isNotBlank() }
         }
 
+        val online = networkMonitor.isOnline()
         if (meaning.isNullOrBlank()) {
-            val res = withContext(Dispatchers.Default) {
-                translationManager.translateShortIfReady(phrase, srcLang, tgtLang)
-            }
-            if (res.isSuccess) {
-                meaning = res.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
-                if (!meaning.isNullOrBlank()) {
-                    withContext(Dispatchers.IO) {
-                        val roomKey = translationCacheKey("whole|$srcLang", tgtLang, phrase)
-                        dao.upsertTranslationCacheBatch(
-                            listOf(TranslationCacheEntity(roomKey, meaning!!, System.currentTimeMillis()))
-                        )
-                    }
-                }
-            } else {
+            val (translated, _) = translateOnlineOrLocal(
+                text = phrase,
+                sourceCode = srcLang,
+                targetCode = tgtLang,
+                cacheScope = "whole|$srcLang"
+            )
+            meaning = translated
+            if (meaning.isNullOrBlank() && !online) {
                 missingPack = !withContext(Dispatchers.IO) {
                     translationManager.isPairDownloaded(srcLang, tgtLang)
                 }
@@ -1259,9 +1443,9 @@ class LexiconRepository(
 
         // Fetch one real example sentence from Tatoeba if online
         val tatoebaExample = withContext(Dispatchers.IO) {
-            if (!networkMonitor.isOnline()) null
+            if (!online) null
             else {
-                withTimeoutOrNull(4_500L) {
+                withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
                     if (isArabic) {
                         fetchTatoebaArabicToEnglish(ArabicTextUtils.stripArabicDiacriticsKeepHamza(phrase))
                             ?.sentences?.firstOrNull()
@@ -1275,7 +1459,7 @@ class LexiconRepository(
         return false to PhraseSheetData(
             phrase = phrase,
             arabicMeaning = meaning,
-            isArabicMachine = true,
+            isArabicMachine = false,
             missingArabicPack = missingPack,
             example = tatoebaExample?.english.orEmpty(),
             exampleArabic = tatoebaExample?.arabic,
@@ -1314,15 +1498,18 @@ class LexiconRepository(
 
         coroutineScope {
             val mtDeferred = async(Dispatchers.IO) {
-                val res = translationManager.translateShortIfReady(
+                val (tr, _) = translateOnlineOrLocal(
                     text = cleaned,
                     sourceCode = srcLang,
-                    targetCode = tgtLang
+                    targetCode = tgtLang,
+                    cacheScope = "whole|$srcLang"
                 )
-                if (res.isSuccess) {
-                    res.getOrNull()?.takeIf { it.isNotBlank() } to false
+                if (!tr.isNullOrBlank()) {
+                    tr to false
                 } else {
-                    null to !translationManager.isPairDownloaded(srcLang, tgtLang)
+                    val missing = !networkMonitor.isOnline() &&
+                        !translationManager.isPairDownloaded(srcLang, tgtLang)
+                    null to missing
                 }
             }
 
@@ -1463,7 +1650,7 @@ class LexiconRepository(
                         val wikKey = "$phrase|$SRC_WIKTIONARY"
                         var wik = dao.getApiCache(wikKey)?.let { decodeOrNull<WiktionaryCachedPayload>(it.payloadJson) }
                         if (wik == null && isOnline) {
-                            wik = withTimeoutOrNull(4_000L) { fetchWiktionarySource(phrase) }
+                            wik = withTimeoutOrNull(SOURCE_TIMEOUT_MS) { fetchWiktionarySource(phrase) }
                             if (wik != null) {
                                 saveSourceCache(phrase, SRC_WIKTIONARY, json.encodeToString(wik))
                             }
@@ -1471,7 +1658,7 @@ class LexiconRepository(
                         val validWik = wik?.takeIf { !it.notFound && it.senses.isNotEmpty() } ?: return@async null
                         val firstSense = validWik.senses.first()
                         val arabicMeaning = firstSense.definitionArabic?.takeIf { it.isNotBlank() }
-                            ?: if (packReady && firstSense.definition.isNotBlank()) {
+                            ?: if (firstSense.definition.isNotBlank() && (packReady || isOnline)) {
                                 // Strict non-literal rule: translate ONLY the English definition, NEVER raw idiom words
                                 translateDefinitionOnlyToArabic(firstSense.definition)
                             } else null
@@ -1479,7 +1666,7 @@ class LexiconRepository(
                             phrase = phrase,
                             englishMeaning = firstSense.definition,
                             arabicMeaning = arabicMeaning,
-                            isArabicMachine = firstSense.definitionArabic.isNullOrBlank() && !arabicMeaning.isNullOrBlank(),
+                            isArabicMachine = false,
                             example = firstSense.examples.firstOrNull().orEmpty()
                         )
                     }
@@ -1504,15 +1691,15 @@ class LexiconRepository(
 
         return if (isArabic) {
             val slug = ArabicTextUtils.stripArabicDiacriticsKeepHamza(phrase)
-            val wik = withTimeoutOrNull(4_500L) { fetchArabicWiktionarySource(slug, key, phrase) }
+            val wik = withTimeoutOrNull(SOURCE_TIMEOUT_MS) { fetchArabicWiktionarySource(slug, key, phrase) }
             wik != null && !wik.notFound && wik.senses.isNotEmpty()
         } else {
-            val wik = withTimeoutOrNull(4_500L) { fetchWiktionarySource(key) }
+            val wik = withTimeoutOrNull(SOURCE_TIMEOUT_MS) { fetchWiktionarySource(key) }
             if (wik != null && !wik.notFound && wik.senses.isNotEmpty()) {
                 saveSourceCache(key, SRC_WIKTIONARY, json.encodeToString(wik))
                 return true
             }
-            val fd = withTimeoutOrNull(4_500L) { fetchFreeDictionarySource(key) }
+            val fd = withTimeoutOrNull(SOURCE_TIMEOUT_MS) { fetchFreeDictionarySource(key) }
             if (fd != null && !fd.notFound && fd.senses.isNotEmpty()) {
                 saveSourceCache(key, SRC_FREEDICT, json.encodeToString(fd))
                 return true
@@ -1613,31 +1800,23 @@ class LexiconRepository(
             }
         }
 
-        // ML Kit ar -> en quick translation (runs locally on-device)
-        val mlKitResult = withContext(Dispatchers.Default) {
-            val res = translationManager.translateShortIfReady(
-                text = displayWord,
-                sourceCode = TranslateLanguage.ARABIC,
-                targetCode = TranslateLanguage.ENGLISH
-            )
-            if (res.isSuccess) {
-                val rawMt = res.getOrNull().orEmpty().trim()
-                val chips = rawMt.split(Regex("[,;/]"))
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() && !ArabicTextUtils.containsArabicLetters(it) }
-                    .distinctBy { it.lowercase(Locale.US) }
-                chips to false
-            } else {
-                emptyList<String>() to !translationManager.isPairDownloaded(
-                    TranslateLanguage.ARABIC,
-                    TranslateLanguage.ENGLISH
-                )
-            }
-        }
-        val machineChips = mlKitResult.first
-        val missingPack = mlKitResult.second
-
         val online = networkMonitor.isOnline()
+        val arPackReady = withContext(Dispatchers.IO) {
+            translationManager.isPairDownloaded(TranslateLanguage.ARABIC, TranslateLanguage.ENGLISH)
+        }
+        val (rawMt, _) = translateOnlineOrLocal(
+            text = displayWord,
+            sourceCode = TranslateLanguage.ARABIC,
+            targetCode = TranslateLanguage.ENGLISH,
+            cacheScope = "whole|${TranslateLanguage.ARABIC}",
+            packReadyHint = arPackReady
+        )
+        val machineChips = rawMt.orEmpty().split(Regex("[,;/؛]"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !ArabicTextUtils.containsArabicLetters(it) }
+            .distinctBy { it.lowercase(Locale.US) }
+        val missingPack = !online && !arPackReady && machineChips.isEmpty()
+
         val anyRemoteNeeded = online && (needWiktionary || needTatoeba)
 
         val initialEntry = mergeArabicWordEntry(
@@ -1875,7 +2054,8 @@ class LexiconRepository(
             }
         }
 
-        // Strict non-literal rule: For multi-word idioms, NEVER translate the raw idiom words with ML Kit!
+        val online = networkMonitor.isOnline()
+        // Strict non-literal rule: For multi-word idioms, NEVER translate the raw idiom words with MT!
         val mtHeadwordResult: Pair<List<String>, Boolean> = when {
             curatedIdiom != null -> listOf(curatedIdiom.arabicMeaning) to false
             exactPackIdiom != null -> {
@@ -1893,22 +2073,20 @@ class LexiconRepository(
                 if (!override.isNullOrBlank()) listOf(override) to false
                 else emptyList<String>() to false
             }
-            else -> withContext(Dispatchers.Default) {
-                val res = translationManager.translateShortIfReady(
+            else -> {
+                val (ar, _) = translateOnlineOrLocal(
                     text = trimmed,
                     sourceCode = TranslateLanguage.ENGLISH,
-                    targetCode = TranslateLanguage.ARABIC
+                    targetCode = TranslateLanguage.ARABIC,
+                    cacheScope = "whole|${TranslateLanguage.ENGLISH}",
+                    packReadyHint = isPackReadyNow
                 )
-                if (res.isSuccess) {
-                    val ar = res.getOrNull().orEmpty().trim()
-                    (if (ar.isNotBlank()) listOf(ar) else emptyList()) to false
-                } else {
-                    emptyList<String>() to !isPackReadyNow
-                }
+                val chips = if (!ar.isNullOrBlank()) listOf(ar) else emptyList()
+                val missing = !online && !isPackReadyNow && chips.isEmpty()
+                chips to missing
             }
         }
 
-        val online = networkMonitor.isOnline()
         val cachedMissingAudio = (freeDictPayload?.usAudioUrl.isNullOrBlank() || freeDictPayload?.ukAudioUrl.isNullOrBlank())
         val shouldTryWikimedia = online && wikimediaCommonsApi != null && needWikimediaAudio && (needFreeDict || cachedMissingAudio)
         val anyRemoteNeeded = online && (needFreeDict || needWiktionary || needDatamuse || needTatoeba || shouldTryWikimedia)
@@ -2111,15 +2289,18 @@ class LexiconRepository(
         }
 
         val withCachedTranslations = applyRoomTranslationCache(mergedFinal)
+        val canTranslateNow = isPackReadyNow || (online && myMemoryApi != null)
         // Show dictionary content immediately before batch translating uncached senses/examples
-        if (isPackReadyNow && needsBatchTranslation(withCachedTranslations)) {
+        if (canTranslateNow && needsBatchTranslation(withCachedTranslations)) {
             emitState(WordLoadState.Success(entry = withCachedTranslations, isUpdating = true))
         }
 
-        val finalEntry = if (isPackReadyNow) {
+        val finalEntry = if (canTranslateNow) {
             translateMissingSensesInBatch(withCachedTranslations)
         } else {
             withCachedTranslations
+        }.let { entry ->
+            if (online) entry.copy(missingTranslationPack = false) else entry
         }
 
         synchronized(readyEntryCache) {
@@ -2272,9 +2453,9 @@ class LexiconRepository(
 
         // BUG 5: Translate "word: definition" together for per-sense context, and WHOLE sentence as one unit
         val promptToDef = missingDefs.associateBy { contextualDefPrompt(entry.word, it) }
-        val batchInputs = promptToDef.keys.toList() + missingExamples.toList()
+        val batchInputs = (promptToDef.keys.toList().take(24) + missingExamples.toList().take(12))
 
-        val rawBatchResults = translationManager.translateBatchIfReady(
+        val rawBatchResults = translateBatchOnlineOrLocal(
             texts = batchInputs,
             sourceCode = TranslateLanguage.ENGLISH,
             targetCode = TranslateLanguage.ARABIC,
@@ -2342,7 +2523,7 @@ class LexiconRepository(
                 val defIsMachine = if (!sense.definitionArabic.isNullOrBlank()) {
                     sense.definitionArabicIsMachine
                 } else {
-                    defAr != null
+                    false
                 }
 
                 val newExTrans = HashMap(sense.exampleTranslations)
@@ -2352,7 +2533,7 @@ class LexiconRepository(
                         val tr = exTranslatedMap[ex.trim()]
                         if (!tr.isNullOrBlank()) {
                             newExTrans[ex] = tr
-                            newExIsMachine[ex] = true
+                            newExIsMachine[ex] = false
                         }
                     }
                 }
@@ -2372,7 +2553,7 @@ class LexiconRepository(
     // --- Section 4.10 & 18.3: Lazy/Background Confusable Words (max 4 concurrent, cached in Room) ---
     suspend fun loadConfusableDetails(
         candidates: List<ConfusableCandidate>,
-        maxCount: Int = 12
+        maxCount: Int = 45
     ): Map<String, ConfusableWordDetail> = withContext(Dispatchers.IO) {
         if (candidates.isEmpty()) return@withContext emptyMap()
         val semaphore = Semaphore(4)
@@ -2398,6 +2579,7 @@ class LexiconRepository(
                             labels = candidate.labels,
                             partOfSpeech = firstSense.partOfSpeechArabic,
                             shortDefinition = firstSense.definition,
+                            shortDefinitionArabic = firstSense.definitionArabic,
                             example = firstSense.examples.firstOrNull().orEmpty(),
                             usAudioUrl = null,
                             ukAudioUrl = null
@@ -2423,6 +2605,7 @@ class LexiconRepository(
                                 labels = candidate.labels,
                                 partOfSpeech = s.partOfSpeechArabic,
                                 shortDefinition = s.definition,
+                                shortDefinitionArabic = s.definitionArabic,
                                 example = s.examples.firstOrNull().orEmpty(),
                                 usAudioUrl = freeDict.usAudioUrl,
                                 ukAudioUrl = freeDict.ukAudioUrl
@@ -2438,6 +2621,7 @@ class LexiconRepository(
                                     labels = candidate.labels,
                                     partOfSpeech = s.partOfSpeechArabic,
                                     shortDefinition = s.definition,
+                                    shortDefinitionArabic = s.definitionArabic,
                                     example = s.examples.firstOrNull().orEmpty(),
                                     usAudioUrl = null,
                                     ukAudioUrl = null
@@ -2463,15 +2647,14 @@ class LexiconRepository(
             }.awaitAll()
         }
         val baseMap = results.filterNotNull().associateBy { it.word.lowercase(Locale.US) }
-        val packReady = translationManager.isPairDownloaded(TranslateLanguage.ENGLISH, TranslateLanguage.ARABIC)
-        if (!packReady || baseMap.isEmpty()) return@withContext baseMap
+        if (baseMap.isEmpty()) return@withContext baseMap
 
         val defsToTranslate = baseMap.values
             .filter { it.shortDefinitionArabic.isNullOrBlank() && it.shortDefinition.isNotBlank() }
             .associateBy { contextualDefPrompt(it.word, it.shortDefinition) }
         if (defsToTranslate.isEmpty()) return@withContext baseMap
 
-        val translated = translationManager.translateBatchIfReady(
+        val translated = translateBatchOnlineOrLocal(
             texts = defsToTranslate.keys.toList(),
             sourceCode = TranslateLanguage.ENGLISH,
             targetCode = TranslateLanguage.ARABIC,
@@ -2481,16 +2664,301 @@ class LexiconRepository(
             val prompt = contextualDefPrompt(detail.word, detail.shortDefinition)
             val ar = translated[prompt]?.let { extractContextualSenseArabic(it, detail.word) }
             if (!ar.isNullOrBlank()) {
-                detail.copy(shortDefinitionArabic = ar, shortDefinitionArabicIsMachine = true)
+                detail.copy(shortDefinitionArabic = ar, shortDefinitionArabicIsMachine = false)
             } else {
                 detail
             }
         }
     }
 
+    private suspend fun translateViaOnlineMyMemory(
+        text: String,
+        sourceCode: String,
+        targetCode: String
+    ): String? {
+        val api = myMemoryApi ?: return null
+        if (!networkMonitor.isOnline()) return null
+        val cleaned = text.trim()
+        if (cleaned.isBlank()) return null
+        val langPair = when {
+            sourceCode == TranslateLanguage.ARABIC && targetCode == TranslateLanguage.ENGLISH -> "ar|en"
+            sourceCode == TranslateLanguage.ENGLISH && targetCode == TranslateLanguage.ARABIC -> "en|ar"
+            else -> "$sourceCode|$targetCode"
+        }
+        val wantArabic = targetCode == TranslateLanguage.ARABIC
+        return withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+            runCatching {
+                val raw = api.translate(query = cleaned, langPair = langPair).string()
+                MyMemoryApi.parseTranslatedText(rawJson = raw, sourceText = cleaned, wantArabic = wantArabic)
+            }.getOrNull()
+        }
+    }
+
+    private suspend fun translateOnlineOrLocal(
+        text: String,
+        sourceCode: String,
+        targetCode: String,
+        cacheScope: String = "whole|$sourceCode",
+        packReadyHint: Boolean? = null
+    ): Pair<String?, Boolean> {
+        val cleaned = text.trim()
+        if (cleaned.isBlank()) return null to false
+        val roomKey = translationCacheKey(cacheScope, targetCode, cleaned)
+        val cached = withContext(Dispatchers.IO) {
+            dao.getTranslationCacheBatch(listOf(roomKey))
+                .firstOrNull()?.translatedText?.takeIf { it.isNotBlank() }
+        }
+        if (!cached.isNullOrBlank()) return cached to false
+
+        val packReady = packReadyHint ?: withContext(Dispatchers.IO) {
+            translationManager.isPairDownloaded(sourceCode, targetCode)
+        }
+        var translated: String? = null
+        if (packReady) {
+            translated = withContext(Dispatchers.Default) {
+                translationManager.translateShortIfReady(
+                    text = cleaned,
+                    sourceCode = sourceCode,
+                    targetCode = targetCode
+                ).getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+            }
+        }
+        if (translated.isNullOrBlank() && networkMonitor.isOnline()) {
+            translated = translateViaOnlineMyMemory(cleaned, sourceCode, targetCode)
+        }
+        if (!translated.isNullOrBlank()) {
+            withContext(Dispatchers.IO) {
+                dao.upsertTranslationCacheBatch(
+                    listOf(TranslationCacheEntity(roomKey, translated, System.currentTimeMillis()))
+                )
+            }
+        }
+        val missingOfflinePack = translated.isNullOrBlank() && !networkMonitor.isOnline() && !packReady
+        return translated to missingOfflinePack
+    }
+
+    private suspend fun translateBatchOnlineOrLocal(
+        texts: List<String>,
+        sourceCode: String,
+        targetCode: String,
+        concurrency: Int = 4
+    ): Map<String, String> {
+        val cleaned = texts.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (cleaned.isEmpty()) return emptyMap()
+        val out = LinkedHashMap<String, String>(cleaned.size)
+
+        val packReady = withContext(Dispatchers.IO) {
+            translationManager.isPairDownloaded(sourceCode, targetCode)
+        }
+        if (packReady) {
+            val mlResults = translationManager.translateBatchIfReady(
+                texts = cleaned,
+                sourceCode = sourceCode,
+                targetCode = targetCode,
+                concurrency = concurrency
+            )
+            out.putAll(mlResults)
+        }
+
+        val remaining = cleaned.filter { it !in out }
+        if (remaining.isNotEmpty() && myMemoryApi != null && networkMonitor.isOnline()) {
+            val sem = Semaphore(concurrency.coerceIn(1, 5))
+            val onlinePairs = coroutineScope {
+                remaining.take(30).map { src ->
+                    async {
+                        val tr = sem.withPermit {
+                            translateViaOnlineMyMemory(src, sourceCode, targetCode)
+                        }
+                        src to tr
+                    }
+                }.awaitAll()
+            }
+            onlinePairs.forEach { (src, tr) ->
+                if (!tr.isNullOrBlank()) out[src] = tr
+            }
+        }
+        return out
+    }
+
+    private suspend fun fetchOnlinePreviewEnToAr(word: String, posHint: String): String? {
+        val cleanWord = word.trim()
+        val lower = cleanWord.lowercase(Locale.US)
+        if (cleanWord.isBlank() || ArabicTextUtils.containsArabicLetters(cleanWord)) return null
+
+        val slug = lower.replace(Regex("\\s+"), "_")
+        val abbr = LinguisticRanker.abbreviatePosTag(posHint)
+
+        // Query Wiktionary REST JSON + Wiktionary HTML Translations table + Free Dictionary in parallel (4s timeout)
+        val (restParsed, htmlTerms) = coroutineScope {
+            val restDeferred = async {
+                withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+                    runCatching {
+                        val raw = wiktionaryApi.getDefinitionRaw(slug).string()
+                        val root = json.parseToJsonElement(raw).jsonObject
+                        val langArray = root["en"]?.jsonArray ?: return@runCatching emptyList<Pair<String, List<String>>>() to emptyList<String>()
+                        val byPosAr = LinkedHashMap<String, LinkedHashSet<String>>()
+                        val detectedPos = LinkedHashSet<String>()
+                        for (secEl in langArray) {
+                            val sec = secEl.jsonObject
+                            val pos = sec["partOfSpeech"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            val posAbbr = LinguisticRanker.abbreviatePosTag(pos)
+                            if (posAbbr.isNotBlank()) detectedPos.add(posAbbr)
+                            val defs = sec["definitions"]?.jsonArray ?: continue
+                            for (defEl in defs) {
+                                val ar = extractWiktionaryArabicTranslation(defEl.jsonObject) ?: continue
+                                val bucket = byPosAr.getOrPut(posAbbr) { LinkedHashSet() }
+                                ar.split('؛', ';', '،').forEach { term ->
+                                    val cleanT = term.trim()
+                                    if (cleanT.isNotBlank() && ArabicTextUtils.containsArabicLetters(cleanT)) {
+                                        bucket.add(cleanT)
+                                    }
+                                }
+                            }
+                        }
+                        val posList = byPosAr.entries.mapNotNull { (p, terms) ->
+                            if (terms.isEmpty()) null else p to terms.toList()
+                        }
+                        posList to detectedPos.toList()
+                    }.getOrNull()
+                }
+            }
+            val htmlDeferred = async {
+                withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+                    runCatching {
+                        val rawHtmlJson = wiktionaryApi.getPageHtmlRaw(slug).string()
+                        val html = WiktionaryHtmlParser.extractHtmlFromParseJson(rawHtmlJson)
+                        WiktionaryHtmlParser.parseEnglishTranslationsHtml(html)
+                            .flatMap { it.arabicTerms }
+                            .filter { ArabicTextUtils.containsArabicLetters(it) }
+                            .distinct()
+                    }.getOrDefault(emptyList())
+                }.orEmpty()
+            }
+            restDeferred.await() to htmlDeferred.await()
+        }
+
+        val restPosAr = restParsed?.first.orEmpty()
+        val detectedPosAbbr = restParsed?.second?.firstOrNull().orEmpty().ifBlank { abbr }
+
+        val wikTerms = LinkedHashSet<String>()
+        if (restPosAr.isNotEmpty()) {
+            restPosAr.forEach { (p, terms) ->
+                if (terms.isNotEmpty()) {
+                    wikTerms.add(if (p.isNotBlank()) "$p ${terms.joinToString("؛ ")}" else terms.joinToString("؛ "))
+                }
+            }
+        }
+        val alreadyHasArTerms = restPosAr.flatMapTo(HashSet()) { it.second }
+        val extraHtmlTerms = htmlTerms.filter { it !in alreadyHasArTerms }.take(12)
+        if (extraHtmlTerms.isNotEmpty()) {
+            val tag = if (restPosAr.isEmpty()) detectedPosAbbr else ""
+            val joined = extraHtmlTerms.joinToString("؛ ")
+            wikTerms.add(if (tag.isNotBlank()) "$tag $joined" else joined)
+        }
+
+        val preview = if (wikTerms.isNotEmpty()) {
+            wikTerms.joinToString("؛ ")
+        } else {
+            val ar = translateViaOnlineMyMemory(cleanWord, TranslateLanguage.ENGLISH, TranslateLanguage.ARABIC)
+                ?.takeIf { ArabicTextUtils.containsArabicLetters(it) }
+                ?: translationManager.translateShortIfReady(
+                    cleanWord,
+                    TranslateLanguage.ENGLISH,
+                    TranslateLanguage.ARABIC
+                ).getOrNull()?.trim()?.takeIf { ArabicTextUtils.containsArabicLetters(it) }
+                ?: return null
+            if (detectedPosAbbr.isNotBlank()) "$detectedPosAbbr $ar" else ar
+        }
+
+        if (preview.isNotBlank()) {
+            val roomKey = translationCacheKey("whole|${TranslateLanguage.ENGLISH}", TranslateLanguage.ARABIC, cleanWord)
+            runCatching {
+                dao.upsertTranslationCacheBatch(listOf(TranslationCacheEntity(roomKey, preview, System.currentTimeMillis())))
+                val existing = dao.getWordIndex(lower)
+                if (existing == null || !ArabicTextUtils.containsArabicLetters(existing.previewSummary)) {
+                    dao.upsertWordIndex(
+                        WordIndexEntity(
+                            word = cleanWord,
+                            normalizedWord = lower,
+                            lang = "en",
+                            summaryDefinition = existing?.summaryDefinition.orEmpty().ifBlank { preview.take(180) },
+                            previewSummary = preview,
+                            partOfSpeech = existing?.partOfSpeech.orEmpty().ifBlank { posHint },
+                            frequencyRank = existing?.frequencyRank ?: Int.MAX_VALUE,
+                            usAudioUrl = existing?.usAudioUrl,
+                            ukAudioUrl = existing?.ukAudioUrl,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
+        return preview.takeIf { it.isNotBlank() }
+    }
+
+    private suspend fun fetchOnlinePreviewArToEn(word: String, posHint: String): String? {
+        val cleanWord = word.trim()
+        val norm = ArabicTextUtils.normalizeArabicForMatching(cleanWord)
+        if (cleanWord.isBlank()) return null
+
+        val wikEn = withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+            runCatching {
+                val slug = ArabicTextUtils.stripArabicDiacriticsKeepHamza(cleanWord).replace(Regex("\\s+"), "_")
+                val wik = fetchWiktionaryByLanguageBlock(slug, "ar", cleanWord, false)
+                val valid = wik?.takeIf { !it.notFound && it.senses.isNotEmpty() } ?: return@runCatching ""
+                val byPos = LinkedHashMap<String, LinkedHashSet<String>>()
+                valid.senses.forEach { s ->
+                    val posAbbr = LinguisticRanker.abbreviatePosTag(s.partOfSpeech)
+                    val bucket = byPos.getOrPut(posAbbr) { LinkedHashSet() }
+                    val concise = s.definition.substringBefore(';').substringBefore('.').trim()
+                    if (concise.isNotBlank() && concise.any { it in 'a'..'z' || it in 'A'..'Z' }) {
+                        bucket.add(concise)
+                    }
+                }
+                byPos.entries.joinToString("؛ ") { (p, defs) ->
+                    val joined = defs.joinToString("؛ ")
+                    if (p.isNotBlank()) "$p $joined" else joined
+                }
+            }.getOrDefault("")
+        }.orEmpty()
+
+        val preview = if (wikEn.isNotBlank()) {
+            wikEn
+        } else {
+            val en = translateViaOnlineMyMemory(cleanWord, TranslateLanguage.ARABIC, TranslateLanguage.ENGLISH)
+                ?.takeIf { it.any { c -> c in 'a'..'z' || c in 'A'..'Z' } }
+                ?: return null
+            val abbr = LinguisticRanker.abbreviatePosTag(posHint)
+            if (abbr.isNotBlank()) "$abbr $en" else en
+        }
+
+        if (preview.isNotBlank()) {
+            val roomKey = translationCacheKey("whole|${TranslateLanguage.ARABIC}", TranslateLanguage.ENGLISH, cleanWord)
+            runCatching {
+                dao.upsertTranslationCacheBatch(listOf(TranslationCacheEntity(roomKey, preview, System.currentTimeMillis())))
+                val existing = dao.getWordIndex(norm)
+                if (existing == null || !existing.previewSummary.any { it in 'a'..'z' || it in 'A'..'Z' }) {
+                    dao.upsertWordIndex(
+                        WordIndexEntity(
+                            word = cleanWord,
+                            normalizedWord = norm,
+                            lang = "ar",
+                            summaryDefinition = existing?.summaryDefinition.orEmpty().ifBlank { preview.take(180) },
+                            previewSummary = preview,
+                            partOfSpeech = existing?.partOfSpeech.orEmpty().ifBlank { posHint },
+                            frequencyRank = existing?.frequencyRank ?: Int.MAX_VALUE,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
+        return preview.takeIf { it.isNotBlank() }
+    }
+
     /**
      * Translates ONLY the verified English definition of an idiom/phrase into Arabic
-     * (NEVER passes raw idiom words like "hit the town" to ML Kit).
+     * (NEVER passes raw idiom words like "hit the town" to MT).
      */
     private suspend fun translateDefinitionOnlyToArabic(englishDefinition: String): String? {
         val cleanDef = englishDefinition.trim()
@@ -2504,22 +2972,31 @@ class LexiconRepository(
         val packReady = withContext(Dispatchers.IO) {
             translationManager.isPairDownloaded(TranslateLanguage.ENGLISH, TranslateLanguage.ARABIC)
         }
-        if (!packReady) return null
-
-        val rawTranslated = withContext(Dispatchers.Default) {
-            translationManager.translateShortIfReady(
+        var rawTranslated: String? = null
+        if (packReady) {
+            rawTranslated = withContext(Dispatchers.Default) {
+                translationManager.translateShortIfReady(
+                    text = cleanDef,
+                    sourceCode = TranslateLanguage.ENGLISH,
+                    targetCode = TranslateLanguage.ARABIC
+                ).getOrNull()?.trim()?.takeIf { it.isNotBlank() && ArabicTextUtils.containsArabicLetters(it) }
+            }
+        }
+        if (rawTranslated.isNullOrBlank() && networkMonitor.isOnline()) {
+            rawTranslated = translateViaOnlineMyMemory(
                 text = cleanDef,
                 sourceCode = TranslateLanguage.ENGLISH,
                 targetCode = TranslateLanguage.ARABIC
-            ).getOrNull()?.trim()?.takeIf { it.isNotBlank() && ArabicTextUtils.containsArabicLetters(it) }
-        } ?: return null
+            )?.takeIf { ArabicTextUtils.containsArabicLetters(it) }
+        }
+        val valid = rawTranslated?.takeIf { it.isNotBlank() } ?: return null
 
         withContext(Dispatchers.IO) {
             dao.upsertTranslationCacheBatch(
-                listOf(TranslationCacheEntity(cacheKey, rawTranslated, System.currentTimeMillis()))
+                listOf(TranslationCacheEntity(cacheKey, valid, System.currentTimeMillis()))
             )
         }
-        return rawTranslated
+        return valid
     }
 
     /**
@@ -2565,10 +3042,8 @@ class LexiconRepository(
         dao.getPackIdiomExact(key)?.let { packIdiom ->
             val engDef = packIdiom.englishDefinition.trim()
             var arMeaning = packIdiom.arabicMeaning.trim().takeIf { it.isNotBlank() }
-            var arIsMachine = false
-            if (arMeaning == null && engDef.isNotBlank() && effectivePackReady) {
+            if (arMeaning == null && engDef.isNotBlank() && (effectivePackReady || isOnline)) {
                 arMeaning = translateDefinitionOnlyToArabic(engDef)
-                arIsMachine = !arMeaning.isNullOrBlank()
             }
             val exAr = packIdiom.exampleArabic.trim().takeIf { it.isNotBlank() }
             val noMeaning = engDef.isBlank() && arMeaning.isNullOrBlank()
@@ -2576,7 +3051,7 @@ class LexiconRepository(
                 phrase = packIdiom.phrase,
                 englishMeaning = engDef,
                 arabicMeaning = arMeaning,
-                isArabicMachine = arIsMachine,
+                isArabicMachine = false,
                 example = packIdiom.exampleSentence,
                 exampleArabic = exAr,
                 exampleIsMachine = false,
@@ -2593,16 +3068,14 @@ class LexiconRepository(
             val s = packEntry.posGroups.firstOrNull()?.senses?.firstOrNull()
             if (s != null && (s.definition.isNotBlank() || !s.definitionArabic.isNullOrBlank())) {
                 var arMeaning = s.definitionArabic?.takeIf { it.isNotBlank() }
-                var arIsMachine = s.definitionArabicIsMachine
-                if (arMeaning == null && s.definition.isNotBlank() && effectivePackReady) {
+                if (arMeaning == null && s.definition.isNotBlank() && (effectivePackReady || isOnline)) {
                     arMeaning = translateDefinitionOnlyToArabic(s.definition)
-                    arIsMachine = !arMeaning.isNullOrBlank()
                 }
                 return@withContext PhraseDetailItem(
                     phrase = cleaned,
                     englishMeaning = s.definition,
                     arabicMeaning = arMeaning,
-                    isArabicMachine = arIsMachine,
+                    isArabicMachine = false,
                     example = s.examples.firstOrNull().orEmpty(),
                     isIdiom = category == "IDIOM",
                     category = category,
@@ -2619,7 +3092,7 @@ class LexiconRepository(
         if (cached != null && (System.currentTimeMillis() - cached.timestampMs) <= CACHE_STALE_MS) {
             val decoded = decodeOrNull<PhraseDetailItem>(cached.payloadJson)
             if (decoded != null && !decoded.noMeaningFound && decoded.englishMeaning.isNotBlank() &&
-                (!decoded.arabicMeaning.isNullOrBlank() || !effectivePackReady)
+                (!decoded.arabicMeaning.isNullOrBlank() || (!effectivePackReady && !isOnline))
             ) {
                 return@withContext decoded
             }
@@ -2629,13 +3102,13 @@ class LexiconRepository(
         val cachedWik = dao.getApiCache("$key|$SRC_WIKTIONARY")
             ?.let { decodeOrNull<WiktionaryCachedPayload>(it.payloadJson) }
         val wik = cachedWik ?: if (isOnline) {
-            withTimeoutOrNull(5_000L) {
+            withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
                 fetchWiktionaryByLanguageBlock(key.replace(Regex("\\s+"), "_"), "en", key, false)
             }
         } else null
         val firstWikSense = wik?.takeIf { !it.notFound }?.senses?.firstOrNull()
         val fd = if (firstWikSense == null && isOnline) {
-            withTimeoutOrNull(5_000L) { fetchFreeDictionarySource(key) }
+            withTimeoutOrNull(SOURCE_TIMEOUT_MS) { fetchFreeDictionarySource(key) }
         } else null
         val firstSense = firstWikSense ?: fd?.takeIf { !it.notFound }?.senses?.firstOrNull()
 
@@ -2657,36 +3130,32 @@ class LexiconRepository(
         val engDef = firstSense.definition
         val existingEx = firstSense.examples.firstOrNull().orEmpty()
         val tatoeba = if (isOnline) {
-            withTimeoutOrNull(4_000L) { fetchTatoebaSource(key) }?.sentences?.firstOrNull()
+            withTimeoutOrNull(SOURCE_TIMEOUT_MS) { fetchTatoebaSource(key) }?.sentences?.firstOrNull()
         } else null
 
         val finalExample = existingEx.ifBlank { tatoeba?.english.orEmpty() }
         var finalExArabic = firstSense.exampleTranslations[finalExample]
-        var finalExIsMachine = false
         var finalExAudio = firstSense.exampleAudioUrls[finalExample]
         if (tatoeba != null && (finalExample.equals(tatoeba.english, ignoreCase = true) || finalExArabic.isNullOrBlank())) {
             if (finalExArabic.isNullOrBlank() && tatoeba.english.contains(key, ignoreCase = true)) {
                 finalExArabic = tatoeba.arabic
-                finalExIsMachine = false
                 finalExAudio = tatoeba.audioUrl
             }
         }
 
         // 3. Only translate the English DEFINITION (never the raw idiom words)
         var arMeaning = firstSense.definitionArabic?.takeIf { it.isNotBlank() }
-        var arIsMachine = false
-        if (arMeaning == null && engDef.isNotBlank() && effectivePackReady) {
+        if (arMeaning == null && engDef.isNotBlank() && (effectivePackReady || isOnline)) {
             arMeaning = translateDefinitionOnlyToArabic(engDef)
-            arIsMachine = !arMeaning.isNullOrBlank()
         }
 
-        if (finalExample.isNotBlank() && finalExArabic.isNullOrBlank() && effectivePackReady) {
-            finalExArabic = translationManager.translateShortIfReady(
+        if (finalExample.isNotBlank() && finalExArabic.isNullOrBlank() && (effectivePackReady || isOnline)) {
+            finalExArabic = translateOnlineOrLocal(
                 text = finalExample,
                 sourceCode = TranslateLanguage.ENGLISH,
-                targetCode = TranslateLanguage.ARABIC
-            ).getOrNull()?.takeIf { it.isNotBlank() && ArabicTextUtils.containsArabicLetters(it) }
-            finalExIsMachine = !finalExArabic.isNullOrBlank()
+                targetCode = TranslateLanguage.ARABIC,
+                packReadyHint = effectivePackReady
+            ).first?.takeIf { ArabicTextUtils.containsArabicLetters(it) }
         }
 
         val isIdiom = category == "IDIOM" ||
@@ -2704,10 +3173,10 @@ class LexiconRepository(
             phrase = cleaned,
             englishMeaning = engDef,
             arabicMeaning = arMeaning,
-            isArabicMachine = arIsMachine,
+            isArabicMachine = false,
             example = finalExample,
             exampleArabic = finalExArabic,
-            exampleIsMachine = finalExIsMachine,
+            exampleIsMachine = false,
             exampleAudioUrl = finalExAudio,
             isIdiom = isIdiom,
             category = resolvedCategory,
@@ -2841,7 +3310,7 @@ class LexiconRepository(
 
                     if (isOnline) {
                         semaphore.withPermit {
-                            val wik = withTimeoutOrNull(4_500L) {
+                            val wik = withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
                                 fetchArabicWiktionarySource(
                                     slugWithHamza = ArabicTextUtils.stripArabicDiacriticsKeepHamza(phrase),
                                     normalizedArabic = normKey,
@@ -2857,13 +3326,14 @@ class LexiconRepository(
                         }
                     }
 
-                    if (engMeaning.isNullOrBlank() && packReady) {
+                    if (engMeaning.isNullOrBlank() && (packReady || isOnline)) {
                         val prepared = ContextualTranslationAnalyzer.prepareArabicForTranslation(phrase)
-                        val translated = translationManager.translateShortIfReady(
+                        val (translated, _) = translateOnlineOrLocal(
                             text = prepared,
                             sourceCode = TranslateLanguage.ARABIC,
-                            targetCode = TranslateLanguage.ENGLISH
-                        ).getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+                            targetCode = TranslateLanguage.ENGLISH,
+                            packReadyHint = packReady
+                        )
                         if (!translated.isNullOrBlank()) {
                             engMeaning = ContextualTranslationAnalyzer.refineEnglishTranslation(phrase, translated)
                         }
@@ -2978,16 +3448,17 @@ class LexiconRepository(
                     secPayload.compounds.isEmpty() &&
                     secPayload.derivedWords.isEmpty(),
                 phrases = (defPayload.phrases + secPayload.phrasalVerbs + secPayload.idioms + secPayload.compounds)
-                    .distinct().take(40),
+                    .distinct().take(60),
                 phrasalVerbs = secPayload.phrasalVerbs,
                 idioms = secPayload.idioms,
                 compounds = secPayload.compounds,
                 collocations = secPayload.collocations,
                 synonyms = secPayload.synonyms,
                 antonyms = secPayload.antonyms,
-                derivedWords = (defPayload.derivedWords + secPayload.derivedWords).distinct().take(25),
+                derivedWords = (defPayload.derivedWords + secPayload.derivedWords).distinct().take(40),
                 relatedTerms = secPayload.relatedTerms,
-                arabicGlosses = secPayload.arabicGlosses
+                arabicGlosses = secPayload.arabicGlosses,
+                wordForms = secPayload.wordForms
             )
         }
     }
@@ -3033,6 +3504,7 @@ class LexiconRepository(
                     lower.contains("related term") -> "related"
                     lower == "synonyms" -> "synonyms"
                     lower == "antonyms" -> "antonyms"
+                    lower in setOf("verb", "noun", "adjective", "adverb", "pronoun", "preposition") -> "pos_headword"
                     else -> null
                 }
                 if (category != null && index.isNotBlank()) {
@@ -3051,9 +3523,11 @@ class LexiconRepository(
             val synonyms = mutableListOf<String>()
             val antonyms = mutableListOf<String>()
             val arabicGlosses = mutableListOf<CachedArabicGloss>()
+            val wordForms = mutableListOf<WordFormItem>()
             val baseLower = baseWord.trim().lowercase(Locale.US)
 
-            val translationTargets = targets.filter { it.second == "translations" }.take(6)
+            val translationTargets = targets.filter { it.second == "translations" }.take(14)
+            val posHeadwordTargets = targets.filter { it.second == "pos_headword" }.take(4)
             val sectionPriority = mapOf(
                 "idiom" to 1,
                 "phrasal" to 2,
@@ -3064,9 +3538,9 @@ class LexiconRepository(
                 "derived" to 7,
                 "related" to 8
             )
-            val otherTargets = targets.filter { it.second != "translations" }
+            val otherTargets = targets.filter { it.second != "translations" && it.second != "pos_headword" }
                 .sortedBy { sectionPriority[it.second] ?: 99 }
-                .take(16)
+                .take(28)
 
             coroutineScope {
                 val transDeferred = translationTargets.map { (idx, _) ->
@@ -3075,6 +3549,15 @@ class LexiconRepository(
                             val rawHtmlJson = wiktionaryApi.getSectionHtmlRaw(slug, idx).string()
                             val html = WiktionaryHtmlParser.extractHtmlFromParseJson(rawHtmlJson)
                             WiktionaryHtmlParser.parseEnglishTranslationsHtml(html)
+                        }.getOrDefault(emptyList())
+                    }
+                }
+                val formsDeferred = posHeadwordTargets.map { (idx, _) ->
+                    async {
+                        runCatching {
+                            val rawHtmlJson = wiktionaryApi.getSectionHtmlRaw(slug, idx).string()
+                            val html = WiktionaryHtmlParser.extractHtmlFromParseJson(rawHtmlJson)
+                            WiktionaryHtmlParser.parseEnglishHeadwordForms(html, baseWord)
                         }.getOrDefault(emptyList())
                     }
                 }
@@ -3121,6 +3604,9 @@ class LexiconRepository(
                         arabicGlosses.add(CachedArabicGloss(g.senseGloss, g.arabicTerms))
                     }
                 }
+                formsDeferred.awaitAll().forEach { formList ->
+                    wordForms.addAll(formList)
+                }
 
                 linksDeferred.awaitAll().forEach { (cat, links) ->
                     for (term in links) {
@@ -3159,15 +3645,16 @@ class LexiconRepository(
 
             WiktionaryCachedPayload(
                 notFound = false,
-                phrasalVerbs = phrasalVerbs.distinctBy { it.lowercase(Locale.US) }.take(25),
-                idioms = idioms.distinctBy { it.lowercase(Locale.US) }.take(25),
-                compounds = compounds.distinctBy { it.lowercase(Locale.US) }.take(25),
-                collocations = collocations.distinctBy { it.lowercase(Locale.US) }.take(25),
-                synonyms = synonyms.distinctBy { it.lowercase(Locale.US) }.take(25),
-                antonyms = antonyms.distinctBy { it.lowercase(Locale.US) }.take(25),
-                derivedWords = derivedWords.distinctBy { it.lowercase(Locale.US) }.take(25),
-                relatedTerms = relatedTerms.distinctBy { it.lowercase(Locale.US) }.take(25),
-                arabicGlosses = arabicGlosses.take(80)
+                phrasalVerbs = phrasalVerbs.distinctBy { it.lowercase(Locale.US) }.take(60),
+                idioms = idioms.distinctBy { it.lowercase(Locale.US) }.take(60),
+                compounds = compounds.distinctBy { it.lowercase(Locale.US) }.take(60),
+                collocations = collocations.distinctBy { it.lowercase(Locale.US) }.take(60),
+                synonyms = synonyms.distinctBy { it.lowercase(Locale.US) }.take(60),
+                antonyms = antonyms.distinctBy { it.lowercase(Locale.US) }.take(60),
+                derivedWords = derivedWords.distinctBy { it.lowercase(Locale.US) }.take(40),
+                relatedTerms = relatedTerms.distinctBy { it.lowercase(Locale.US) }.take(60),
+                arabicGlosses = arabicGlosses.take(150),
+                wordForms = wordForms.distinctBy { "${it.form.lowercase(Locale.US)}|${it.label}" }.take(12)
             )
         } catch (e: CancellationException) {
             throw e
@@ -3355,18 +3842,18 @@ class LexiconRepository(
     private suspend fun fetchDatamuseSource(word: String): DatamuseCachedPayload? {
         return try {
             coroutineScope {
-                val synD = async { runCatching { datamuseApi.getSynonyms(word, 30) }.getOrDefault(emptyList()) }
-                val antD = async { runCatching { datamuseApi.getAntonyms(word, 30) }.getOrDefault(emptyList()) }
-                val mlD = async { runCatching { datamuseApi.getMeansLike(word, max = 30) }.getOrDefault(emptyList()) }
-                val trgD = async { runCatching { datamuseApi.getTriggeredWords(word, max = 30) }.getOrDefault(emptyList()) }
-                val jjbD = async { runCatching { datamuseApi.getAdjectiveCollocations(word, 30) }.getOrDefault(emptyList()) }
-                val jjaD = async { runCatching { datamuseApi.getNounCollocations(word, 30) }.getOrDefault(emptyList()) }
-                val bgaD = async { runCatching { datamuseApi.getFollowers(word, 30) }.getOrDefault(emptyList()) }
+                val synD = async { runCatching { datamuseApi.getSynonyms(word, 50) }.getOrDefault(emptyList()) }
+                val antD = async { runCatching { datamuseApi.getAntonyms(word, 50) }.getOrDefault(emptyList()) }
+                val mlD = async { runCatching { datamuseApi.getMeansLike(word, max = 40) }.getOrDefault(emptyList()) }
+                val trgD = async { runCatching { datamuseApi.getTriggeredWords(word, max = 40) }.getOrDefault(emptyList()) }
+                val jjbD = async { runCatching { datamuseApi.getAdjectiveCollocations(word, 40) }.getOrDefault(emptyList()) }
+                val jjaD = async { runCatching { datamuseApi.getNounCollocations(word, 40) }.getOrDefault(emptyList()) }
+                val bgaD = async { runCatching { datamuseApi.getFollowers(word, 40) }.getOrDefault(emptyList()) }
                 val spcD = async { runCatching { datamuseApi.getMoreGeneralTerms(word, 30) }.getOrDefault(emptyList()) }
                 val genD = async { runCatching { datamuseApi.getMoreSpecificTerms(word, 30) }.getOrDefault(emptyList()) }
-                val homD = async { runCatching { datamuseApi.getHomophones(word, 15) }.getOrDefault(emptyList()) }
-                val slD = async { runCatching { datamuseApi.getSoundsLike(word, 15) }.getOrDefault(emptyList()) }
-                val spD = async { runCatching { datamuseApi.getSimilarSpelling(word, 15) }.getOrDefault(emptyList()) }
+                val homD = async { runCatching { datamuseApi.getHomophones(word, 30) }.getOrDefault(emptyList()) }
+                val slD = async { runCatching { datamuseApi.getSoundsLike(word, 30) }.getOrDefault(emptyList()) }
+                val spD = async { runCatching { datamuseApi.getSimilarSpelling(word, 30) }.getOrDefault(emptyList()) }
                 val wnDefsD = async {
                     if (!word.trim().contains(" ")) {
                         runCatching { datamuseApi.getWordNetDefinitions(word) }.getOrDefault(emptyList())
@@ -3377,7 +3864,7 @@ class LexiconRepository(
                 val famD = async {
                     val stem = word.trim().lowercase(Locale.US)
                     if (stem.length >= 3 && !stem.contains(" ")) {
-                        runCatching { datamuseApi.getSpellingMatches("$stem*", max = 20) }
+                        runCatching { datamuseApi.getSpellingMatches("$stem*", max = 25) }
                             .getOrDefault(emptyList())
                     } else {
                         emptyList()
@@ -3387,17 +3874,17 @@ class LexiconRepository(
                 val synonyms = synD.await().mapNotNull { it.word?.trim() }
                     .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
                     .distinct()
-                    .take(30)
+                    .take(50)
 
                 val antonyms = antD.await().mapNotNull { it.word?.trim() }
                     .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
                     .distinct()
-                    .take(30)
+                    .take(50)
 
                 val collocations = (jjbD.await().mapNotNull { it.word?.trim()?.let { adj -> "$adj $word" } } +
                     jjaD.await().mapNotNull { it.word?.trim()?.let { n -> "$word $n" } })
                     .distinct()
-                    .take(30)
+                    .take(50)
 
                 val prepositions = bgaD.await().mapNotNull { it.word?.trim()?.lowercase(Locale.US) }
                     .filter { it in EXACT_PARTICLES }
@@ -3407,18 +3894,18 @@ class LexiconRepository(
                 val generalTerms = spcD.await().mapNotNull { it.word?.trim() }
                     .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
                     .distinct()
-                    .take(20)
+                    .take(30)
 
                 val specificTerms = genD.await().mapNotNull { it.word?.trim() }
                     .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
                     .distinct()
-                    .take(20)
+                    .take(30)
 
                 val relatedWords = (mlD.await() + trgD.await())
                     .mapNotNull { it.word?.trim() }
                     .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
                     .distinct()
-                    .take(30)
+                    .take(50)
 
                 val familyCandidates = famD.await()
                     .mapNotNull { dto ->
@@ -3564,6 +4051,7 @@ class LexiconRepository(
 
     private fun extractWiktionaryArabicTranslation(defObj: JsonObject): String? {
         val translations = defObj["translations"] as? JsonArray ?: return null
+        val collected = LinkedHashMap<String, String>()
         for (item in translations) {
             val obj = item as? JsonObject ?: continue
             val code = obj["code"]?.jsonPrimitive?.contentOrNull
@@ -3573,11 +4061,15 @@ class LexiconRepository(
                     ?: obj["text"]?.jsonPrimitive?.contentOrNull?.trim()
                     ?: obj["translation"]?.jsonPrimitive?.contentOrNull?.trim()
                 if (!word.isNullOrBlank() && ArabicTextUtils.containsArabicLetters(word)) {
-                    return word
+                    val norm = ArabicTextUtils.normalizeArabicForMatching(word)
+                    val prev = collected[norm]
+                    if (prev == null || (!ArabicTextUtils.hasArabicDiacritics(prev) && ArabicTextUtils.hasArabicDiacritics(word))) {
+                        collected[norm] = word
+                    }
                 }
             }
         }
-        return null
+        return collected.values.joinToString("؛ ").takeIf { it.isNotBlank() }
     }
 
     private fun extractTatoebaEnglishAudioUrl(sentenceObj: JsonObject): String? {
@@ -3685,7 +4177,7 @@ class LexiconRepository(
         addFrom(similarSpelling, "كتابة مشابهة")
 
         return merged.entries
-            .take(12)
+            .take(45)
             .map { (w, labels) -> ConfusableCandidate(word = w, labels = labels.toList()) }
     }
 
@@ -4033,7 +4525,46 @@ class LexiconRepository(
             )
         }
 
-        val posGroups = LinguisticRanker.groupAndNumberPosGroups(enrichedSenses, ::mapPosToArabic)
+        val posGroupsRaw = LinguisticRanker.groupAndNumberPosGroups(enrichedSenses, ::mapPosToArabic)
+        val posGroups = if (wkArabicGlosses.isNotEmpty() && posGroupsRaw.isNotEmpty()) {
+            val existingArNorms = HashSet<String>()
+            posGroupsRaw.forEach { g ->
+                g.senses.forEach { s ->
+                    s.definitionArabic?.split('؛', ';', '،')?.forEach { part ->
+                        val n = ArabicTextUtils.normalizeArabicForMatching(part.trim())
+                        if (n.isNotBlank()) existingArNorms.add(n)
+                    }
+                }
+            }
+            val unusedTerms = LinkedHashMap<String, String>()
+            wkArabicGlosses.forEach { gloss ->
+                gloss.arabicTerms.forEach { term ->
+                    val clean = term.trim()
+                    val norm = ArabicTextUtils.normalizeArabicForMatching(clean)
+                    if (norm.isNotBlank() && norm !in existingArNorms) {
+                        val prev = unusedTerms[norm]
+                        if (prev == null || (!ArabicTextUtils.hasArabicDiacritics(prev) && ArabicTextUtils.hasArabicDiacritics(clean))) {
+                            unusedTerms[norm] = clean
+                        }
+                    }
+                }
+            }
+            if (unusedTerms.isNotEmpty()) {
+                val firstGroup = posGroupsRaw.first()
+                val firstSense = firstGroup.senses.first()
+                val extraJoined = unusedTerms.values.joinToString("؛ ")
+                val combinedAr = listOfNotNull(firstSense.definitionArabic?.takeIf { it.isNotBlank() }, extraJoined)
+                    .joinToString("؛ ")
+                val updatedFirstGroup = firstGroup.copy(
+                    senses = listOf(firstSense.copy(definitionArabic = combinedAr)) + firstGroup.senses.drop(1)
+                )
+                listOf(updatedFirstGroup) + posGroupsRaw.drop(1)
+            } else {
+                posGroupsRaw
+            }
+        } else {
+            posGroupsRaw
+        }
 
         val allSynonyms = (enrichedSenses.flatMap { it.synonyms } +
             wiktionary?.synonyms.orEmpty() +
@@ -4042,7 +4573,7 @@ class LexiconRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(30)
+            .take(60)
 
         val allAntonyms = (enrichedSenses.flatMap { it.antonyms } +
             wiktionary?.antonyms.orEmpty() +
@@ -4051,7 +4582,7 @@ class LexiconRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(30)
+            .take(60)
 
         val collocations = (wiktionary?.collocations.orEmpty() +
             datamuse?.collocations.orEmpty() +
@@ -4059,7 +4590,7 @@ class LexiconRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(30)
+            .take(60)
 
         val curatedForWord = ContextualTranslationAnalyzer.getCuratedPhrasesForHeadword(word, isArabic = false)
         val curatedPhrasals = curatedForWord.filter { it.isPhrasalVerb }.map { it.phrase }
@@ -4072,14 +4603,14 @@ class LexiconRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && it.contains(" ") && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(35)
+            .take(60)
 
         val compoundExpressions = (wiktionary?.compounds.orEmpty() +
             wiktionary?.collocations.orEmpty())
             .map { it.trim() }
             .filter { it.isNotBlank() && it.contains(" ") && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(25)
+            .take(50)
 
         val prepositionsAndPhrases = (wiktionary?.phrasalVerbs.orEmpty() +
             curatedPhrasals +
@@ -4094,7 +4625,7 @@ class LexiconRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(50)
+            .take(80)
 
         val curatedItems = curatedForWord.map { k ->
             val cat = if (k.isPhrasalVerb) "PHRASAL_VERB" else "IDIOM"
@@ -4138,19 +4669,23 @@ class LexiconRepository(
         val dmFamily = datamuse?.familyCandidates.orEmpty()
         val wordFamily = (wkFamily + packFamily + dmFamily)
             .distinctBy { it.word.lowercase(Locale.US) }
-            .take(20)
+            .take(30)
 
         val relatedWords = (wiktionary?.relatedTerms.orEmpty() + datamuse?.relatedWords.orEmpty())
             .map { it.trim() }
             .filter { it.isNotBlank() && !it.equals(word, ignoreCase = true) }
             .distinctBy { it.lowercase(Locale.US) }
-            .take(30)
+            .take(60)
 
         val confusableCandidates = if (datamuse != null && datamuse.confusableCandidates.isNotEmpty()) {
             datamuse.confusableCandidates
         } else {
             offlinePack?.confusableCandidates.orEmpty()
         }
+
+        val combinedForms = (wiktionary?.wordForms.orEmpty() + offlinePack?.wordForms.orEmpty())
+            .distinctBy { "${it.form.lowercase(Locale.US)}|${it.label}" }
+            .take(12)
 
         // Show up to 3 Tatoeba examples per word (BUG 5)
         val displayedTatoeba = tatoebaPool.take(3)
@@ -4182,6 +4717,8 @@ class LexiconRepository(
             usAudioUrl = resolvedUsAudio,
             ukAudioUrl = resolvedUkAudio,
             tags = offlinePack?.tags.orEmpty(),
+            frequencyRank = offlinePack?.frequencyRank ?: Int.MAX_VALUE,
+            wordForms = combinedForms,
             machineTranslations = machineTranslations,
             missingTranslationPack = missingTranslationPack,
             posGroups = posGroups,
@@ -4300,6 +4837,36 @@ class LexiconRepository(
             val confusables = readJsonStringList(root.optJSONArray("confusables")).map {
                 ConfusableCandidate(word = it, labels = listOf("كتابة/معنى متقارب"))
             }
+            val rank = root.optInt("rank", entity.frequencyRank)
+            val wordForms = mutableListOf<WordFormItem>()
+            val formsArr = root.optJSONArray("forms")
+            if (formsArr != null) {
+                for (i in 0 until formsArr.length()) {
+                    val obj = formsArr.optJSONObject(i)
+                    if (obj != null) {
+                        val f = obj.optString("form", "").trim()
+                        val l = obj.optString("label", "").trim()
+                        if (f.isNotEmpty()) {
+                            val lAr = when (l) {
+                                "pa. pple." -> "اسم المفعول"
+                                "pa. t." -> "الماضي"
+                                "3rd sg." -> "المضارع المفرد"
+                                "pres. pple." -> "اسم الفاعل"
+                                "pl." -> "الجمع"
+                                "comp." -> "المقارنة"
+                                "sup." -> "التفضيل"
+                                else -> l
+                            }
+                            wordForms.add(WordFormItem(form = f, label = l, labelArabic = lAr))
+                        }
+                    } else {
+                        val fStr = formsArr.optString(i, "").trim()
+                        if (fStr.isNotEmpty()) {
+                            wordForms.add(WordFormItem(form = fStr))
+                        }
+                    }
+                }
+            }
 
             WordEntry(
                 word = entity.normalizedWord,
@@ -4308,9 +4875,11 @@ class LexiconRepository(
                 lang = lang,
                 usIpa = phonetic,
                 tags = tags,
+                frequencyRank = rank,
+                wordForms = wordForms,
                 posGroups = posGroups,
-                synonyms = syns.distinct().take(30),
-                antonyms = ants.distinct().take(30),
+                synonyms = syns.distinct().take(60),
+                antonyms = ants.distinct().take(60),
                 collocations = collocations,
                 prepositionsAndPhrases = phrases,
                 wordFamily = family,

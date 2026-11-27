@@ -6,8 +6,11 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,10 +21,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,6 +35,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -80,12 +86,28 @@ import com.example.core.AppLanguage
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.AudioSpeedOptions
+import com.example.core.LinguisticRanker
 import com.example.core.LocalAppLanguage
+import com.example.core.OfflinePackState
 import com.example.core.tr
 import com.example.domain.model.InstantTranslationResult
 import com.example.domain.model.LanguageDirection
 import com.example.domain.model.PhraseSheetData
+import com.example.domain.model.SearchSuggestion
 import java.util.Locale
+
+@OptIn(ExperimentalFoundationApi::class)
+fun Modifier.clickableOrDoubleTap(
+    onClick: () -> Unit,
+    onDoubleClick: (() -> Unit)? = null
+): Modifier = if (onDoubleClick != null) {
+    this.combinedClickable(
+        onClick = onClick,
+        onDoubleClick = onDoubleClick
+    )
+} else {
+    this.clickable(onClick = onClick)
+}
 
 @Composable
 fun LanguageSwapBar(
@@ -216,6 +238,7 @@ fun CompactWordAudioButtons(
     onPlayUs: () -> Unit,
     onPlayUk: () -> Unit,
     showUnavailableLabel: Boolean = false,
+    onDoubleClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -224,8 +247,18 @@ fun CompactWordAudioButtons(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            MiniSpeakerButton(label = "US", onClick = onPlayUs, testTag = "audio_btn_us")
-            MiniSpeakerButton(label = "UK", onClick = onPlayUk, testTag = "audio_btn_uk")
+            MiniSpeakerButton(
+                label = "US",
+                onClick = onPlayUs,
+                testTag = "audio_btn_us",
+                onDoubleClick = onDoubleClick
+            )
+            MiniSpeakerButton(
+                label = "UK",
+                onClick = onPlayUk,
+                testTag = "audio_btn_uk",
+                onDoubleClick = onDoubleClick
+            )
         }
     }
 }
@@ -240,6 +273,7 @@ fun SentenceDualSpeakerButtons(
     onPlayUs: () -> Unit,
     onPlayUk: () -> Unit,
     onStop: () -> Unit,
+    onDoubleClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val usKey = "${keyPrefix}_us"
@@ -256,13 +290,15 @@ fun SentenceDualSpeakerButtons(
                 label = "US",
                 isPlaying = isUsPlaying,
                 onClick = { if (isUsPlaying) onStop() else onPlayUs() },
-                testTag = "speaker_$usKey"
+                testTag = "speaker_$usKey",
+                onDoubleClick = onDoubleClick
             )
             MiniSpeakerButton(
                 label = "UK",
                 isPlaying = isUkPlaying,
                 onClick = { if (isUkPlaying) onStop() else onPlayUk() },
-                testTag = "speaker_$ukKey"
+                testTag = "speaker_$ukKey",
+                onDoubleClick = onDoubleClick
             )
         }
     }
@@ -273,14 +309,15 @@ private fun MiniSpeakerButton(
     label: String,
     onClick: () -> Unit,
     testTag: String,
-    isPlaying: Boolean = false
+    isPlaying: Boolean = false,
+    onDoubleClick: (() -> Unit)? = null
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier
             .size(width = 44.dp, height = 44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .clickableOrDoubleTap(onClick = onClick, onDoubleClick = onDoubleClick)
             .testTag(testTag),
         color = if (isPlaying) colors.primaryContainer else colors.surfaceVariant,
         shape = RoundedCornerShape(8.dp),
@@ -403,6 +440,8 @@ fun InteractiveWordChip(
     onClick: () -> Unit,
     arabicSubtext: String? = null,
     highlighted: Boolean = false,
+    onSpeak: ((String) -> Unit)? = null,
+    onDoubleClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
@@ -413,45 +452,72 @@ fun InteractiveWordChip(
 
     Surface(
         modifier = modifier
-            .defaultMinSize(minHeight = if (hasSub) 44.dp else 36.dp)
-            .clip(RoundedCornerShape(if (hasSub) 14.dp else 999.dp))
-            .clickable(onClick = onClick),
+            .defaultMinSize(minHeight = if (hasSub || onSpeak != null) 48.dp else 36.dp)
+            .clip(RoundedCornerShape(if (hasSub) 14.dp else 999.dp)),
         color = if (highlighted) colors.primaryContainer else colors.surfaceVariant,
         shape = RoundedCornerShape(if (hasSub) 14.dp else 999.dp),
         border = BorderStroke(1.dp, if (highlighted) colors.primary else colors.outline)
     ) {
-        Column(
-            modifier = Modifier.padding(
-                horizontal = 12.dp,
-                vertical = if (hasSub) 6.dp else 8.dp
-            ),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        Row(
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            CompositionLocalProvider(
-                LocalLayoutDirection provides if (wordIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
-            ) {
-                Text(
-                    text = word,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Medium
+            Column(
+                modifier = Modifier
+                    .clickableOrDoubleTap(onClick = onClick, onDoubleClick = onDoubleClick)
+                    .padding(
+                        start = 12.dp,
+                        end = if (onSpeak != null) 4.dp else 12.dp,
+                        top = if (hasSub) 6.dp else 8.dp,
+                        bottom = if (hasSub) 6.dp else 8.dp
                     ),
-                    color = if (highlighted) colors.primary else colors.secondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (hasSub) {
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
                 CompositionLocalProvider(
-                    LocalLayoutDirection provides if (subIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    LocalLayoutDirection provides if (wordIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
                 ) {
                     Text(
-                        text = subTrimmed,
-                        fontSize = 10.sp,
-                        lineHeight = 13.sp,
-                        color = colors.onSurfaceVariant,
+                        text = word,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Medium
+                        ),
+                        color = if (highlighted) colors.primary else colors.secondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (hasSub) {
+                    CompositionLocalProvider(
+                        LocalLayoutDirection provides if (subIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    ) {
+                        Text(
+                            text = subTrimmed,
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp,
+                            color = colors.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            if (onSpeak != null) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickableOrDoubleTap(
+                            onClick = { onSpeak(word) },
+                            onDoubleClick = onDoubleClick
+                        )
+                        .testTag("chip_speak_${word.trim().lowercase(Locale.US)}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = AppIcons.VolumeUp,
+                        contentDescription = tr("Pronounce $word", "نطق $word"),
+                        tint = colors.primary,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -687,6 +753,8 @@ fun ChipWrapRow(
     onChipClick: (String) -> Unit,
     chipMeanings: Map<String, String> = emptyMap(),
     highlightedChip: String? = null,
+    onSpeak: ((String) -> Unit)? = null,
+    onDoubleClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isRtlItems = items.firstOrNull()?.let { ArabicTextUtils.containsArabicLetters(it) } == true
@@ -704,7 +772,9 @@ fun ChipWrapRow(
                     word = item,
                     arabicSubtext = sub,
                     highlighted = highlightedChip != null && item.equals(highlightedChip, ignoreCase = true),
-                    onClick = { onChipClick(item) }
+                    onClick = { onChipClick(item) },
+                    onSpeak = onSpeak,
+                    onDoubleClick = onDoubleClick
                 )
             }
         }
@@ -712,8 +782,9 @@ fun ChipWrapRow(
 }
 
 /**
- * Renders Arabic translated text with an optional tiny, low-contrast inline "ترجمة آلية" label.
+ * Renders Arabic translated text as a clean result without machine-translation badges.
  */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun ArabicTranslatedText(
     text: String,
@@ -723,26 +794,9 @@ fun ArabicTranslatedText(
     color: androidx.compose.ui.graphics.Color,
     modifier: Modifier = Modifier
 ) {
-    val colors = MaterialTheme.colorScheme
-    val machineTag = tr("Machine translated", "ترجمة آلية")
-    val annotated = buildAnnotatedString {
-        append(text)
-        if (isMachineTranslated && showMachineLabel) {
-            append("  ")
-            withStyle(
-                SpanStyle(
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = colors.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
-                append(machineTag)
-            }
-        }
-    }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         Text(
-            text = annotated,
+            text = text,
             style = style,
             color = color,
             modifier = modifier
@@ -758,6 +812,7 @@ fun SentenceSpeakerButton(
     isPlaying: Boolean,
     onClick: () -> Unit,
     contentDescription: String? = null,
+    onDoubleClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
@@ -768,7 +823,7 @@ fun SentenceSpeakerButton(
             .size(40.dp)
             .clip(CircleShape)
             .background(if (isPlaying) colors.primaryContainer else colors.surfaceVariant)
-            .clickable(onClick = onClick),
+            .clickableOrDoubleTap(onClick = onClick, onDoubleClick = onDoubleClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -1800,3 +1855,372 @@ fun MissingEnglishTtsVoiceBanner(
         }
     }
 }
+
+/**
+ * Shown ONLY in offline mode when the offline dictionary pack is missing, or while downloading.
+ */
+@Composable
+fun OfflineDictionaryPackBanner(
+    isOnline: Boolean,
+    packState: OfflinePackState?,
+    onDownloadClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    when (packState) {
+        is OfflinePackState.Downloading -> {
+            Surface(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .testTag("offline_pack_downloading_banner"),
+                color = colors.primaryContainer.copy(alpha = 0.65f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = packState.statusText.ifBlank {
+                            tr("Downloading offline dictionary pack...", "جاري تحميل القاموس المحلي...")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (packState.indeterminate) {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp),
+                            color = colors.primary,
+                            trackColor = colors.outline
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { packState.progress.coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp),
+                            color = colors.primary,
+                            trackColor = colors.outline
+                        )
+                    }
+                }
+            }
+        }
+        is OfflinePackState.Ready -> {
+            if (!isOnline && !packState.isInstalled) {
+                Surface(
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .testTag("offline_pack_missing_banner"),
+                    color = colors.secondaryContainer.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = tr(
+                                "Offline dictionary pack is not downloaded. Download it to search full meanings while offline.",
+                                "حزمة القاموس غير محمّلة. حمّلها للبحث عن المعاني الكاملة دون إنترنت."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSecondaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = onDownloadClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.primary,
+                                contentColor = colors.onPrimary
+                            ),
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 48.dp)
+                                .testTag("offline_pack_download_button")
+                        ) {
+                            Text(tr("Download", "تحميل"), style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+        }
+        is OfflinePackState.Error -> {
+            if (!isOnline && !packState.isInstalled) {
+                Surface(
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .testTag("offline_pack_error_banner"),
+                    color = colors.errorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, colors.error.copy(alpha = 0.35f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = tr(
+                                    "Offline dictionary pack is not downloaded. Connect to internet and download it for offline lookups.",
+                                    "حزمة القاموس غير محمّلة. اتصل بالإنترنت وحمّلها للبحث دون اتصال."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onErrorContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = onDownloadClick,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = colors.primary,
+                                    contentColor = colors.onPrimary
+                                ),
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .testTag("offline_pack_download_button")
+                            ) {
+                                Text(tr("Download", "تحميل"), style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        if (packState.message.isNotBlank()) {
+                            Text(
+                                text = packState.message,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.error
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        null -> Unit
+    }
+}
+
+private val SHARED_POS_SEGMENT_SPLIT_REGEX =
+    Regex("؛\\s+(?=(?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom\\s|phr\\.|prov\\.))")
+
+private val SHARED_POS_LEADING_TAG_REGEX =
+    Regex("^((?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom|phr\\.|prov\\.)\\s*)(.*)$")
+
+/**
+ * Full-width "See more" / "See less" footer row with down/up arrow.
+ * Always displays English labels ("See more", "See less") as required.
+ */
+@Composable
+fun FullWidthSeeMoreFooter(
+    isExpanded: Boolean,
+    remainingCount: Int = 0,
+    onClick: () -> Unit,
+    testTag: String = "see_more_footer",
+    onDoubleTapCollapse: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val label = if (isExpanded) {
+        "See less"
+    } else if (remainingCount > 0) {
+        "See more ($remainingCount)"
+    } else {
+        "See more"
+    }
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickableOrDoubleTap(
+                    onClick = onClick,
+                    onDoubleClick = if (isExpanded) onDoubleTapCollapse else null
+                )
+                .testTag(testTag),
+            color = colors.surfaceVariant.copy(alpha = 0.72f),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, colors.outline)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = colors.primary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = label,
+                    tint = colors.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Shared single-row live search item matching Reference Screenshot 1 + Requirement 2:
+ * Shows word (bold), POS-grouped meanings capped at 5-6 items ("؛"-separated, truncated with "...")
+ * on the SAME row, plus compact US/UK speaker buttons.
+ */
+@Composable
+fun LiveSearchSuggestionRow(
+    suggestion: SearchSuggestion,
+    audioManager: AudioPlayerManager,
+    onOpenWord: () -> Unit,
+    onDoubleTapCollapse: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val rawPreview = remember(suggestion.posPreview, suggestion.summaryDefinition, suggestion.isArabic) {
+        if (suggestion.posPreview.isNotBlank()) {
+            suggestion.posPreview
+        } else if (suggestion.isArabic) {
+            suggestion.summaryDefinition.takeIf { it.any { c -> c in 'a'..'z' || c in 'A'..'Z' } }.orEmpty()
+        } else {
+            suggestion.summaryDefinition.takeIf { ArabicTextUtils.containsArabicLetters(it) }.orEmpty()
+        }
+    }
+    val cappedPreview = remember(rawPreview) {
+        LinguisticRanker.capPosPreviewMeanings(rawPreview, maxMeanings = 6)
+    }
+    val posSegments = remember(cappedPreview) {
+        if (cappedPreview.isBlank()) {
+            emptyList()
+        } else {
+            cappedPreview.split(SHARED_POS_SEGMENT_SPLIT_REGEX)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        }
+    }
+    val hasArabicPreview = remember(cappedPreview) {
+        ArabicTextUtils.containsArabicLetters(cappedPreview)
+    }
+    val styledMeanings = remember(posSegments, cappedPreview, colors.primary) {
+        buildAnnotatedString {
+            if (posSegments.isEmpty() && cappedPreview.isNotBlank()) {
+                append(cappedPreview)
+            } else {
+                posSegments.forEachIndexed { idx, segment ->
+                    if (idx > 0) append("؛ ")
+                    val match = SHARED_POS_LEADING_TAG_REGEX.find(segment)
+                    if (match != null) {
+                        withStyle(
+                            SpanStyle(
+                                fontWeight = FontWeight.Bold,
+                                color = colors.primary
+                            )
+                        ) {
+                            append(match.groupValues[1])
+                        }
+                        append(match.groupValues[2])
+                    } else {
+                        append(segment)
+                    }
+                }
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
+                .clickableOrDoubleTap(
+                    onClick = onOpenWord,
+                    onDoubleClick = onDoubleTapCollapse
+                )
+                .padding(horizontal = 8.dp, vertical = 10.dp)
+                .testTag("suggestion_${suggestion.word}"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CompositionLocalProvider(
+                LocalLayoutDirection provides if (suggestion.isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+            ) {
+                Text(
+                    text = suggestion.word,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 150.dp)
+                )
+            }
+
+            if (styledMeanings.isNotEmpty()) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (hasArabicPreview) LayoutDirection.Rtl else LayoutDirection.Ltr
+                ) {
+                    Text(
+                        text = styledMeanings,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+
+            if (!suggestion.isArabic && !suggestion.isIdiom) {
+                CompactWordAudioButtons(
+                    hasUsAudio = true,
+                    hasUkAudio = true,
+                    onPlayUs = {
+                        audioManager.playHumanPronunciation(
+                            word = suggestion.word,
+                            accent = Accent.US,
+                            audioUrl = suggestion.usAudioUrl,
+                            key = "sug_us_${suggestion.word}"
+                        )
+                    },
+                    onPlayUk = {
+                        audioManager.playHumanPronunciation(
+                            word = suggestion.word,
+                            accent = Accent.UK,
+                            audioUrl = suggestion.ukAudioUrl,
+                            key = "sug_uk_${suggestion.word}"
+                        )
+                    },
+                    onDoubleClick = onDoubleTapCollapse
+                )
+            } else if (suggestion.isArabic) {
+                val arKey = "sug_ar_${suggestion.word.hashCode()}"
+                SentenceSpeakerButton(
+                    isPlaying = false,
+                    onClick = {
+                        audioManager.playSentenceAudio(
+                            sentence = suggestion.word,
+                            audioUrl = null,
+                            key = arKey
+                        )
+                    },
+                    contentDescription = tr("Pronounce ${suggestion.word}", "نطق ${suggestion.word}"),
+                    onDoubleClick = onDoubleTapCollapse
+                )
+            }
+        }
+    }
+}
+

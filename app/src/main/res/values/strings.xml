@@ -21,7 +21,7 @@
     <string name="compound_expressions_title">التعابير المركبة والمتلازمات</string>
     <string name="similar_words_title">عائلة الكلمة</string>
     <string name="confusables_title">كلمات يسهل الخلط بينها</string>
-    <string name="more_examples_title">أمثلة إضافية (ترجمة بشرية من Tatoeba)</string>
+    <string name="more_examples_title">أمثلة إضافية</string>
     <string name="related_terms_title">كلمات ذات صلة</string>
     <string name="hypernyms_hyponyms_title">مصطلحات أعم وأخص</string>
     <string name="no_internet_title">لا يوجد اتصال بالإنترنت</string>

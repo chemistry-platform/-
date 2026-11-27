@@ -77,6 +77,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.defaultMinSize
 import com.example.R
 import com.example.core.Accent
 import com.example.core.ArabicTextUtils
@@ -84,9 +85,11 @@ import com.example.core.AudioPlayerManager
 import com.example.core.LinguisticRanker
 import com.example.core.LocalAppLanguage
 import com.example.core.LocalizedLabels
+import com.example.core.OfflinePackState
 import com.example.core.tr
 import com.example.data.repository.WordLoadState
 import com.example.domain.model.ArabicVocalizedGroup
+import com.example.domain.model.ConfusableCandidate
 import com.example.domain.model.ConfusableWordDetail
 import com.example.domain.model.PhraseDetailItem
 import com.example.domain.model.PosSenseGroup
@@ -105,6 +108,7 @@ import com.example.ui.components.InteractiveWordChip
 import com.example.ui.components.LoadingCard
 import com.example.ui.components.MissingArabicPackTopBanner
 import com.example.ui.components.MissingEnglishTtsVoiceBanner
+import com.example.ui.components.OfflineDictionaryPackBanner
 import com.example.ui.components.PhraseFallbackBottomSheet
 import com.example.ui.components.PosChip
 import com.example.ui.components.PronunciationPillButton
@@ -152,9 +156,22 @@ fun WordDetailScreen(
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
     val ttsMissingEnglishVoice by audioManager.ttsMissingEnglishVoice.collectAsStateWithLifecycle()
     val ttsMissingAccentLabel by audioManager.ttsMissingAccentLabel.collectAsStateWithLifecycle()
+    val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
+    val offlinePackState = viewModel.offlinePackState?.collectAsStateWithLifecycle()?.value
 
     var inlineQuery by remember(currentQuery) { mutableStateOf(currentQuery) }
     var showAwlDialog by remember { mutableStateOf(false) }
+    val speakChip: (String) -> Unit = remember(audioManager) {
+        { chipWord ->
+            if (ArabicTextUtils.containsArabicLetters(chipWord)) {
+                audioManager.playSentenceAudio(chipWord, null, "chip_${chipWord.hashCode()}")
+            } else if (ArabicTextUtils.isMultiWordQuery(chipWord)) {
+                audioManager.playSentenceAudio(chipWord, null, "chip_${chipWord.hashCode()}", Accent.US)
+            } else {
+                audioManager.playHumanPronunciation(chipWord, Accent.US, null, "chip_${chipWord.hashCode()}")
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         audioManager.prepareTtsCheckIfNeeded()
@@ -317,7 +334,7 @@ fun WordDetailScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             color = colors.onBackground
                         )
-                        if (state.needsLanguagePack) {
+                        if (state.needsLanguagePack && !isOnline) {
                             MissingArabicPackTopBanner(
                                 isDownloading = isDownloadingPack,
                                 errorMessage = packDownloadMessage,
@@ -325,6 +342,11 @@ fun WordDetailScreen(
                                 onOpenLanguages = onOpenLanguages
                             )
                         } else {
+                            OfflineDictionaryPackBanner(
+                                isOnline = isOnline,
+                                packState = offlinePackState,
+                                onDownloadClick = { viewModel.requestOfflinePackDownload() }
+                            )
                             Button(
                                 onClick = { viewModel.loadWord(currentQuery, forceRefresh = true) },
                                 colors = ButtonDefaults.buttonColors(containerColor = colors.primary)
@@ -350,15 +372,27 @@ fun WordDetailScreen(
                     var collocationsExpanded by remember(entry.word) { mutableStateOf(false) }
                     var phrasalVerbsExpanded by remember(entry.word) { mutableStateOf(true) }
                     var idiomsExpanded by remember(entry.word) { mutableStateOf(true) }
+                    var homophonesExpanded by remember(entry.word) { mutableStateOf(false) }
+                    var lookAlikeExpanded by remember(entry.word) { mutableStateOf(false) }
+                    var soundAlikeExpanded by remember(entry.word) { mutableStateOf(false) }
                     var compoundsExpanded by remember(entry.word) { mutableStateOf(false) }
                     var phrasesExpanded by remember(entry.word, highlightedChip) {
                         mutableStateOf(!highlightedChip.isNullOrBlank())
                     }
                     var familyExpanded by remember(entry.word) { mutableStateOf(false) }
-                    var confusablesExpanded by remember(entry.word) { mutableStateOf(false) }
                     var generalSpecExpanded by remember(entry.word) { mutableStateOf(false) }
                     var relatedExpanded by remember(entry.word) { mutableStateOf(false) }
                     var tatoebaExpanded by remember(entry.word) { mutableStateOf(true) }
+
+                    val homophoneCandidates = remember(entry.confusableCandidates) {
+                        entry.confusableCandidates.filter { "نفس النطق" in it.labels }
+                    }
+                    val lookAlikeCandidates = remember(entry.confusableCandidates) {
+                        entry.confusableCandidates.filter { "كتابة مشابهة" in it.labels }
+                    }
+                    val soundAlikeCandidates = remember(entry.confusableCandidates) {
+                        entry.confusableCandidates.filter { "نفس النطق" !in it.labels && "كتابة مشابهة" !in it.labels }
+                    }
 
                     val displayPhrasals = remember(phrasalDetails, entry.phrasalVerbsAndIdioms) {
                         if (phrasalDetails.isEmpty()) {
@@ -433,8 +467,22 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Section 19.11: Missing Arabic pack banner with direct Download button at top
-                        if (entry.missingTranslationPack) {
+                        // Show offline dictionary pack prompt ONLY when offline and missing, or while downloading
+                        if (offlinePackState is OfflinePackState.Downloading ||
+                            (!isOnline && ((offlinePackState is OfflinePackState.Ready && !offlinePackState.isInstalled) ||
+                                (offlinePackState is OfflinePackState.Error && !offlinePackState.isInstalled)))
+                        ) {
+                            item(key = "offline_pack_banner", contentType = "banner") {
+                                OfflineDictionaryPackBanner(
+                                    isOnline = isOnline,
+                                    packState = offlinePackState,
+                                    onDownloadClick = { viewModel.requestOfflinePackDownload() }
+                                )
+                            }
+                        }
+
+                        // Missing offline ML Kit Arabic pack banner (shown ONLY when offline)
+                        if (entry.missingTranslationPack && !isOnline) {
                             item(key = "missing_ar_pack_top", contentType = "banner") {
                                 MissingArabicPackTopBanner(
                                     isDownloading = isDownloadingPack,
@@ -445,7 +493,7 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Section 19.7: Missing English TTS voice prompt when needed
+                        // Missing English TTS voice prompt when needed
                         if (ttsMissingEnglishVoice && hasEnglishSentencesRequiringTts) {
                             item(key = "missing_tts_voice", contentType = "banner") {
                                 MissingEnglishTtsVoiceBanner(
@@ -459,7 +507,7 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Headword Card with Human US/UK Audio Buttons, Speed Selector, AWL chip & Quick Translations
+                        // Headword Card with Human US/UK Audio Buttons, POS Meanings, Word Forms, Frequency Tags
                         item(key = "headword_${entry.word}", contentType = "headword") {
                             HeadwordCard(
                                 entry = entry,
@@ -467,12 +515,13 @@ fun WordDetailScreen(
                                 audioManager = audioManager,
                                 audioSpeed = audioSpeed,
                                 showArabicTranslations = showArabicTranslations,
-                                showMachineLabel = showMachineLabel,
                                 chipMeanings = chipMeanings,
                                 onSelectSpeed = { audioManager.setAudioSpeed(it) },
                                 onToggleFavorite = onToggleFavorite,
                                 onOpenAwlInfo = { showAwlDialog = true },
                                 onChipClick = { w -> viewModel.onChipTapped(w) },
+                                onOpenWord = { w -> onOpenWord(w, null, null) },
+                                onSpeak = speakChip,
                                 onSelectVocalizedForm = { vocalized -> viewModel.loadWord(vocalized) }
                             )
                         }
@@ -554,22 +603,43 @@ fun WordDetailScreen(
                                     },
                                     onStopAudio = { audioManager.stopPlayback() },
                                     onChipClick = { viewModel.onChipTapped(it) },
-                                    onOpenWord = { onOpenWord(it, null, null) }
+                                    onOpenWord = { onOpenWord(it, null, null) },
+                                    onSpeakChip = speakChip
                                 )
                             }
                         }
 
-                        if (entry.hasWiktionaryAttribution) {
-                            item(key = "wiktionary_attribution", contentType = "attribution") {
-                                Text(
-                                    text = tr("Source: Wiktionary • CC BY-SA 4.0", "المصدر: ويكاموس (Wiktionary) • CC BY-SA 4.0"),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.onSurfaceVariant
+                        // 1. Synonyms
+                        if (entry.synonyms.isNotEmpty()) {
+                            item(key = "sec_synonyms", contentType = "chips_section") {
+                                CollapsibleChipsSection(
+                                    title = tr("Synonyms", "المترادفات"),
+                                    expanded = synonymsExpanded,
+                                    onToggle = { synonymsExpanded = !synonymsExpanded },
+                                    items = entry.synonyms,
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) },
+                                    onSpeak = speakChip
                                 )
                             }
                         }
 
-                        // Phrasal Verbs section
+                        // 2. Antonyms
+                        if (entry.antonyms.isNotEmpty()) {
+                            item(key = "sec_antonyms", contentType = "chips_section") {
+                                CollapsibleChipsSection(
+                                    title = tr("Antonyms", "المتضادات"),
+                                    expanded = antonymsExpanded,
+                                    onToggle = { antonymsExpanded = !antonymsExpanded },
+                                    items = entry.antonyms,
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) },
+                                    onSpeak = speakChip
+                                )
+                            }
+                        }
+
+                        // 3. Phrasal Verbs
                         if (phrasalVerbItems.isNotEmpty() || (isLoadingPhrasals && !entry.isArabicWord && displayPhrasals.isEmpty())) {
                             item(key = "sec_phrasal_verbs", contentType = "phrasals_section") {
                                 CollapsibleSectionCard(
@@ -623,7 +693,7 @@ fun WordDetailScreen(
                             }
                         }
 
-                        // Idioms & Expressions section
+                        // 4. Idioms & Expressions
                         if (idiomItems.isNotEmpty()) {
                             item(key = "sec_idioms", contentType = "idioms_section") {
                                 CollapsibleSectionCard(
@@ -652,6 +722,90 @@ fun WordDetailScreen(
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        // 5. Collocations
+                        if (entry.collocations.isNotEmpty()) {
+                            item(key = "sec_collocations", contentType = "chips_section") {
+                                CollapsibleChipsSection(
+                                    title = tr("Collocations", "المتلازمات اللفظية"),
+                                    expanded = collocationsExpanded,
+                                    onToggle = { collocationsExpanded = !collocationsExpanded },
+                                    items = entry.collocations,
+                                    chipMeanings = chipMeanings,
+                                    onChipClick = { viewModel.onChipTapped(it) },
+                                    onSpeak = speakChip
+                                )
+                            }
+                        }
+
+                        // 6. Homophones
+                        if (homophoneCandidates.isNotEmpty()) {
+                            item(key = "sec_homophones", contentType = "confusables_section") {
+                                ConfusableCategorySection(
+                                    title = tr("Homophones", "كلمات بنفس النطق"),
+                                    candidates = homophoneCandidates,
+                                    expanded = homophonesExpanded,
+                                    onToggle = {
+                                        val next = !homophonesExpanded
+                                        homophonesExpanded = next
+                                        if (next) viewModel.loadConfusablesIfNeeded()
+                                    },
+                                    isLoading = isLoadingConfusables,
+                                    confusableDetails = confusableDetails,
+                                    chipMeanings = chipMeanings,
+                                    audioManager = audioManager,
+                                    onLoadNeeded = { viewModel.loadConfusablesIfNeeded() },
+                                    onTapCandidate = { viewModel.onChipTapped(it) },
+                                    onSpeakChip = speakChip
+                                )
+                            }
+                        }
+
+                        // 7. Look-alike Words
+                        if (lookAlikeCandidates.isNotEmpty()) {
+                            item(key = "sec_look_alike", contentType = "confusables_section") {
+                                ConfusableCategorySection(
+                                    title = tr("Look-alike Words", "كلمات متشابهة في الكتابة"),
+                                    candidates = lookAlikeCandidates,
+                                    expanded = lookAlikeExpanded,
+                                    onToggle = {
+                                        val next = !lookAlikeExpanded
+                                        lookAlikeExpanded = next
+                                        if (next) viewModel.loadConfusablesIfNeeded()
+                                    },
+                                    isLoading = isLoadingConfusables,
+                                    confusableDetails = confusableDetails,
+                                    chipMeanings = chipMeanings,
+                                    audioManager = audioManager,
+                                    onLoadNeeded = { viewModel.loadConfusablesIfNeeded() },
+                                    onTapCandidate = { viewModel.onChipTapped(it) },
+                                    onSpeakChip = speakChip
+                                )
+                            }
+                        }
+
+                        // 8. Sound-alike Words
+                        if (soundAlikeCandidates.isNotEmpty()) {
+                            item(key = "sec_sound_alike", contentType = "confusables_section") {
+                                ConfusableCategorySection(
+                                    title = tr("Sound-alike Words", "كلمات متشابهة في النطق"),
+                                    candidates = soundAlikeCandidates,
+                                    expanded = soundAlikeExpanded,
+                                    onToggle = {
+                                        val next = !soundAlikeExpanded
+                                        soundAlikeExpanded = next
+                                        if (next) viewModel.loadConfusablesIfNeeded()
+                                    },
+                                    isLoading = isLoadingConfusables,
+                                    confusableDetails = confusableDetails,
+                                    chipMeanings = chipMeanings,
+                                    audioManager = audioManager,
+                                    onLoadNeeded = { viewModel.loadConfusablesIfNeeded() },
+                                    onTapCandidate = { viewModel.onChipTapped(it) },
+                                    onSpeakChip = speakChip
+                                )
                             }
                         }
 
@@ -686,51 +840,12 @@ fun WordDetailScreen(
                                             ChipWrapRow(
                                                 items = remainingCompoundChips,
                                                 chipMeanings = chipMeanings,
-                                                onChipClick = { viewModel.onChipTapped(it) }
+                                                onChipClick = { viewModel.onChipTapped(it) },
+                                                onSpeak = speakChip
                                             )
                                         }
                                     }
                                 }
-                            }
-                        }
-
-                        // Collapsible Sections (shown ONLY if real data exists)
-                        if (entry.synonyms.isNotEmpty()) {
-                            item(key = "sec_synonyms", contentType = "chips_section") {
-                                CollapsibleChipsSection(
-                                    title = tr("Synonyms", "المترادفات"),
-                                    expanded = synonymsExpanded,
-                                    onToggle = { synonymsExpanded = !synonymsExpanded },
-                                    items = entry.synonyms,
-                                    chipMeanings = chipMeanings,
-                                    onChipClick = { viewModel.onChipTapped(it) }
-                                )
-                            }
-                        }
-
-                        if (entry.antonyms.isNotEmpty()) {
-                            item(key = "sec_antonyms", contentType = "chips_section") {
-                                CollapsibleChipsSection(
-                                    title = tr("Antonyms", "المتضادات"),
-                                    expanded = antonymsExpanded,
-                                    onToggle = { antonymsExpanded = !antonymsExpanded },
-                                    items = entry.antonyms,
-                                    chipMeanings = chipMeanings,
-                                    onChipClick = { viewModel.onChipTapped(it) }
-                                )
-                            }
-                        }
-
-                        if (entry.collocations.isNotEmpty()) {
-                            item(key = "sec_collocations", contentType = "chips_section") {
-                                CollapsibleChipsSection(
-                                    title = tr("Collocations", "المتلازمات اللفظية"),
-                                    expanded = collocationsExpanded,
-                                    onToggle = { collocationsExpanded = !collocationsExpanded },
-                                    items = entry.collocations,
-                                    chipMeanings = chipMeanings,
-                                    onChipClick = { viewModel.onChipTapped(it) }
-                                )
                             }
                         }
 
@@ -746,7 +861,8 @@ fun WordDetailScreen(
                                     onChipClick = { phrase ->
                                         viewModel.clearHighlightedChip()
                                         viewModel.onChipTapped(phrase)
-                                    }
+                                    },
+                                    onSpeak = speakChip
                                 )
                             }
                         }
@@ -790,85 +906,34 @@ fun WordDetailScreen(
                                                         )
                                                     }
                                                 }
-                                                if (member.partOfSpeechArabic.isNotBlank()) {
-                                                    PosChip(
-                                                        text = LinguisticRanker.formatPosBadgeLabel(
-                                                            partOfSpeech = member.partOfSpeechArabic,
-                                                            partOfSpeechArabic = member.partOfSpeechArabic,
-                                                            language = lang
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    if (member.partOfSpeechArabic.isNotBlank()) {
+                                                        PosChip(
+                                                            text = LinguisticRanker.formatPosBadgeLabel(
+                                                                partOfSpeech = member.partOfSpeechArabic,
+                                                                partOfSpeechArabic = member.partOfSpeechArabic,
+                                                                language = lang
+                                                            )
                                                         )
-                                                    )
+                                                    }
+                                                    IconButton(
+                                                        onClick = { speakChip(member.word) },
+                                                        modifier = Modifier.size(40.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = AppIcons.VolumeUp,
+                                                            contentDescription = tr("Pronounce ${member.word}", "نطق ${member.word}"),
+                                                            tint = colors.primary,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                             if (idx < entry.wordFamily.lastIndex) {
                                                 HorizontalDivider(color = colors.outline, thickness = 1.dp)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if (entry.confusableCandidates.isNotEmpty()) {
-                            item(key = "sec_confusables", contentType = "confusables_section") {
-                                CollapsibleSectionCard(
-                                    title = tr("Confusable Words", "كلمات يسهل الخلط بينها"),
-                                    count = entry.confusableCandidates.size,
-                                    expanded = confusablesExpanded,
-                                    onToggle = {
-                                        val next = !confusablesExpanded
-                                        confusablesExpanded = next
-                                        if (next) {
-                                            viewModel.loadConfusablesIfNeeded()
-                                        }
-                                    }
-                                ) {
-                                    LaunchedEffect(confusablesExpanded) {
-                                        if (confusablesExpanded) {
-                                            viewModel.loadConfusablesIfNeeded()
-                                        }
-                                    }
-                                    if (isLoadingConfusables && confusableDetails.isEmpty()) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 12.dp),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            CircularProgressIndicator(
-                                                color = colors.secondary,
-                                                strokeWidth = 2.dp,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = tr("Loading confusable words...", "جاري تحميل الكلمات المتشابهة..."),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = colors.onSurfaceVariant
-                                            )
-                                        }
-                                    } else if (confusableDetails.isEmpty()) {
-                                        Text(
-                                            text = tr(
-                                                "No confirmed dictionary entries for these words.",
-                                                "لا توجد مداخل قاموسية مؤكدة لهذه الكلمات."
-                                            ),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = colors.onSurfaceVariant
-                                        )
-                                    } else {
-                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            entry.confusableCandidates.forEach { candidate ->
-                                                val detail = confusableDetails[candidate.word.lowercase(Locale.US)]
-                                                if (detail != null) {
-                                                    ConfusableCard(
-                                                        detail = detail,
-                                                        wordArabicMeaning = chipMeanings[detail.word.trim().lowercase(Locale.US)],
-                                                        audioManager = audioManager,
-                                                        onOpenWord = { viewModel.onChipTapped(detail.word) }
-                                                    )
-                                                }
                                             }
                                         }
                                     }
@@ -894,7 +959,8 @@ fun WordDetailScreen(
                                             ChipWrapRow(
                                                 items = entry.generalTerms,
                                                 chipMeanings = chipMeanings,
-                                                onChipClick = { viewModel.onChipTapped(it) }
+                                                onChipClick = { viewModel.onChipTapped(it) },
+                                                onSpeak = speakChip
                                             )
                                         }
                                         if (entry.specificTerms.isNotEmpty()) {
@@ -906,7 +972,8 @@ fun WordDetailScreen(
                                             ChipWrapRow(
                                                 items = entry.specificTerms,
                                                 chipMeanings = chipMeanings,
-                                                onChipClick = { viewModel.onChipTapped(it) }
+                                                onChipClick = { viewModel.onChipTapped(it) },
+                                                onSpeak = speakChip
                                             )
                                         }
                                     }
@@ -922,16 +989,17 @@ fun WordDetailScreen(
                                     onToggle = { relatedExpanded = !relatedExpanded },
                                     items = entry.relatedWords,
                                     chipMeanings = chipMeanings,
-                                    onChipClick = { viewModel.onChipTapped(it) }
+                                    onChipClick = { viewModel.onChipTapped(it) },
+                                    onSpeak = speakChip
                                 )
                             }
                         }
 
-                        // Tatoeba More Example Sentences (Human Translations + Standalone Speaker Button for EN & AR)
+                        // More Example Sentences
                         if (entry.tatoebaSentences.isNotEmpty()) {
                             item(key = "sec_tatoeba", contentType = "tatoeba_section") {
                                 CollapsibleSectionCard(
-                                    title = tr("More Examples (Tatoeba)", "أمثلة إضافية (ترجمة بشرية من Tatoeba)"),
+                                    title = tr("More Examples", "أمثلة إضافية"),
                                     count = entry.tatoebaSentences.size,
                                     expanded = tatoebaExpanded,
                                     onToggle = { tatoebaExpanded = !tatoebaExpanded }
@@ -1047,13 +1115,6 @@ fun WordDetailScreen(
                                                 HorizontalDivider(color = colors.outline, thickness = 1.dp)
                                             }
                                         }
-                                        if (entry.hasTatoebaAttribution) {
-                                            Text(
-                                                text = tr("Source: Tatoeba • CC BY 2.0 FR", "المصدر: Tatoeba • CC BY 2.0 FR"),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = colors.onSurfaceVariant
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -1137,19 +1198,35 @@ private fun HeadwordCard(
     audioManager: AudioPlayerManager,
     audioSpeed: Float,
     showArabicTranslations: Boolean,
-    showMachineLabel: Boolean,
     chipMeanings: Map<String, String>,
     onSelectSpeed: (Float) -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenAwlInfo: () -> Unit,
     onChipClick: (String) -> Unit,
+    onOpenWord: (String) -> Unit,
+    onSpeak: (String) -> Unit,
     onSelectVocalizedForm: (String) -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
     val lang = LocalAppLanguage.current
-    val hasUs = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.US, entry.usAudioUrl)
-    val hasUk = !entry.isArabicWord && audioManager.hasAudioOrCache(entry.word, Accent.UK, entry.ukAudioUrl)
     val hasAwlTag = entry.tags.any { it.equals("AWL", ignoreCase = true) }
+    val freqTag = when {
+        entry.frequencyRank in 1..500 -> "#Top 500"
+        entry.frequencyRank in 501..1000 -> "#Top 1000"
+        entry.frequencyRank in 1001..3000 -> "#Top 3000"
+        entry.frequencyRank in 3001..5000 -> "#Top 5000"
+        entry.frequencyRank in 5001..10000 -> "#Top 10000"
+        else -> null
+    }
+    val displayTags = remember(entry.tags, freqTag) {
+        buildList {
+            entry.tags.filter { !it.equals("AWL", ignoreCase = true) && it.isNotBlank() }
+                .forEach { t -> add(if (t.startsWith("#")) t else "#$t") }
+            if (freqTag != null && none { it.equals(freqTag, ignoreCase = true) }) {
+                add(freqTag)
+            }
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1267,26 +1344,6 @@ private fun HeadwordCard(
                 }
             }
 
-            // Section 12.3: Tappable AWL chip if offline pack tagged this word with "AWL"
-            if (hasAwlTag) {
-                Surface(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .clickable(onClick = onOpenAwlInfo)
-                        .testTag("awl_badge_chip"),
-                    color = colors.secondaryContainer,
-                    shape = RoundedCornerShape(999.dp),
-                    border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.4f))
-                ) {
-                    Text(
-                        text = tr("Academic Word (AWL)", "كلمة أكاديمية (AWL)"),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                        color = colors.onSecondaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
             // US / UK word pronunciations (human recording when available, TTS fallback otherwise)
             if (!entry.isArabicWord) {
                 Row(
@@ -1333,11 +1390,6 @@ private fun HeadwordCard(
                 LinguisticRanker.extractPosHeadwordMeanings(entry, maxPerPos = Int.MAX_VALUE, language = lang)
             }
             if ((posSummaries.isNotEmpty() || entry.machineTranslations.isNotEmpty()) && (entry.isArabicWord || showArabicTranslations)) {
-                val allMachineOnly = if (posSummaries.isNotEmpty()) {
-                    posSummaries.all { it.isMachineOnly }
-                } else {
-                    true
-                }
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1350,25 +1402,11 @@ private fun HeadwordCard(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = tr("Translation", "الترجمة"),
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                                color = colors.primary
-                            )
-                            if (showMachineLabel && allMachineOnly) {
-                                Text(
-                                    text = tr("Machine translated", "ترجمة آلية"),
-                                    fontSize = 9.sp,
-                                    lineHeight = 11.sp,
-                                    color = colors.onSurfaceVariant.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
+                        Text(
+                            text = tr("Translation", "الترجمة"),
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = colors.primary
+                        )
 
                         if (posSummaries.isNotEmpty()) {
                             posSummaries.forEachIndexed { idx, posSummary ->
@@ -1397,18 +1435,21 @@ private fun HeadwordCard(
                                             posSummary.meanings.forEach { meaning ->
                                                 Surface(
                                                     modifier = Modifier
+                                                        .defaultMinSize(minHeight = 40.dp)
                                                         .clip(RoundedCornerShape(999.dp))
-                                                        .clickable { onChipClick(meaning) },
+                                                        .clickable { onOpenWord(meaning) },
                                                     color = colors.surface,
                                                     shape = RoundedCornerShape(999.dp),
                                                     border = BorderStroke(1.dp, colors.outline)
                                                 ) {
-                                                    Text(
-                                                        text = meaning,
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = colors.onSurface,
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                                    )
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Text(
+                                                            text = meaning,
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            color = colors.onSurface,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -1425,31 +1466,150 @@ private fun HeadwordCard(
                             ChipWrapRow(
                                 items = entry.machineTranslations,
                                 chipMeanings = chipMeanings,
-                                onChipClick = onChipClick
+                                onChipClick = onOpenWord,
+                                onSpeak = onSpeak
                             )
                         } else {
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    entry.machineTranslations.forEach { arText ->
+                                        Surface(
+                                            modifier = Modifier
+                                                .defaultMinSize(minHeight = 40.dp)
+                                                .clip(RoundedCornerShape(999.dp))
+                                                .clickable { onOpenWord(arText) },
+                                            color = colors.surface,
+                                            shape = RoundedCornerShape(999.dp),
+                                            border = BorderStroke(1.dp, colors.outline)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = arText,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = colors.primary,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Word forms (e.g. run pa. pple., ran pa. t.) with speaker buttons
+            if (!entry.isArabicWord && entry.wordForms.isNotEmpty()) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("headword_word_forms"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        entry.wordForms.forEach { formItem ->
+                            Surface(
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 44.dp)
+                                    .clip(RoundedCornerShape(10.dp)),
+                                color = colors.surfaceVariant.copy(alpha = 0.65f),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, colors.outline)
                             ) {
-                                entry.machineTranslations.forEach { arText ->
-                                    Surface(
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(start = 10.dp, end = 2.dp)
+                                ) {
+                                    Row(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(999.dp))
-                                            .clickable { onChipClick(arText) },
-                                        color = colors.surface,
-                                        shape = RoundedCornerShape(999.dp),
-                                        border = BorderStroke(1.dp, colors.outline)
+                                            .clickable { onOpenWord(formItem.form) }
+                                            .padding(vertical = 8.dp, horizontal = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Text(
-                                            text = arText,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = colors.primary,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                            text = formItem.form,
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                            color = colors.onSurface
+                                        )
+                                        if (formItem.label.isNotBlank()) {
+                                            Text(
+                                                text = formItem.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = colors.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            audioManager.playHumanPronunciation(
+                                                word = formItem.form,
+                                                accent = Accent.US,
+                                                audioUrl = null,
+                                                key = "form_${formItem.form}"
+                                            )
+                                        },
+                                        modifier = Modifier.size(40.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = AppIcons.VolumeUp,
+                                            contentDescription = tr("Pronounce ${formItem.form}", "نطق ${formItem.form}"),
+                                            tint = colors.primary,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Frequency & Academic tags (#Top 500, #AWL, etc.)
+            if (hasAwlTag || displayTags.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("headword_frequency_tags"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (hasAwlTag) {
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable(onClick = onOpenAwlInfo)
+                                .testTag("awl_badge_chip"),
+                            color = colors.secondaryContainer,
+                            shape = RoundedCornerShape(999.dp),
+                            border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                text = tr("#AWL", "كلمة أكاديمية (AWL)"),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                color = colors.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    displayTags.forEach { tagText ->
+                        Surface(
+                            color = colors.primaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(999.dp),
+                            border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                text = tagText,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                color = colors.primary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
                         }
                     }
                 }
@@ -1488,7 +1648,8 @@ private fun PosGroupCard(
     onSpeakSentence: (sentence: String, audioUrl: String?, key: String, accentOverride: Accent?) -> Unit,
     onStopAudio: () -> Unit,
     onChipClick: (String) -> Unit,
-    onOpenWord: (String) -> Unit
+    onOpenWord: (String) -> Unit,
+    onSpeakChip: ((String) -> Unit)? = null
 ) {
     val colors = MaterialTheme.colorScheme
     val lang = LocalAppLanguage.current
@@ -1535,7 +1696,8 @@ private fun PosGroupCard(
                     onSpeakSentence = onSpeakSentence,
                     onStopAudio = onStopAudio,
                     onChipClick = onChipClick,
-                    onOpenWord = onOpenWord
+                    onOpenWord = onOpenWord,
+                    onSpeakChip = onSpeakChip
                 )
                 if (idx < visibleSenses.lastIndex) {
                     HorizontalDivider(color = colors.outline, thickness = 1.dp)
@@ -1574,7 +1736,8 @@ private fun SenseCardContent(
     onSpeakSentence: (sentence: String, audioUrl: String?, key: String, accentOverride: Accent?) -> Unit,
     onStopAudio: () -> Unit,
     onChipClick: (String) -> Unit,
-    onOpenWord: (String) -> Unit
+    onOpenWord: (String) -> Unit,
+    onSpeakChip: ((String) -> Unit)? = null
 ) {
     val colors = MaterialTheme.colorScheme
     val lang = LocalAppLanguage.current
@@ -1598,7 +1761,8 @@ private fun SenseCardContent(
                     InteractiveWordChip(
                         word = otherWord,
                         arabicSubtext = chipMeanings[otherWord.trim().lowercase(Locale.US)],
-                        onClick = { onOpenWord(otherWord) }
+                        onClick = { onOpenWord(otherWord) },
+                        onSpeak = onSpeakChip
                     )
                 }
             }
@@ -1785,7 +1949,8 @@ private fun SenseCardContent(
                 ChipWrapRow(
                     items = sense.synonyms,
                     chipMeanings = chipMeanings,
-                    onChipClick = onChipClick
+                    onChipClick = onChipClick,
+                    onSpeak = onSpeakChip
                 )
             }
         }
@@ -1799,7 +1964,8 @@ private fun SenseCardContent(
                 ChipWrapRow(
                     items = sense.antonyms,
                     chipMeanings = chipMeanings,
-                    onChipClick = onChipClick
+                    onChipClick = onChipClick,
+                    onSpeak = onSpeakChip
                 )
             }
         }
@@ -2119,6 +2285,85 @@ private fun ConfusableCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ConfusableCategorySection(
+    title: String,
+    candidates: List<ConfusableCandidate>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    isLoading: Boolean,
+    confusableDetails: Map<String, ConfusableWordDetail>,
+    chipMeanings: Map<String, String>,
+    audioManager: AudioPlayerManager,
+    onLoadNeeded: () -> Unit,
+    onTapCandidate: (String) -> Unit,
+    onSpeakChip: (String) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    CollapsibleSectionCard(
+        title = title,
+        count = candidates.size,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
+        LaunchedEffect(expanded) {
+            if (expanded) onLoadNeeded()
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (isLoading) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        color = colors.secondary,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = tr("Loading meanings...", "جاري تحميل المعاني..."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+            val loadedList = candidates.mapNotNull { candidate ->
+                confusableDetails[candidate.word.lowercase(Locale.US)]
+            }
+            val unloadedList = candidates.filter { candidate ->
+                confusableDetails[candidate.word.lowercase(Locale.US)] == null
+            }
+            loadedList.forEach { detail ->
+                ConfusableCard(
+                    detail = detail,
+                    wordArabicMeaning = chipMeanings[detail.word.trim().lowercase(Locale.US)],
+                    audioManager = audioManager,
+                    onOpenWord = { onTapCandidate(detail.word) }
+                )
+            }
+            if (unloadedList.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    unloadedList.forEach { candidate ->
+                        InteractiveWordChip(
+                            word = candidate.word,
+                            arabicSubtext = chipMeanings[candidate.word.trim().lowercase(Locale.US)],
+                            onClick = { onTapCandidate(candidate.word) },
+                            onSpeak = onSpeakChip
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun CollapsibleChipsSection(
     title: String,
@@ -2127,7 +2372,8 @@ private fun CollapsibleChipsSection(
     items: List<String>,
     chipMeanings: Map<String, String> = emptyMap(),
     highlightedChip: String? = null,
-    onChipClick: (String) -> Unit
+    onChipClick: (String) -> Unit,
+    onSpeak: ((String) -> Unit)? = null
 ) {
     CollapsibleSectionCard(
         title = title,
@@ -2139,7 +2385,8 @@ private fun CollapsibleChipsSection(
             items = items,
             chipMeanings = chipMeanings,
             highlightedChip = highlightedChip,
-            onChipClick = onChipClick
+            onChipClick = onChipClick,
+            onSpeak = onSpeak
         )
     }
 }

@@ -43,6 +43,7 @@ import com.example.ui.components.AppIcons
 import com.example.ui.components.ChipWrapRow
 import com.example.ui.components.LanguageSwapBar
 import com.example.ui.components.NoInternetBanner
+import com.example.ui.components.OfflineDictionaryPackBanner
 import com.example.ui.viewmodel.HomeViewModel
 
 @Composable
@@ -94,41 +95,16 @@ fun HomeScreen(
                 }
             }
 
-            if (packState is OfflinePackState.Downloading) {
+            if (packState is OfflinePackState.Downloading ||
+                (!isOnline && ((packState is OfflinePackState.Ready && !packState.isInstalled) ||
+                    (packState is OfflinePackState.Error && !packState.isInstalled)))
+            ) {
                 item(key = "home_pack_download", contentType = "banner") {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("home_pack_download_card"),
-                        color = colors.primaryContainer.copy(alpha = 0.65f),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f))
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = packState.statusText.ifBlank {
-                                    tr(lang, "Downloading offline dictionary pack...", "جاري تحميل القاموس المحلي...")
-                                },
-                                style = MaterialTheme.typography.labelLarge,
-                                color = colors.onPrimaryContainer
-                            )
-                            if (packState.indeterminate) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = colors.primary
-                                )
-                            } else {
-                                LinearProgressIndicator(
-                                    progress = { packState.progress.coerceIn(0f, 1f) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = colors.primary
-                                )
-                            }
-                        }
-                    }
+                    OfflineDictionaryPackBanner(
+                        isOnline = isOnline,
+                        packState = packState,
+                        onDownloadClick = { viewModel.requestOfflinePackDownload() }
+                    )
                 }
             }
 

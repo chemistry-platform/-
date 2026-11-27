@@ -95,6 +95,24 @@ private val openSources = listOf(
         url = "https://wordnet.princeton.edu/"
     ),
     CreditSource(
+        titleEn = "Open Multilingual WordNet",
+        titleAr = "WordNet متعدد اللغات المفتوح (OMWN)",
+        descriptionEn = "Multilingual Arabic–English lexical links and reverse translation synsets.",
+        descriptionAr = "روابط معجمية متعددة اللغات بين العربية والإنجليزية ومترادفات الترجمة العكسية.",
+        licenseEn = "Open Multilingual WordNet License",
+        licenseAr = "رخصة Open Multilingual WordNet",
+        url = "https://omwn.org/"
+    ),
+    CreditSource(
+        titleEn = "MyMemory Translation API",
+        titleAr = "MyMemory Translation API",
+        descriptionEn = "Free community translation memory fallback for online lookups.",
+        descriptionAr = "ذاكرة ترجمة مجتمعية مجانية تُستخدم كخيار احتياطي عند الاتصال بالإنترنت.",
+        licenseEn = null,
+        licenseAr = null,
+        url = "https://mymemory.translated.net/"
+    ),
+    CreditSource(
         titleEn = "PDFBox-Android (Apache PDFBox)",
         titleAr = "PDFBox-Android (Apache PDFBox)",
         descriptionEn = "Efficient on-device page-by-page PDF text extraction with low memory overhead.",
@@ -104,12 +122,12 @@ private val openSources = listOf(
         url = "https://github.com/TomRoush/PdfBox-Android"
     ),
     CreditSource(
-        titleEn = "Google ML Kit (On-Device Translation & Text Recognition)",
-        titleAr = "Google ML Kit (الترجمة والتعرف الضوئي محلياً)",
-        descriptionEn = "Offline machine translation across 59+ languages and Latin-script OCR for images and scanned PDFs.",
-        descriptionAr = "الترجمة الآلية المحلية لأكثر من 59 لغة، والتعرف الضوئي على الحروف اللاتينية في الصور وملفات PDF المصوّرة دون اتصال.",
-        licenseEn = "Google ML Kit Terms",
-        licenseAr = "تراخيص Google ML Kit",
+        titleEn = "On-Device Translation & Text Recognition",
+        titleAr = "الترجمة المحلية والتعرف الضوئي على النصوص",
+        descriptionEn = "Offline translation across 59+ languages and Latin-script OCR for images and scanned PDFs.",
+        descriptionAr = "الترجمة المحلية لأكثر من 59 لغة، والتعرف الضوئي على الحروف اللاتينية في الصور وملفات PDF المصوّرة دون اتصال.",
+        licenseEn = "Terms & Licenses",
+        licenseAr = "الشروط والتراخيص",
         url = "https://developers.google.com/ml-kit/terms"
     ),
     CreditSource(

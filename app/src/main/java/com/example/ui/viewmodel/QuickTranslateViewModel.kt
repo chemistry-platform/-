@@ -4,10 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.ArabicTextUtils
+import com.example.core.OfflinePackManager
+import com.example.core.OfflinePackState
 import com.example.data.local.SearchHistoryEntity
 import com.example.data.repository.LexiconRepository
 import com.example.domain.model.InstantTranslationResult
 import com.example.domain.model.LanguageDirection
+import com.example.domain.model.LiveSearchPage
 import com.example.domain.model.SearchSuggestion
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -16,11 +19,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -28,8 +34,15 @@ import kotlinx.coroutines.launch
 class QuickTranslateViewModel(
     private val repository: LexiconRepository,
     initialQuery: String,
-    initialDirection: LanguageDirection
+    initialDirection: LanguageDirection,
+    private val offlinePackManager: OfflinePackManager? = null
 ) : ViewModel() {
+
+    val offlinePackState: StateFlow<OfflinePackState>? = offlinePackManager?.state
+
+    fun requestOfflinePackDownload() {
+        offlinePackManager?.startDownload()
+    }
 
     private val _query = MutableStateFlow(initialQuery)
     val query: StateFlow<String> = _query.asStateFlow()
@@ -52,8 +65,14 @@ class QuickTranslateViewModel(
     private val _hasMoreSuggestions = MutableStateFlow(false)
     val hasMoreSuggestions: StateFlow<Boolean> = _hasMoreSuggestions.asStateFlow()
 
+    private val _isExpandedAll = MutableStateFlow(false)
+    val isExpandedAll: StateFlow<Boolean> = _isExpandedAll.asStateFlow()
+
     private val _isLoadingMore = MutableStateFlow(false)
     val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
+    private var cachedFullQuery: String = ""
+    private var cachedFullSuggestions: List<SearchSuggestion> = emptyList()
 
     private val _submittedQuery = MutableStateFlow<String?>(null)
     val isSearchSubmitted: StateFlow<Boolean> = combine(_submittedQuery, _query) { sub, q ->
@@ -84,75 +103,110 @@ class QuickTranslateViewModel(
             _query
                 .debounce(80L)
                 .flatMapLatest { raw ->
-                    flow {
-                        val trimmed = raw.trim()
-                        if (trimmed.isEmpty()) {
-                            _isLoading.value = false
-                            _hasMoreSuggestions.value = false
-                            emit(emptyList<SearchSuggestion>() to false)
-                        } else {
-                            _isLoading.value = true
-                            try {
-                                val page = repository.getLiveSuggestionsPaged(
-                                    query = trimmed,
-                                    offset = 0,
-                                    limit = PAGE_SIZE
-                                )
-                                page.items.firstOrNull()?.word?.let { topWord ->
-                                    if (!page.items.first().isIdiom) {
-                                        repository.prefetchWord(topWord)
-                                    }
+                    val trimmed = raw.trim()
+                    if (trimmed.isEmpty()) {
+                        _isLoading.value = false
+                        _hasMoreSuggestions.value = false
+                        flowOf(Triple(trimmed, emptyList<SearchSuggestion>(), false))
+                    } else {
+                        _isLoading.value = true
+                        repository.observeLiveSuggestions(
+                            query = trimmed,
+                            limit = INITIAL_PAGE_SIZE
+                        ).onEach { page ->
+                            page.items.firstOrNull()?.word?.let { topWord ->
+                                if (!page.items.first().isIdiom) {
+                                    repository.prefetchWord(topWord)
                                 }
-                                emit(page.items to page.hasMore)
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (_: Exception) {
-                                emit(emptyList<SearchSuggestion>() to false)
-                            } finally {
-                                _isLoading.value = false
+                            }
+                            _isLoading.value = false
+                        }.catch { e ->
+                            if (e is CancellationException) throw e
+                            _isLoading.value = false
+                            emit(LiveSearchPage(emptyList(), hasMore = false))
+                        }.let { sugFlow ->
+                            kotlinx.coroutines.flow.flow {
+                                sugFlow.collect { page ->
+                                    emit(Triple(trimmed, page.items, page.hasMore))
+                                }
                             }
                         }
                     }
                 }
-                .collect { (items, hasMore) ->
-                    if (_query.value.trim().isEmpty()) {
-                        _suggestions.value = emptyList()
+                .collect { (activeQuery, items, hasMore) ->
+                    val currentTrimmed = _query.value.trim()
+                    if (currentTrimmed.isEmpty() || currentTrimmed != activeQuery) {
+                        return@collect
+                    }
+                    if (_isExpandedAll.value && cachedFullQuery == currentTrimmed && cachedFullSuggestions.isNotEmpty()) {
+                        _suggestions.value = cachedFullSuggestions
                         _hasMoreSuggestions.value = false
                     } else {
                         _suggestions.value = items
                         _hasMoreSuggestions.value = hasMore
+                        _isExpandedAll.value = false
                     }
+                    _isLoading.value = false
                     _isLoadingMore.value = false
                 }
         }
     }
 
-    fun loadMoreSuggestions() {
+    fun expandAllSuggestions() {
         val trimmed = _query.value.trim()
-        if (trimmed.isEmpty() || _isLoadingMore.value || !_hasMoreSuggestions.value) return
-        val offset = _suggestions.value.size
+        if (trimmed.isEmpty() || _isLoadingMore.value) return
+        if (cachedFullQuery == trimmed && cachedFullSuggestions.size > INITIAL_PAGE_SIZE) {
+            _isExpandedAll.value = true
+            _suggestions.value = cachedFullSuggestions
+            _hasMoreSuggestions.value = false
+            return
+        }
         _isLoadingMore.value = true
         viewModelScope.launch {
             try {
                 val page = repository.getLiveSuggestionsPaged(
                     query = trimmed,
-                    offset = offset,
-                    limit = PAGE_SIZE
+                    offset = 0,
+                    limit = EXPANDED_PAGE_SIZE
                 )
                 if (_query.value.trim() == trimmed) {
                     val existingKeys = _suggestions.value.mapTo(HashSet()) { it.word.lowercase() }
-                    val appended = page.items.filter { it.word.lowercase() !in existingKeys }
-                    _suggestions.value = _suggestions.value + appended
-                    _hasMoreSuggestions.value = page.hasMore && appended.isNotEmpty()
+                    val merged = if (page.items.size >= _suggestions.value.size) {
+                        page.items
+                    } else {
+                        _suggestions.value + page.items.filter { it.word.lowercase() !in existingKeys }
+                    }
+                    cachedFullQuery = trimmed
+                    cachedFullSuggestions = merged
+                    _suggestions.value = merged
+                    _isExpandedAll.value = true
+                    _hasMoreSuggestions.value = false
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _hasMoreSuggestions.value = false
+                // Ignore
             } finally {
                 _isLoadingMore.value = false
             }
         }
+    }
+
+    fun collapseSuggestions() {
+        if (!_isExpandedAll.value) return
+        val current = _suggestions.value
+        val trimmed = _query.value.trim()
+        if (cachedFullQuery != trimmed || cachedFullSuggestions.size < current.size) {
+            cachedFullQuery = trimmed
+            cachedFullSuggestions = current
+        }
+        _suggestions.value = current.take(INITIAL_PAGE_SIZE)
+        _isExpandedAll.value = false
+        _hasMoreSuggestions.value = current.size > INITIAL_PAGE_SIZE
+    }
+
+    fun loadMoreSuggestions() {
+        expandAllSuggestions()
     }
 
     // Live summary/translation card shown ONLY when user taps the Search icon or submits search
@@ -204,12 +258,19 @@ class QuickTranslateViewModel(
     }
 
     fun onQueryChange(newValue: String) {
+        val changed = newValue != _query.value
         _query.value = newValue
-        if (newValue.trim() != _submittedQuery.value) {
+        if (changed) {
+            // Immediately remove old results and previous state when even one letter changes
             _submittedQuery.value = null
+            _suggestions.value = emptyList()
+            _hasMoreSuggestions.value = false
+            _isExpandedAll.value = false
+            _isLoadingMore.value = false
+            cachedFullQuery = ""
+            cachedFullSuggestions = emptyList()
         }
         if (newValue.isNotBlank()) {
-            // Section 15.1: Auto-detect direction from script
             _direction.value = if (ArabicTextUtils.containsArabicLetters(newValue)) {
                 LanguageDirection.AR_TO_EN
             } else {
@@ -220,6 +281,7 @@ class QuickTranslateViewModel(
             _isLoading.value = false
             _isLoadingMore.value = false
             _hasMoreSuggestions.value = false
+            _isExpandedAll.value = false
             _suggestions.value = emptyList()
         }
     }
@@ -244,17 +306,24 @@ class QuickTranslateViewModel(
     }
 
     companion object {
-        const val PAGE_SIZE = 50
+        const val INITIAL_PAGE_SIZE = 18
+        const val EXPANDED_PAGE_SIZE = 500
     }
 
     class Factory(
         private val repository: LexiconRepository,
         private val initialQuery: String,
-        private val initialDirection: LanguageDirection
+        private val initialDirection: LanguageDirection,
+        private val offlinePackManager: OfflinePackManager? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return QuickTranslateViewModel(repository, initialQuery, initialDirection) as T
+            return QuickTranslateViewModel(
+                repository = repository,
+                initialQuery = initialQuery,
+                initialDirection = initialDirection,
+                offlinePackManager = offlinePackManager
+            ) as T
         }
     }
 }
