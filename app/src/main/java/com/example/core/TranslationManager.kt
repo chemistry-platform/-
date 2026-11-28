@@ -668,7 +668,8 @@ class TranslationManager(
                     out.append(part)
                 }
             }
-            Result.success(out.toString().trim())
+            val joined = refineCrossChunkProperNames(out.toString().trim(), sourceCode, targetCode)
+            Result.success(joined)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -790,6 +791,9 @@ class TranslationManager(
                 }
             }
         }.awaitAll()
+            .let { translatedList ->
+                refineCrossChunkListProperNames(sentences, translatedList, sourceCode, targetCode)
+            }
     }
 
     private suspend fun translateLiteralWordByWord(
@@ -857,6 +861,51 @@ class TranslationManager(
         sourceCode == TranslateLanguage.ARABIC && targetCode == TranslateLanguage.ENGLISH ->
             ContextualTranslationAnalyzer.refineEnglishTranslation(originalSource, rawTranslated)
         else -> rawTranslated
+    }
+
+    private fun refineCrossChunkProperNames(
+        translated: String,
+        sourceCode: String,
+        targetCode: String
+    ): String {
+        if (translated.isBlank()) return translated
+        return when {
+            sourceCode == TranslateLanguage.ARABIC && targetCode == TranslateLanguage.ENGLISH -> {
+                var res = translated
+                if (res.contains("Betty", ignoreCase = true) || res.contains("Botter", ignoreCase = true)) {
+                    res = res
+                        .replace(Regex("\\bmy house\\b", RegexOption.IGNORE_CASE), "Betty")
+                        .replace(Regex("\\bPetit\\b", RegexOption.IGNORE_CASE), "Betty")
+                }
+                res
+            }
+            sourceCode == TranslateLanguage.ENGLISH && targetCode == TranslateLanguage.ARABIC -> {
+                translated.replace(Regex("\\bبيتي\\s+الخزاف\\b"), "بيتي بوتر")
+            }
+            else -> translated
+        }
+    }
+
+    private fun refineCrossChunkListProperNames(
+        sources: List<String>,
+        translated: List<String>,
+        sourceCode: String,
+        targetCode: String
+    ): List<String> {
+        val fullSource = sources.joinToString(" ")
+        return translated.mapIndexed { i, item ->
+            val src = sources.getOrElse(i) { "" }
+            val refinedItem = refineContextualOutput(src, item, sourceCode, targetCode)
+            refineCrossChunkProperNames(
+                if (fullSource.contains("بيتي") && ContextualTranslationAnalyzer.isArabicBettyPersonContext(fullSource)) {
+                    refinedItem.replace(Regex("\\bmy house\\b", RegexOption.IGNORE_CASE), "Betty")
+                } else {
+                    refinedItem
+                },
+                sourceCode,
+                targetCode
+            )
+        }
     }
 
     private suspend fun translateUnitCached(

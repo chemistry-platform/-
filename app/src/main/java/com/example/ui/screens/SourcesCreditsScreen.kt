@@ -34,9 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.example.core.LocalAppLanguage
-import com.example.core.tr
+import com.example.core.StaticLabels
 import com.example.ui.components.AppIcons
+import com.example.ui.theme.LocalSemanticColors
 
 private data class CreditSource(
     val titleEn: String,
@@ -59,6 +59,51 @@ private val openSources = listOf(
         url = "https://creativecommons.org/licenses/by-sa/4.0/"
     ),
     CreditSource(
+        titleEn = "Wikimedia Commons & Lingua Libre",
+        titleAr = "ويكيميديا كومنز ولينجوا ليبر",
+        descriptionEn = "Human native speaker pronunciation audio recordings in American and British English.",
+        descriptionAr = "تسجيلات صوتية بشرية للنطق باللكنتين الأمريكية والبريطانية من متحدثين أصليين.",
+        licenseEn = "License: CC BY-SA 4.0",
+        licenseAr = "الترخيص: CC BY-SA 4.0",
+        url = "https://commons.wikimedia.org/wiki/Commons:Lingua_Libre"
+    ),
+    CreditSource(
+        titleEn = "Free Dictionary API",
+        titleAr = "Free Dictionary API",
+        descriptionEn = "Human US/UK audio pronunciations, IPA transcriptions, and core definitions.",
+        descriptionAr = "النطق الصوتي البشري (US / UK)، الألفبائية الصوتية الدولية (IPA)، والتعريفات.",
+        licenseEn = null,
+        licenseAr = null,
+        url = "https://dictionaryapi.dev/"
+    ),
+    CreditSource(
+        titleEn = "Kokoro-82M Neural Voice",
+        titleAr = "Kokoro-82M للنطق العصبي",
+        descriptionEn = "Neural English US/UK pronunciation fallback generated via GitHub Actions and cached on demand as lightweight .opus audio.",
+        descriptionAr = "نطق عصبي باللكنتين الأمريكية والبريطانية بصيغة .opus خفيفة يُنشأ ويُخزّن عند الطلب.",
+        licenseEn = "License: Apache License 2.0",
+        licenseAr = "الترخيص: Apache License 2.0",
+        url = "https://huggingface.co/hexgrad/Kokoro-82M"
+    ),
+    CreditSource(
+        titleEn = "sherpa-onnx",
+        titleAr = "sherpa-onnx",
+        descriptionEn = "Open-source ONNX speech synthesis runtime powering pre-generated voice clips.",
+        descriptionAr = "محرك التوليد الصوتي مفتوح المصدر عبر ONNX لتوليد مقاطع النطق.",
+        licenseEn = "License: Apache License 2.0",
+        licenseAr = "الترخيص: Apache License 2.0",
+        url = "https://github.com/k2-fsa/sherpa-onnx"
+    ),
+    CreditSource(
+        titleEn = "eSpeak NG",
+        titleAr = "eSpeak NG",
+        descriptionEn = "Open-source phonemizer backend supporting English US/UK grapheme-to-phoneme conversion.",
+        descriptionAr = "محول صوتيات مفتوح المصدر لدعم قواعد النطق الأمريكية والبريطانية.",
+        licenseEn = "License: GPL-3.0",
+        licenseAr = "الترخيص: GPL-3.0",
+        url = "https://github.com/espeak-ng/espeak-ng"
+    ),
+    CreditSource(
         titleEn = "Tatoeba",
         titleAr = "Tatoeba",
         descriptionEn = "Bilingual English–Arabic example sentence corpus in real usage contexts.",
@@ -75,15 +120,6 @@ private val openSources = listOf(
         licenseEn = null,
         licenseAr = null,
         url = "https://www.datamuse.com/api/"
-    ),
-    CreditSource(
-        titleEn = "Free Dictionary API",
-        titleAr = "Free Dictionary API",
-        descriptionEn = "Human US/UK audio pronunciations, IPA transcriptions, and core definitions.",
-        descriptionAr = "النطق الصوتي البشري (US / UK)، الألفبائية الصوتية الدولية (IPA)، والتعريفات.",
-        licenseEn = null,
-        licenseAr = null,
-        url = "https://dictionaryapi.dev/"
     ),
     CreditSource(
         titleEn = "Princeton WordNet",
@@ -147,8 +183,8 @@ fun SourcesCreditsScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
     val context = LocalContext.current
-    val lang = LocalAppLanguage.current
 
     Box(
         modifier = modifier
@@ -176,15 +212,22 @@ fun SourcesCreditsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = tr(lang, "Back", "رجوع"),
+                        contentDescription = "Back",
                         tint = colors.onBackground
                     )
                 }
-                Text(
-                    text = tr(lang, "Sources & Licenses", "عن المصادر"),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = colors.onBackground
-                )
+                Column {
+                    Text(
+                        text = "Sources & Licenses",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = colors.onBackground
+                    )
+                    Text(
+                        text = StaticLabels.arabicFor("Sources & Licenses").ifBlank { "المصادر والتراخيص" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = semantic.wordSubline
+                    )
+                }
             }
 
             LazyColumn(
@@ -197,25 +240,33 @@ fun SourcesCreditsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             color = colors.surface,
                             shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, colors.outline)
+                            border = BorderStroke(1.dp, semantic.divider)
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    text = tr(lang, source.titleEn, source.titleAr),
+                                    text = source.titleEn,
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = tr(lang, source.descriptionEn, source.descriptionAr),
+                                    text = source.titleAr,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = semantic.wordSubline
+                                )
+                                Text(
+                                    text = source.descriptionEn,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
-                                val licenseText = if (source.licenseEn != null && source.licenseAr != null) {
-                                    tr(lang, source.licenseEn, source.licenseAr)
-                                } else null
+                                Text(
+                                    text = source.descriptionAr,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = semantic.exampleTranslation
+                                )
+                                val licenseText = source.licenseEn
                                 if (licenseText != null && source.url != null) {
                                     Row(
                                         modifier = Modifier

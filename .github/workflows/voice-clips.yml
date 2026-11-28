@@ -1,0 +1,220 @@
+name: Build Pre-Generated Voice Clips & Offline Voice Pack
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_words:
+        description: "Number of top English words to synthesize (default 30000)"
+        required: false
+        default: "30000"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  prepare-wordlist:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: '["0","1","2","3","4","5","6","7","8","9"]'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download HermitDave EN 50k wordlist
+        run: |
+          mkdir -p work
+          curl -fsSL "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/en/en_50k.txt" -o en_50k.txt
+          python3 -c '
+          import re
+          max_words = int("${{ github.event.inputs.max_words || 30000 }}")
+          words = []
+          seen = set()
+          with open("en_50k.txt", "r", encoding="utf-8", errors="ignore") as f:
+              for line in f:
+                  parts = line.strip().split()
+                  if not parts:
+                      continue
+                  w = parts[0].lower()
+                  if re.match(r"^[a-z]{1,24}$", w) and w not in seen:
+                      seen.add(w)
+                      words.append(w)
+                  if len(words) >= max_words:
+                      break
+          with open("work/words_30k.txt", "w", encoding="utf-8") as out:
+              out.write("\n".join(words))
+          print(f"Prepared {len(words)} clean English words")
+          '
+
+      - name: Upload word list artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-wordlist
+          path: work/words_30k.txt
+
+  synthesize-shard:
+    needs: prepare-wordlist
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download word list
+        uses: actions/download-artifact@v4
+        with:
+          name: voice-wordlist
+          path: work
+
+      - name: Install Kokoro / sherpa-onnx / eSpeak NG / opus-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng ffmpeg opus-tools curl tar bzip2
+          python3 -m pip install --upgrade pip sherpa-onnx soundfile numpy
+          mkdir -p models/kokoro
+          curl -fsSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2" -o kokoro.tar.bz2
+          tar -xjf kokoro.tar.bz2 -C models/kokoro --strip-components=1
+
+      - name: Synthesize shard ${{ matrix.shard }} (US + UK mono 24kbps .opus)
+        run: |
+          python3 - << 'PYEOF'
+          import os, subprocess, tempfile
+          import numpy as np
+          import soundfile as sf
+          import sherpa_onnx
+
+          shard = int("${{ matrix.shard }}")
+          with open("work/words_30k.txt", "r", encoding="utf-8") as f:
+              all_words = [w.strip() for w in f if w.strip()]
+
+          shard_words = [w for idx, w in enumerate(all_words) if idx % 10 == shard]
+          print(f"Shard {shard}: synthesizing {len(shard_words)} words (US & UK)")
+
+          cfg = sherpa_onnx.OfflineTtsConfig(
+              model=sherpa_onnx.OfflineTtsModelConfig(
+                  kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                      model="models/kokoro/model.onnx",
+                      voices="models/kokoro/voices.bin",
+                      tokens="models/kokoro/tokens.txt",
+                      data_dir="models/kokoro/espeak-ng-data",
+                  ),
+                  num_threads=2,
+                  provider="cpu",
+              )
+          )
+          tts = sherpa_onnx.OfflineTts(cfg)
+
+          os.makedirs("out_clips/us", exist_ok=True)
+          os.makedirs("out_clips/uk", exist_ok=True)
+
+          # Speaker IDs: 0 = American English (af/af_bella), 2 = British English (bf_emma)
+          accents = [("us", 0), ("uk", 2)]
+          for word in shard_words:
+              for accent, sid in accents:
+                  out_opus = f"out_clips/{accent}/{word}.opus"
+                  if os.path.exists(out_opus):
+                      continue
+                  audio = tts.generate(word, sid=sid, speed=1.0)
+                  samples = np.array(audio.samples, dtype=np.float32)
+                  # Trim leading/trailing silence
+                  nz = np.where(np.abs(samples) > 0.004)[0]
+                  if len(nz) > 0:
+                      pad = int(0.03 * audio.sample_rate)
+                      s_idx = max(0, nz[0] - pad)
+                      e_idx = min(len(samples), nz[-1] + pad)
+                      samples = samples[s_idx:e_idx]
+                  with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                      wav_path = tmp.name
+                  try:
+                      sf.write(wav_path, samples, audio.sample_rate)
+                      subprocess.run(
+                          ["opusenc", "--quiet", "--bitrate", "24", "--downmix-mono", wav_path, out_opus],
+                          check=True,
+                      )
+                  finally:
+                      if os.path.exists(wav_path):
+                          os.remove(wav_path)
+          PYEOF
+
+      - name: Upload shard ${{ matrix.shard }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-shard-${{ matrix.shard }}
+          path: out_clips
+
+  publish-voice-assets:
+    needs: [prepare-wordlist, synthesize-shard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download word list and all shards
+        run: mkdir -p site/clips/us site/clips/uk shards_tmp
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: voice-shard-*
+          path: shards_tmp
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: voice-wordlist
+          path: work
+
+      - name: Assemble manifest (voice-index.json.gz) & Offline Voice Pack (top 5,000 ~30 MB)
+        run: |
+          cp -rn shards_tmp/us/* site/clips/us/ || true
+          cp -rn shards_tmp/uk/* site/clips/uk/ || true
+          python3 - << 'PYEOF'
+          import gzip, json, os, tarfile
+
+          with open("work/words_30k.txt", "r", encoding="utf-8") as f:
+              words = [w.strip() for w in f if w.strip()]
+
+          us_avail = sorted([w for w in words if os.path.exists(f"site/clips/us/{w}.opus")])
+          uk_avail = sorted([w for w in words if os.path.exists(f"site/clips/uk/{w}.opus")])
+
+          manifest = {
+              "version": 1,
+              "basePath": "clips",
+              "us": us_avail,
+              "uk": uk_avail,
+          }
+          with gzip.open("site/voice-index.json.gz", "wt", encoding="utf-8", compresslevel=9) as gz:
+              json.dump(manifest, gz, separators=(",", ":"))
+
+          # Build optional Offline Voice Pack (~30 MB, top 5,000 words US+UK)
+          top5k = words[:5000]
+          with tarfile.open("offline-voice-pack-5k.tar.gz", "w:gz") as tar:
+              for w in top5k:
+                  for acc in ("us", "uk"):
+                      p = f"site/clips/{acc}/{w}.opus"
+                      if os.path.exists(p):
+                          tar.add(p, arcname=f"{acc}/{w}.opus")
+
+          print("Manifest US:", len(us_avail), "UK:", len(uk_avail))
+          print("voice-index.json.gz bytes:", os.path.getsize("site/voice-index.json.gz"))
+          print("offline-voice-pack-5k.tar.gz MB:", os.path.getsize("offline-voice-pack-5k.tar.gz") / (1024 * 1024))
+          PYEOF
+
+      - name: Deploy clips & voice-index.json.gz to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          keep_files: true
+
+      - name: Publish Offline Voice Pack Pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: voice-pack-5k
+          name: "Offline Voice Pack (Top 5,000 Words)"
+          prerelease: true
+          files: offline-voice-pack-5k.tar.gz
+          body: |
+            Optional Offline Voice Pack (~30 MB): trimmed mono 24 kbps .opus clips for the top 5,000 English words (US & UK).
+            Generated with Kokoro-82M (Apache-2.0), sherpa-onnx, and eSpeak NG (GPL-3.0).

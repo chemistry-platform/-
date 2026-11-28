@@ -20,6 +20,7 @@ android {
     buildConfigField("String", "GITHUB_REPO", "\"$githubRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    resourceConfigurations.addAll(listOf("en", "ar"))
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -47,7 +48,7 @@ android {
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       ndk {
-        abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        abiFilters += listOf("arm64-v8a")
       }
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -73,13 +74,24 @@ android {
     includeInBundle = true
   }
   packaging {
+    jniLibs {
+      useLegacyPackaging = false
+    }
     resources {
       excludes += setOf(
         "META-INF/DEPENDENCIES",
         "META-INF/LICENSE",
         "META-INF/LICENSE.txt",
         "META-INF/NOTICE",
-        "META-INF/NOTICE.txt"
+        "META-INF/NOTICE.txt",
+        "META-INF/AL2.0",
+        "META-INF/LGPL2.1",
+        "META-INF/INDEX.LIST",
+        "META-INF/*.kotlin_module",
+        "META-INF/*.version",
+        "**/*.proto",
+        "org/bouncycastle/pqc/**",
+        "org/bouncycastle/x509/*.properties"
       )
     }
   }
@@ -95,9 +107,11 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
+  implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
+  implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)

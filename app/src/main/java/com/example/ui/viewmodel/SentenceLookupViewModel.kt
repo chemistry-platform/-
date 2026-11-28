@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.ArabicTextUtils
+import com.example.core.MissingLanguagePackException
 import com.example.core.TranslationManager
 import com.example.core.UserSettingsPreferences
 import com.example.data.repository.LexiconRepository
@@ -18,7 +19,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+data class SentenceWordOpenRequest(
+    val word: String,
+    val preferredSense: String? = null
+)
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class SentenceLookupViewModel(
@@ -85,19 +90,24 @@ class SentenceLookupViewModel(
             originalText = initialQuery.trim(),
             isArabicInput = ArabicTextUtils.containsArabicLetters(initialQuery),
             wordChips = ArabicTextUtils.extractWordTokens(initialQuery),
-            isUpdating = true
+            isUpdating = false
         )
     )
     val state: StateFlow<SentenceLookupResult> = _state.asStateFlow()
 
+    private val _longTranslationProgress = MutableStateFlow<Int?>(null)
+    val longTranslationProgress: StateFlow<Int?> = _longTranslationProgress.asStateFlow()
+
     private val _chipMeanings = MutableStateFlow<Map<String, String>>(emptyMap())
     val chipMeanings: StateFlow<Map<String, String>> = _chipMeanings.asStateFlow()
+
+    private val _chipHints = MutableStateFlow<Map<String, String>>(emptyMap())
 
     private val _phraseSheet = MutableStateFlow<PhraseSheetData?>(null)
     val phraseSheet: StateFlow<PhraseSheetData?> = _phraseSheet.asStateFlow()
 
-    private val _openWordEvent = MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val openWordEvent: SharedFlow<String> = _openWordEvent.asSharedFlow()
+    private val _openWordEvent = MutableSharedFlow<SentenceWordOpenRequest>(extraBufferCapacity = 4)
+    val openWordEvent: SharedFlow<SentenceWordOpenRequest> = _openWordEvent.asSharedFlow()
 
     val inlineTranslation: StateFlow<InstantTranslationResult?> = flowOf(null)
         .stateIn(
@@ -109,6 +119,7 @@ class SentenceLookupViewModel(
     val showArabicTranslations: StateFlow<Boolean> = settingsPreferences.showArabicTranslations
     val showMachineTranslationLabel: StateFlow<Boolean> = settingsPreferences.showMachineTranslationLabel
     val audioSpeed: StateFlow<Float> = settingsPreferences.audioSpeed
+    val literalTranslation: StateFlow<Boolean> = settingsPreferences.literalTranslation
 
     private val _isDownloadingPack = MutableStateFlow(false)
     val isDownloadingPack: StateFlow<Boolean> = _isDownloadingPack.asStateFlow()
@@ -134,11 +145,19 @@ class SentenceLookupViewModel(
                         _hasMoreInlineSuggestions.value = false
                         flowOf(Triple(trimmed, emptyList<SearchSuggestion>(), false))
                     } else {
-                        _isLoadingInline.value = true
                         repository.observeLiveSuggestions(
                             query = trimmed,
                             limit = QuickTranslateViewModel.INITIAL_PAGE_SIZE
-                        ).onEach {
+                        ).onEach { page ->
+                            val candidateWords = page.items
+                                .asSequence()
+                                .filter { !it.isIdiom }
+                                .take(QuickTranslateViewModel.INITIAL_PAGE_SIZE)
+                                .map { it.word }
+                                .toList()
+                            if (candidateWords.isNotEmpty()) {
+                                repository.prebuildLocalCandidates(candidateWords)
+                            }
                             _isLoadingInline.value = false
                         }.catch { e ->
                             if (e is CancellationException) throw e
@@ -276,19 +295,100 @@ class SentenceLookupViewModel(
             LanguageDirection.EN_TO_AR
         }
         _chipMeanings.value = emptyMap()
+        _chipHints.value = emptyMap()
         _phraseSheet.value = null
         _packDownloadMessage.value = null
+        _longTranslationProgress.value = null
 
         lookupJob?.cancel()
         chipJob?.cancel()
+        val lineCount = cleaned.count { it == '\n' } + 1
+        val isVeryLongText = cleaned.length > 1200 || lineCount > 20
         lookupJob = viewModelScope.launch {
-            repository.observeSentenceLookup(cleaned).collect { result ->
-                _state.value = result
-                if (!result.isUpdating && result.wordChips.isNotEmpty()) {
-                    loadChipMeanings(result.wordChips)
+            if (isVeryLongText) {
+                val isArabic = ArabicTextUtils.containsArabicLetters(cleaned)
+                val sourceCode = if (isArabic) TranslateLanguage.ARABIC else TranslateLanguage.ENGLISH
+                val targetCode = if (isArabic) TranslateLanguage.ENGLISH else TranslateLanguage.ARABIC
+                _longTranslationProgress.value = 0
+                val slicesMap = java.util.concurrent.ConcurrentSkipListMap<Int, String>()
+                val tokens = ArabicTextUtils.extractWordTokens(cleaned).take(60)
+                val result = translationManager.streamTranslateText(
+                    text = cleaned,
+                    sourceCode = sourceCode,
+                    targetCode = targetCode,
+                    onProgress = { completed, total ->
+                        val pct = if (total > 0) ((completed * 100) / total).coerceIn(0, 100) else 100
+                        _longTranslationProgress.value = pct
+                    },
+                    onNewSliceWritten = { slice ->
+                        viewModelScope.launch {
+                            val chunkText = translationManager.readSliceText(slice)
+                            if (chunkText.isNotEmpty()) {
+                                slicesMap[slice.index] = chunkText
+                                _state.value = _state.value.copy(
+                                    originalText = cleaned,
+                                    isArabicInput = isArabic,
+                                    machineTranslation = slicesMap.values.joinToString("").trim(),
+                                    wordChips = tokens,
+                                    isUpdating = false
+                                )
+                            }
+                        }
+                    }
+                )
+                _longTranslationProgress.value = null
+                result.onSuccess { outFile ->
+                    val fullTranslated = runCatching { outFile.readText(Charsets.UTF_8).trim() }
+                        .getOrDefault("")
+                        .ifBlank { slicesMap.values.joinToString("").trim() }
+                    _state.value = _state.value.copy(
+                        originalText = cleaned,
+                        isArabicInput = isArabic,
+                        machineTranslation = fullTranslated,
+                        wordChips = tokens,
+                        isUpdating = false
+                    )
+                }.onFailure { err ->
+                    if (err is MissingLanguagePackException) {
+                        _state.value = _state.value.copy(
+                            originalText = cleaned,
+                            isArabicInput = isArabic,
+                            missingTranslationPack = true,
+                            isUpdating = false
+                        )
+                    }
+                }
+            } else {
+                repository.observeSentenceLookup(cleaned).collect { result ->
+                    _state.value = result.copy(isUpdating = false)
+                    val contextualMap = result.contextualWordChips
+                        .filter { it.meaning.isNotBlank() }
+                        .associate { it.word.trim().lowercase(Locale.US) to it.meaning }
+                    if (contextualMap.isNotEmpty()) {
+                        _chipMeanings.value = _chipMeanings.value + contextualMap
+                    }
+                    val hintsMap = result.contextualWordChips
+                        .mapNotNull { chip ->
+                            val hint = chip.preferredSenseHint?.takeIf { it.isNotBlank() }
+                                ?: chip.meaning.takeIf { it.isNotBlank() }
+                            if (hint != null) chip.word.trim().lowercase(Locale.US) to hint else null
+                        }
+                        .toMap()
+                    if (hintsMap.isNotEmpty()) {
+                        _chipHints.value = _chipHints.value + hintsMap
+                    }
+                    if (!result.isUpdating && result.wordChips.isNotEmpty()) {
+                        loadChipMeanings(result.wordChips)
+                    }
                 }
             }
         }
+    }
+
+    fun cancelLongTranslation() {
+        lookupJob?.cancel()
+        lookupJob = null
+        _longTranslationProgress.value = null
     }
 
     private fun loadChipMeanings(chips: List<String>) {
@@ -298,45 +398,49 @@ class SentenceLookupViewModel(
         chipJob = viewModelScope.launch {
             val cached = repository.getCachedChipMeanings(distinct)
             if (cached.isNotEmpty()) {
-                _chipMeanings.value = _chipMeanings.value + cached
+                _chipMeanings.value = cached + _chipMeanings.value
             }
             val missingFetched = repository.fetchMissingChipMeanings(distinct, _chipMeanings.value)
             if (missingFetched.isNotEmpty()) {
-                _chipMeanings.value = _chipMeanings.value + missingFetched
+                _chipMeanings.value = missingFetched + _chipMeanings.value
             }
         }
     }
 
-    fun onChipTapped(phrase: String) {
+    fun onChipTapped(phrase: String, preferredSenseHint: String? = null) {
         val cleaned = phrase.trim()
         if (cleaned.isEmpty()) return
+        val key = cleaned.lowercase(Locale.US)
+        val effectiveHint = preferredSenseHint?.takeIf { it.isNotBlank() }
+            ?: _chipHints.value[key]
+            ?: _chipMeanings.value[key]
         chipTapJob?.cancel()
         chipTapJob = viewModelScope.launch {
-            var resolved = false
-            val loadingDelayJob = launch {
-                delay(140L)
-                if (!resolved && _phraseSheet.value == null) {
-                    _phraseSheet.value = PhraseSheetData(phrase = cleaned, isLoading = true)
-                }
-            }
             try {
+                // Hold screen silently (no spinner) while resolving chip/entry
                 val (hasEntry, sheetData) = repository.inspectChipTap(cleaned)
-                resolved = true
-                loadingDelayJob.cancel()
                 if (hasEntry) {
+                    repository.ensureWordReadyForOpen(sheetData.phrase, timeoutMs = 1450L)
                     _phraseSheet.value = null
-                    _openWordEvent.emit(sheetData.phrase)
+                    _openWordEvent.emit(SentenceWordOpenRequest(sheetData.phrase, effectiveHint))
                 } else {
                     _phraseSheet.value = sheetData
                 }
             } catch (e: CancellationException) {
-                loadingDelayJob.cancel()
                 throw e
             } catch (_: Exception) {
-                resolved = true
-                loadingDelayJob.cancel()
                 _phraseSheet.value = PhraseSheetData(phrase = cleaned, isLoading = false)
             }
+        }
+    }
+
+    fun openWordReady(word: String, preferredSenseHint: String? = null) {
+        val cleaned = word.trim()
+        if (cleaned.isEmpty()) return
+        chipTapJob?.cancel()
+        chipTapJob = viewModelScope.launch {
+            repository.ensureWordReadyForOpen(cleaned, timeoutMs = 1450L)
+            _openWordEvent.emit(SentenceWordOpenRequest(cleaned, preferredSenseHint))
         }
     }
 

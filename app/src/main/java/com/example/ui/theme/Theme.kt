@@ -9,8 +9,6 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 private val AlMakhzanjiDarkColorScheme = darkColorScheme(
@@ -22,10 +20,10 @@ private val AlMakhzanjiDarkColorScheme = darkColorScheme(
     onSecondary = DarkCanvas,
     secondaryContainer = DarkBlueContainer,
     onSecondaryContainer = DarkBlueLink,
-    tertiary = DarkGoldRegister,
+    tertiary = DarkAmberSubline,
     onTertiary = DarkCanvas,
-    tertiaryContainer = DarkGoldContainer,
-    onTertiaryContainer = DarkGoldRegister,
+    tertiaryContainer = DarkAmberContainer,
+    onTertiaryContainer = DarkAmberSubline,
     background = DarkCanvas,
     onBackground = DarkTextPrimary,
     surface = DarkSurface,
@@ -54,10 +52,10 @@ private val AlMakhzanjiLightColorScheme = lightColorScheme(
     onSecondary = Color.White,
     secondaryContainer = LightBlueContainer,
     onSecondaryContainer = LightBlueLink,
-    tertiary = LightGoldRegister,
+    tertiary = LightAmberSubline,
     onTertiary = Color.White,
-    tertiaryContainer = LightGoldContainer,
-    onTertiaryContainer = LightGoldRegister,
+    tertiaryContainer = LightAmberContainer,
+    onTertiaryContainer = LightAmberSubline,
     background = LightCanvas,
     onBackground = LightTextPrimary,
     surface = LightSurface,
@@ -87,7 +85,7 @@ val AlMakhzanjiShapes = Shapes(
 
 @Composable
 fun AlMakhzanjiTheme(
-    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    themeMode: ThemeMode = ThemeMode.DARK,
     content: @Composable () -> Unit
 ) {
     val useDark = when (themeMode) {
@@ -96,8 +94,9 @@ fun AlMakhzanjiTheme(
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
     val colorScheme = if (useDark) AlMakhzanjiDarkColorScheme else AlMakhzanjiLightColorScheme
+    val semanticColors = if (useDark) DarkSemanticColors else LightSemanticColors
 
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+    CompositionLocalProvider(LocalSemanticColors provides semanticColors) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AlMakhzanjiTypography,

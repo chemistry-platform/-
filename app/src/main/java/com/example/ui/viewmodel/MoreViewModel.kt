@@ -6,9 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.example.core.Accent
 import com.example.core.AppLanguage
 import com.example.core.AppUpdateManager
+import com.example.core.AudioDebugEntry
 import com.example.core.AudioPlayerManager
 import com.example.core.OfflinePackManager
 import com.example.core.OfflinePackState
+import com.example.core.OfflineVoicePackManager
+import com.example.core.OfflineVoicePackState
 import com.example.core.UpdateUiState
 import com.example.core.UserSettingsPreferences
 import com.example.core.tr
@@ -27,6 +30,7 @@ class MoreViewModel(
     private val repository: LexiconRepository,
     private val updateManager: AppUpdateManager,
     private val offlinePackManager: OfflinePackManager,
+    private val offlineVoicePackManager: OfflineVoicePackManager,
     private val themePreferences: ThemePreferences,
     private val settingsPreferences: UserSettingsPreferences,
     private val audioPlayerManager: AudioPlayerManager
@@ -55,6 +59,10 @@ class MoreViewModel(
 
     val updateUiState: StateFlow<UpdateUiState> = updateManager.uiState
     val offlinePackState: StateFlow<OfflinePackState> = offlinePackManager.state
+    val offlineVoicePackState: StateFlow<OfflineVoicePackState> = offlineVoicePackManager.state
+    val audioDebugHistory: StateFlow<List<AudioDebugEntry>> = audioPlayerManager.audioDebugHistory
+    val lastAudioNetworkBytes: StateFlow<Long> = audioPlayerManager.lastAudioNetworkBytes
+    val totalAudioNetworkBytes: StateFlow<Long> = audioPlayerManager.totalAudioNetworkBytes
     val themeMode: StateFlow<ThemeMode> = themePreferences.themeMode
 
     val appLanguage: StateFlow<AppLanguage> = settingsPreferences.appLanguage
@@ -103,17 +111,34 @@ class MoreViewModel(
         offlinePackManager.startDownload()
     }
 
+    fun pauseOfflinePackDownload() {
+        offlinePackManager.pauseDownload()
+    }
+
+    fun checkOfflinePackForUpdates() {
+        offlinePackManager.checkForUpdates()
+    }
+
     fun cancelOfflinePackDownload() {
         offlinePackManager.cancelDownload()
     }
 
     fun deleteOfflinePack() {
         offlinePackManager.deletePack()
-        _actionMessage.value = tr(
-            appLanguage.value,
-            "Offline dictionary pack deleted",
-            "تم حذف حزمة القاموس الأوفلاين"
-        )
+        _actionMessage.value = "Pro Pack deleted"
+    }
+
+    fun startVoicePackDownload() {
+        offlineVoicePackManager.startOrResumeDownload()
+    }
+
+    fun pauseVoicePackDownload() {
+        offlineVoicePackManager.pauseDownload()
+    }
+
+    fun deleteVoicePack() {
+        offlineVoicePackManager.deletePack()
+        _actionMessage.value = "Offline Voice Pack deleted"
     }
 
     fun clearCache() {
@@ -148,6 +173,7 @@ class MoreViewModel(
         private val repository: LexiconRepository,
         private val updateManager: AppUpdateManager,
         private val offlinePackManager: OfflinePackManager,
+        private val offlineVoicePackManager: OfflineVoicePackManager,
         private val themePreferences: ThemePreferences,
         private val settingsPreferences: UserSettingsPreferences,
         private val audioPlayerManager: AudioPlayerManager
@@ -158,6 +184,7 @@ class MoreViewModel(
                 repository = repository,
                 updateManager = updateManager,
                 offlinePackManager = offlinePackManager,
+                offlineVoicePackManager = offlineVoicePackManager,
                 themePreferences = themePreferences,
                 settingsPreferences = settingsPreferences,
                 audioPlayerManager = audioPlayerManager

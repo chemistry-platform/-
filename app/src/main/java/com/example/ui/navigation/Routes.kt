@@ -36,7 +36,8 @@ object SourcesCreditsRoute
 data class WordDetailRoute(
     val query: String,
     val fallbackBaseWord: String? = null,
-    val highlightChip: String? = null
+    val highlightChip: String? = null,
+    val preferredSense: String? = null
 )
 
 @Serializable

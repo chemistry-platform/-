@@ -27,10 +27,22 @@ interface WikimediaCommonsApi {
     ): ResponseBody
 
     companion object {
-        private val AUDIO_EXTS = listOf(".mp3", ".ogg", ".oga", ".wav", ".flac", ".m4a")
+        private val AUDIO_EXTS = listOf(".mp3", ".opus", ".ogg", ".oga", ".wav", ".flac", ".m4a")
 
         fun buildCandidateTitles(word: String, accent: Accent): String {
-            val clean = word.trim().lowercase(Locale.US)
+            val trimmed = word.trim()
+            if (trimmed.isBlank()) return ""
+            if (accent == Accent.AR) {
+                val arClean = trimmed.replace(Regex("\\s+"), "_")
+                return listOf(
+                    "File:Ar-$arClean.ogg",
+                    "File:Ar-$arClean.oga",
+                    "File:Ar-$arClean.mp3",
+                    "File:Ar-$arClean.wav",
+                    "File:Ar-$arClean.opus"
+                ).joinToString("|")
+            }
+            val clean = trimmed.lowercase(Locale.US)
                 .replace(Regex("\\s+"), "_")
                 .replace(Regex("[^a-z0-9_'-]"), "")
             if (clean.isBlank()) return ""
@@ -51,17 +63,28 @@ interface WikimediaCommonsApi {
                     "File:En-uk-$clean.mp3",
                     "File:En-gb-$clean.mp3"
                 ).joinToString("|")
+                Accent.AR -> ""
             }
         }
 
         fun buildAllImagesPrefixes(word: String, accent: Accent): List<String> {
-            val clean = word.trim().lowercase(Locale.US)
+            val trimmed = word.trim()
+            if (trimmed.isBlank()) return emptyList()
+            if (accent == Accent.AR) {
+                val arClean = trimmed.replace(Regex("\\s+"), "_")
+                return listOf(
+                    "Ar-$arClean.",
+                    "LL-Q13955 (ara)-"
+                ).take(1) // exact word prefix first; Lingua Libre searched only if exact prefix matches
+            }
+            val clean = trimmed.lowercase(Locale.US)
                 .replace(Regex("\\s+"), "_")
                 .replace(Regex("[^a-z0-9_'-]"), "")
             if (clean.isBlank()) return emptyList()
             return when (accent) {
                 Accent.US -> listOf("En-us-$clean.")
                 Accent.UK -> listOf("En-uk-$clean.", "En-gb-$clean.")
+                Accent.AR -> emptyList()
             }
         }
 
@@ -111,11 +134,12 @@ interface WikimediaCommonsApi {
 
         fun pickBestAudioCandidate(urls: List<String>): String? {
             if (urls.isEmpty()) return null
-            // Prefer MP3/WAV for broadest Android MediaPlayer compatibility, then OGG/OGA
+            // Media3 ExoPlayer supports opus/mp3/ogg/oga/wav natively; prefer compact mp3/opus/ogg
             return urls.firstOrNull { it.lowercase(Locale.US).endsWith(".mp3") }
-                ?: urls.firstOrNull { it.lowercase(Locale.US).endsWith(".wav") }
+                ?: urls.firstOrNull { it.lowercase(Locale.US).endsWith(".opus") }
                 ?: urls.firstOrNull { it.lowercase(Locale.US).endsWith(".ogg") }
                 ?: urls.firstOrNull { it.lowercase(Locale.US).endsWith(".oga") }
+                ?: urls.firstOrNull { it.lowercase(Locale.US).endsWith(".wav") }
                 ?: urls.firstOrNull()
         }
 

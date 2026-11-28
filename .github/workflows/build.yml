@@ -66,6 +66,22 @@ jobs:
           fi
           cp "$BUILT_APK" app-release.apk
 
+      - name: Print APK Top 20 Largest Entries & Verify <= 40 MB
+        run: |
+          python3 -c '
+          import os, zipfile, sys
+          size = os.path.getsize("app-release.apk")
+          print(f"app-release.apk size: {size:,} bytes ({size / (1024*1024):.2f} MB)")
+          with zipfile.ZipFile("app-release.apk") as z:
+              entries = sorted([(i.compress_size, i.file_size, i.filename) for i in z.infolist()], reverse=True)
+              print("Top 20 largest entries (compressed -> uncompressed):")
+              for idx, (cs, fs, fn) in enumerate(entries[:20], 1):
+                  print(f"  {idx:2d}. {cs/1024/1024:6.2f} MB (raw {fs/1024/1024:6.2f} MB)  {fn}")
+          if size > 40 * 1024 * 1024:
+              print("::error::app-release.apk exceeds 40 MB target!")
+              sys.exit(1)
+          '
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

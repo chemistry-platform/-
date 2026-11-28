@@ -15,9 +15,13 @@ import com.example.domain.model.SearchSuggestion
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
@@ -74,6 +78,11 @@ class QuickTranslateViewModel(
     private var cachedFullQuery: String = ""
     private var cachedFullSuggestions: List<SearchSuggestion> = emptyList()
 
+    private val _openWordEvent = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val openWordEvent: SharedFlow<String> = _openWordEvent.asSharedFlow()
+
+    private var openWordJob: Job? = null
+
     private val _submittedQuery = MutableStateFlow<String?>(null)
     val isSearchSubmitted: StateFlow<Boolean> = combine(_submittedQuery, _query) { sub, q ->
         val trimmed = q.trim()
@@ -109,15 +118,18 @@ class QuickTranslateViewModel(
                         _hasMoreSuggestions.value = false
                         flowOf(Triple(trimmed, emptyList<SearchSuggestion>(), false))
                     } else {
-                        _isLoading.value = true
                         repository.observeLiveSuggestions(
                             query = trimmed,
                             limit = INITIAL_PAGE_SIZE
                         ).onEach { page ->
-                            page.items.firstOrNull()?.word?.let { topWord ->
-                                if (!page.items.first().isIdiom) {
-                                    repository.prefetchWord(topWord)
-                                }
+                            val candidateWords = page.items
+                                .asSequence()
+                                .filter { !it.isIdiom }
+                                .take(INITIAL_PAGE_SIZE)
+                                .map { it.word }
+                                .toList()
+                            if (candidateWords.isNotEmpty()) {
+                                repository.prebuildLocalCandidates(candidateWords)
                             }
                             _isLoading.value = false
                         }.catch { e ->
@@ -125,7 +137,7 @@ class QuickTranslateViewModel(
                             _isLoading.value = false
                             emit(LiveSearchPage(emptyList(), hasMore = false))
                         }.let { sugFlow ->
-                            kotlinx.coroutines.flow.flow {
+                            flow {
                                 sugFlow.collect { page ->
                                     emit(Triple(trimmed, page.items, page.hasMore))
                                 }
@@ -149,6 +161,16 @@ class QuickTranslateViewModel(
                     _isLoading.value = false
                     _isLoadingMore.value = false
                 }
+        }
+    }
+
+    fun openWordReady(word: String) {
+        val cleaned = word.trim()
+        if (cleaned.isEmpty()) return
+        openWordJob?.cancel()
+        openWordJob = viewModelScope.launch {
+            repository.ensureWordReadyForOpen(cleaned, timeoutMs = 1450L)
+            _openWordEvent.emit(cleaned)
         }
     }
 
@@ -209,7 +231,7 @@ class QuickTranslateViewModel(
         expandAllSuggestions()
     }
 
-    // Live summary/translation card shown ONLY when user taps the Search icon or submits search
+    // Complete instant card emitted ONLY when translation is ready (never shows a spinner)
     val instantTranslation: StateFlow<InstantTranslationResult?> = combine(_submittedQuery, _query) { sub, q ->
         val trimmed = q.trim()
         if (sub != null && sub == trimmed && trimmed.isNotEmpty()) trimmed else null
@@ -221,13 +243,6 @@ class QuickTranslateViewModel(
                     emit(null)
                 } else {
                     val isArabic = ArabicTextUtils.containsArabicLetters(submitted)
-                    emit(
-                        InstantTranslationResult(
-                            query = submitted,
-                            isArabicSource = isArabic,
-                            isLoading = true
-                        )
-                    )
                     try {
                         emit(repository.instantTranslateForSearch(submitted))
                     } catch (e: CancellationException) {
@@ -306,7 +321,7 @@ class QuickTranslateViewModel(
     }
 
     companion object {
-        const val INITIAL_PAGE_SIZE = 18
+        const val INITIAL_PAGE_SIZE = 10
         const val EXPANDED_PAGE_SIZE = 500
     }
 

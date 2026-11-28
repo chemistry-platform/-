@@ -32,11 +32,9 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -49,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,7 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.ArabicTextUtils
 import com.example.core.AudioPlayerManager
 import com.example.core.OfflinePackState
-import com.example.core.tr
+import com.example.core.StaticLabels
 import com.example.data.local.SearchHistoryEntity
 import com.example.ui.components.AppIcons
 import com.example.ui.components.DirectionToggleChip
@@ -77,7 +76,10 @@ import com.example.ui.components.LanguageSwapBar
 import com.example.ui.components.LiveSearchSuggestionRow
 import com.example.ui.components.NoInternetBanner
 import com.example.ui.components.OfflineDictionaryPackBanner
+import com.example.ui.components.SectionHeaderWithArabic
+import com.example.ui.theme.LocalSemanticColors
 import com.example.ui.viewmodel.QuickTranslateViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -91,16 +93,15 @@ fun QuickTranslateScreen(
     offlinePackState: OfflinePackState? = null
 ) {
     val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
     val query by viewModel.query.collectAsStateWithLifecycle()
     val direction by viewModel.direction.collectAsStateWithLifecycle()
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val hasMoreSuggestions by viewModel.hasMoreSuggestions.collectAsStateWithLifecycle()
     val isExpandedAll by viewModel.isExpandedAll.collectAsStateWithLifecycle()
-    val isLoadingMore by viewModel.isLoadingMore.collectAsStateWithLifecycle()
     val instantTranslation by viewModel.instantTranslation.collectAsStateWithLifecycle()
     val isSearchSubmitted by viewModel.isSearchSubmitted.collectAsStateWithLifecycle()
     val recentHistory by viewModel.recentHistory.collectAsStateWithLifecycle()
-    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
     val playingKey by audioManager.playingKey.collectAsStateWithLifecycle()
     val vmPackState = viewModel.offlinePackState?.collectAsStateWithLifecycle()?.value
@@ -111,13 +112,26 @@ fun QuickTranslateScreen(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
+        viewModel.openWordEvent.collect { targetWord ->
+            onOpenWord(targetWord)
+        }
     }
 
-    val collapseExpandedList: (() -> Unit)? = remember(isExpandedAll, viewModel) {
-        if (isExpandedAll) ({ viewModel.collapseSuggestions() }) else null
+    val collapseExpandedList: (() -> Unit)? = remember(isExpandedAll, viewModel, listState) {
+        if (isExpandedAll) {
+            {
+                viewModel.collapseSuggestions()
+                coroutineScope.launch {
+                    listState.animateScrollToItem(0)
+                }
+            }
+        } else {
+            null
+        }
     }
 
     Box(
@@ -148,7 +162,7 @@ fun QuickTranslateScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = tr("Back", "رجوع"),
+                        contentDescription = "Back",
                         tint = colors.onBackground
                     )
                 }
@@ -176,7 +190,7 @@ fun QuickTranslateScreen(
                         .testTag("quick_translate_input"),
                     placeholder = {
                         Text(
-                            text = tr("Search a word or sentence to translate...", "ابحث عن كلمة أو جملة لترجمتها..."),
+                            text = "Search a word or sentence...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant
                         )
@@ -198,7 +212,7 @@ fun QuickTranslateScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Search,
-                                contentDescription = tr("Search", "بحث"),
+                                contentDescription = "Search",
                                 tint = if (query.isNotBlank()) colors.primary else colors.secondary
                             )
                         }
@@ -217,7 +231,7 @@ fun QuickTranslateScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
-                                    contentDescription = tr("Clear search", "مسح البحث"),
+                                    contentDescription = "Clear",
                                     tint = colors.onSurfaceVariant
                                 )
                             }
@@ -230,7 +244,7 @@ fun QuickTranslateScreen(
                         focusedContainerColor = colors.surface,
                         unfocusedContainerColor = colors.surface,
                         focusedBorderColor = colors.secondary,
-                        unfocusedBorderColor = colors.outline,
+                        unfocusedBorderColor = semantic.divider,
                         cursorColor = colors.secondary
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -244,7 +258,7 @@ fun QuickTranslateScreen(
                                 } else if (ArabicTextUtils.isMultiWordQuery(trimmed)) {
                                     onOpenSentence(trimmed)
                                 } else {
-                                    onOpenWord(trimmed)
+                                    viewModel.openWordReady(trimmed)
                                 }
                             }
                         }
@@ -257,18 +271,7 @@ fun QuickTranslateScreen(
                 )
             }
 
-            if (isLoading) {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .height(2.dp),
-                    color = colors.primary,
-                    trackColor = colors.outline
-                )
-            } else {
-                Spacer(modifier = Modifier.height(8.dp))
-            }
+            Spacer(modifier = Modifier.height(8.dp))
 
             OfflineDictionaryPackBanner(
                 isOnline = isOnline,
@@ -307,7 +310,6 @@ fun QuickTranslateScreen(
                     val trimmedQuery = query.trim()
                     val isSentence = ArabicTextUtils.isMultiWordQuery(trimmedQuery)
 
-                    // Show instant box & direct lookup ONLY after the user taps the Search icon / submits search
                     if (isSearchSubmitted) {
                         instantTranslation?.let { instant ->
                             item(key = "instant_translation", contentType = "instant_translation") {
@@ -320,14 +322,13 @@ fun QuickTranslateScreen(
                                         if (ArabicTextUtils.isMultiWordQuery(instant.query)) {
                                             onOpenSentence(instant.query)
                                         } else {
-                                            onOpenWord(instant.query)
+                                            viewModel.openWordReady(instant.query)
                                         }
                                     }
                                 )
                             }
                         }
 
-                        // Direct lookup row (multi-word -> SentenceLookupScreen, single word -> WordDetailScreen)
                         item(key = "direct_lookup", contentType = "direct_lookup") {
                             Surface(
                                 modifier = Modifier
@@ -335,12 +336,12 @@ fun QuickTranslateScreen(
                                     .padding(vertical = 4.dp)
                                     .clickable {
                                         if (isSentence) onOpenSentence(trimmedQuery)
-                                        else onOpenWord(trimmedQuery)
+                                        else viewModel.openWordReady(trimmedQuery)
                                     }
                                     .testTag("direct_lookup_button"),
                                 color = colors.surfaceVariant,
                                 shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, colors.outline)
+                                border = BorderStroke(1.dp, semantic.divider)
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -349,15 +350,9 @@ fun QuickTranslateScreen(
                                 ) {
                                     Text(
                                         text = if (isSentence) {
-                                            tr(
-                                                "Translate & analyze sentence: \"$trimmedQuery\"",
-                                                "ترجمة وتحليل الجملة: \"$trimmedQuery\""
-                                            )
+                                            "Translate sentence: \"$trimmedQuery\""
                                         } else {
-                                            tr(
-                                                "Open full dictionary entry for \"$trimmedQuery\"",
-                                                "فتح صفحة المعجم الكاملة لـ \"$trimmedQuery\""
-                                            )
+                                            "Open dictionary entry: \"$trimmedQuery\""
                                         },
                                         style = MaterialTheme.typography.labelLarge,
                                         color = colors.secondary,
@@ -366,16 +361,16 @@ fun QuickTranslateScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = if (isSentence) tr("Translate", "ترجمة الجملة") else tr("Search", "بحث"),
+                                        text = if (isSentence) "Translate" else "Open",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = colors.primary
+                                        color = semantic.wordSubline
                                     )
                                 }
                             }
                         }
                     }
 
-                    // Live prefix suggestions (single-row word + US/UK + POS meanings)
+                    // Live prefix suggestions (10 rows initially + full-width See more)
                     itemsIndexed(
                         items = suggestions,
                         key = { idx, item -> "sug_${idx}_${item.word}" },
@@ -385,38 +380,27 @@ fun QuickTranslateScreen(
                             LiveSearchSuggestionRow(
                                 suggestion = item,
                                 audioManager = audioManager,
-                                onOpenWord = { onOpenWord(item.word) },
+                                onOpenWord = { viewModel.openWordReady(item.word) },
                                 onDoubleTapCollapse = collapseExpandedList
                             )
                             if (index < suggestions.lastIndex) {
-                                HorizontalDivider(color = colors.outline.copy(alpha = 0.45f), thickness = 1.dp)
+                                HorizontalDivider(color = semantic.divider, thickness = 1.dp)
                             }
                         }
                     }
 
-                    if (isLoadingMore) {
-                        item(key = "loading_more_suggestions", contentType = "loading_more") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    color = colors.primary,
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                    } else if (hasMoreSuggestions || isExpandedAll) {
+                    if (hasMoreSuggestions || isExpandedAll) {
                         item(key = "see_more_suggestions_footer", contentType = "see_more_footer") {
                             Spacer(modifier = Modifier.height(6.dp))
                             FullWidthSeeMoreFooter(
                                 isExpanded = isExpandedAll,
                                 onClick = {
-                                    if (isExpandedAll) viewModel.collapseSuggestions()
-                                    else viewModel.expandAllSuggestions()
+                                    if (isExpandedAll) {
+                                        viewModel.collapseSuggestions()
+                                        coroutineScope.launch { listState.animateScrollToItem(0) }
+                                    } else {
+                                        viewModel.expandAllSuggestions()
+                                    }
                                 },
                                 testTag = "quick_translate_see_more",
                                 onDoubleTapCollapse = collapseExpandedList
@@ -425,7 +409,6 @@ fun QuickTranslateScreen(
                         }
                     }
                 } else if (isFieldFocused && recentHistory.isNotEmpty()) {
-                    // Section 7: History shown ONLY when search field is tapped/focused while empty
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -434,29 +417,35 @@ fun QuickTranslateScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Icon(
                                     imageVector = AppIcons.History,
-                                    contentDescription = null,
+                                    contentDescription = "History",
                                     tint = colors.primary,
                                     modifier = Modifier.size(18.dp)
                                 )
-                                Text(
-                                    text = tr("Recent Searches", "عمليات البحث الأخيرة"),
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    color = colors.onBackground
+                                SectionHeaderWithArabic(
+                                    englishTitle = "Recent Searches",
+                                    titleColor = colors.onBackground
                                 )
                             }
                             TextButton(
                                 onClick = { showClearConfirm = true },
                                 modifier = Modifier.testTag("clear_search_history_button")
                             ) {
-                                Text(
-                                    text = tr("Clear History", "مسح السجل"),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = colors.primary
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "Clear",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = semantic.wordSubline
+                                    )
+                                    Text(
+                                        text = StaticLabels.arabicFor("Clear"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = semantic.wordSubline.copy(alpha = 0.8f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -465,17 +454,17 @@ fun QuickTranslateScreen(
                             modifier = Modifier.fillMaxWidth(),
                             color = colors.surface,
                             shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, colors.outline)
+                            border = BorderStroke(1.dp, semantic.divider)
                         ) {
                             Column {
                                 recentHistory.forEachIndexed { index, item ->
                                     HistoryRow(
                                         item = item,
-                                        onClick = { onOpenWord(item.resolvedEnglishWord) },
+                                        onClick = { viewModel.openWordReady(item.resolvedEnglishWord) },
                                         onDelete = { viewModel.deleteHistoryItem(item.queryKey) }
                                     )
                                     if (index < recentHistory.lastIndex) {
-                                        HorizontalDivider(color = colors.outline, thickness = 1.dp)
+                                        HorizontalDivider(color = semantic.divider, thickness = 1.dp)
                                     }
                                 }
                             }
@@ -490,25 +479,35 @@ fun QuickTranslateScreen(
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
             containerColor = colors.surface,
-            title = { Text(tr("Clear History", "مسح السجل"), style = MaterialTheme.typography.headlineSmall) },
-            text = { Text(tr("Clear your entire search history?", "هل تريد مسح سجل البحث بالكامل؟"), style = MaterialTheme.typography.bodyMedium) },
+            title = {
+                Column {
+                    Text("Clear History", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        text = StaticLabels.arabicFor("History"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = semantic.wordSubline
+                    )
+                }
+            },
+            text = {
+                Text("Clear your entire search history?", style = MaterialTheme.typography.bodyMedium)
+            },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.clearHistory()
                     showClearConfirm = false
                 }) {
-                    Text(tr("Clear", "مسح"), color = colors.primary)
+                    Text("Clear", color = colors.primary)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirm = false }) {
-                    Text(tr("Cancel", "إلغاء"), color = colors.onSurfaceVariant)
+                    Text("Cancel", color = colors.onSurfaceVariant)
                 }
             }
         )
     }
 }
-
 
 @Composable
 private fun HistoryRow(
@@ -517,6 +516,8 @@ private fun HistoryRow(
     onDelete: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
+    val isArabicQuery = ArabicTextUtils.containsArabicLetters(item.displayQuery)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -530,7 +531,9 @@ private fun HistoryRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            CompositionLocalProvider(
+                LocalLayoutDirection provides if (isArabicQuery) LayoutDirection.Rtl else LayoutDirection.Ltr
+            ) {
                 Text(
                     text = item.displayQuery,
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
@@ -543,7 +546,7 @@ private fun HistoryRow(
                 Text(
                     text = item.previewSummary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
+                    color = semantic.wordSubline,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -556,7 +559,7 @@ private fun HistoryRow(
         ) {
             Icon(
                 imageVector = Icons.Rounded.Close,
-                contentDescription = tr("Remove from history", "حذف من السجل"),
+                contentDescription = "Delete",
                 tint = colors.onSurfaceVariant,
                 modifier = Modifier.size(18.dp)
             )

@@ -141,7 +141,7 @@ fun AppUpdateDialogs(
                 text = {
                     Text(
                         text = tr(
-                            "Please allow Al-Makhzanji Lexicon to install updates in device settings, then return to continue.",
+                            "Please allow Almakhzanji Dictionary to install updates in device settings, then return to continue.",
                             "يرجى السماح لتطبيق معجم المخزنجي بتثبيت التحديثات من إعدادات الجهاز ثم العودة للمتابعة."
                         ),
                         style = MaterialTheme.typography.bodyMedium,

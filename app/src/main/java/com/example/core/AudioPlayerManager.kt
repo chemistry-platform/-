@@ -2,17 +2,25 @@ package com.example.core
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.media.PlaybackParams
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
-import android.os.Process
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.media3.common.AudioAttributes as Media3AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import com.example.BuildConfig
+import com.example.data.remote.WikimediaCommonsApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -30,39 +38,69 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.zip.GZIPInputStream
 
 private const val TAG = "AudioPlayerManager"
-private const val NO_AUDIO_MESSAGE = "لا يوجد صوت متاح على هذا الجهاز"
-private const val NO_ENGLISH_VOICE_MESSAGE = "محرك النطق الإنجليزي غير مثبت على الجهاز"
-private const val NO_ARABIC_VOICE_MESSAGE = "الصوت العربي غير مثبت على الجهاز"
+private const val NO_AUDIO_MESSAGE = "No audio available on this device"
+private const val NO_ENGLISH_VOICE_MESSAGE = "English speech voice is not installed on this device"
+private const val NO_ARABIC_VOICE_MESSAGE = "Arabic speech voice is not installed on this device"
+private const val MANIFEST_REFRESH_INTERVAL_MS = 7L * 24L * 60L * 60L * 1000L
 
 enum class Accent(val code: String) {
     US("us"),
-    UK("uk")
+    UK("uk"),
+    AR("ar")
 }
+
+enum class AudioSourceKind(val label: String) {
+    CACHE_OR_VOICE_PACK("Local Cache / Voice Pack"),
+    HUMAN_RECORDING("Human (FreeDict / Wikimedia)"),
+    KOKORO_OPUS("Kokoro-82M (.opus)"),
+    DEVICE_TTS("Device TTS"),
+    NONE("Unavailable")
+}
+
+data class AudioDebugEntry(
+    val timestampMs: Long,
+    val queryWord: String,
+    val accent: Accent,
+    val sourceKind: AudioSourceKind,
+    val detail: String,
+    val networkBytes: Long
+)
 
 class AudioPlayerManager(
     context: Context,
     private val okHttpClient: OkHttpClient,
-    private val settingsPreferences: UserSettingsPreferences
+    private val settingsPreferences: UserSettingsPreferences,
+    private val wikimediaCommonsApi: WikimediaCommonsApi? = null,
+    private val offlineVoicePackManager: OfflineVoicePackManager? = null
 ) {
     private val appContext = context.applicationContext
     private val audioCacheDir = File(appContext.filesDir, "audio_cache").apply {
         if (!exists()) mkdirs()
     }
+    private val manifestCacheFile = File(appContext.filesDir, "voice-index.json.gz")
+    private val manifestPrefs = appContext.getSharedPreferences("voice_manifest_prefs", Context.MODE_PRIVATE)
     private val failedAudioUrls = java.util.Collections.synchronizedSet(HashSet<String>())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private var mediaPlayer: MediaPlayer? = null
+    private var exoPlayer: ExoPlayer? = null
     private var playbackJob: Job? = null
 
     private var tts: TextToSpeech? = null
     private var ttsInitDeferred: CompletableDeferred<Boolean>? = null
+
+    private val manifestLock = Any()
+    @Volatile private var manifestLoaded = false
+    @Volatile private var manifestUsWords: Set<String> = emptySet()
+    @Volatile private var manifestUkWords: Set<String> = emptySet()
 
     private val _playingKey = MutableStateFlow<String?>(null)
     val playingKey: StateFlow<String?> = _playingKey.asStateFlow()
@@ -97,6 +135,15 @@ class AudioPlayerManager(
     private val _audioMessage = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val audioMessage: SharedFlow<String> = _audioMessage.asSharedFlow()
 
+    private val _audioDebugHistory = MutableStateFlow<List<AudioDebugEntry>>(emptyList())
+    val audioDebugHistory: StateFlow<List<AudioDebugEntry>> = _audioDebugHistory.asStateFlow()
+
+    private val _lastAudioNetworkBytes = MutableStateFlow(0L)
+    val lastAudioNetworkBytes: StateFlow<Long> = _lastAudioNetworkBytes.asStateFlow()
+
+    private val _totalAudioNetworkBytes = MutableStateFlow(0L)
+    val totalAudioNetworkBytes: StateFlow<Long> = _totalAudioNetworkBytes.asStateFlow()
+
     val audioSpeed: StateFlow<Float> = settingsPreferences.audioSpeed
     val sentenceAccent: StateFlow<Accent> = settingsPreferences.sentenceAccent
 
@@ -110,7 +157,7 @@ class AudioPlayerManager(
     fun setAudioSpeed(speed: Float) {
         settingsPreferences.setAudioSpeed(speed)
         val sanitized = settingsPreferences.audioSpeed.value
-        applySpeedToActiveMediaPlayer(sanitized)
+        applySpeedToActiveExoPlayer(sanitized)
         runCatching { tts?.setSpeechRate(sanitized) }
 
         val activeReader = _readerState.value
@@ -129,7 +176,7 @@ class AudioPlayerManager(
             totalChunksInBatch = 0
             activeReaderSessionId = 0L
         }
-        stopMediaPlayerOnly()
+        stopExoPlayerOnly()
         stopTtsOnly()
         _playingKey.value = null
         _ttsProgress.value = null
@@ -141,10 +188,11 @@ class AudioPlayerManager(
     }
 
     /**
-     * Pronounces a single word in US or UK accent:
-     * 1) Real human recording (Free Dictionary API / Wikimedia Commons / cache).
-     * 2) Automatic fallback to TextToSpeech in requested US/UK accent (and if that regional voice
-     *    isn't installed, warns briefly and uses any installed English voice).
+     * Strict 4-tier audio playback chain (< 1s, zero prefetch, no 404 requests):
+     * (a) Disk cache or Offline Voice Pack (0 KB)
+     * (b) Human recording (Free Dictionary API phonetics URL or Wikimedia Commons En-us/En-uk/En-gb/Ar)
+     * (c) Pre-generated Kokoro-82M .opus (~5 KB) ONLY if listed in cached voice-index.json.gz manifest
+     * (d) Device Android TextToSpeech (US / UK / AR)
      */
     fun playHumanPronunciation(
         word: String,
@@ -157,58 +205,97 @@ class AudioPlayerManager(
             emitMessage(NO_AUDIO_MESSAGE)
             return
         }
+        val effectiveAccent = if (ArabicTextUtils.containsArabicLetters(cleaned)) Accent.AR else accent
         val normalizedUrl = normalizeAudioUrl(audioUrl)
         stopPlayback()
         playbackJob = scope.launch {
             _playingKey.value = key
+            var downloadedBytes = 0L
             try {
-                val existingCache = findExistingWordCacheFile(cleaned, accent)
-                val targetFile = if (existingCache != null) {
-                    existingCache
-                } else if (normalizedUrl != null) {
-                    val downloadTarget = cacheFileFor(cleaned, accent, normalizedUrl)
-                    val fastDownload = withTimeoutOrNull(650L) {
-                        withContext(Dispatchers.IO) {
-                            downloadToCache(normalizedUrl, downloadTarget)
-                        }
-                    }
-                    if (fastDownload == null) {
-                        // Cache in background for instant replay next time without delaying playback
-                        prefetchWordAudio(
-                            word = cleaned,
-                            usAudioUrl = if (accent == Accent.US) normalizedUrl else null,
-                            ukAudioUrl = if (accent == Accent.UK) normalizedUrl else null
-                        )
-                    }
-                    fastDownload
-                } else {
-                    null
+                // Tier (a): disk cache or installed Offline Voice Pack
+                val cachedOrPack = withContext(Dispatchers.IO) {
+                    findExistingWordCacheFile(cleaned, effectiveAccent)
+                        ?: offlineVoicePackManager?.findClip(cleaned, effectiveAccent)
                 }
-
-                if (targetFile != null && targetFile.exists() && targetFile.length() > 0L) {
+                if (cachedOrPack != null && cachedOrPack.exists() && cachedOrPack.length() > 0L) {
+                    recordAudioDebug(cleaned, effectiveAccent, AudioSourceKind.CACHE_OR_VOICE_PACK, cachedOrPack.name, 0L)
                     playLocalFile(
-                        file = targetFile,
+                        file = cachedOrPack,
                         onCodecOrPlayErrorFallback = {
-                            launchTtsWordFallback(cleaned, accent, key)
+                            launchTtsFallback(cleaned, effectiveAccent, key, "Codec error fallback")
                         }
                     )
-                } else {
-                    if (normalizedUrl != null) {
-                        Log.w(TAG, "Word human audio download failed ($normalizedUrl), falling back to TTS ($accent)")
-                    }
-                    playWordViaTts(cleaned, accent, key)
+                    return@launch
                 }
+
+                // Tier (b) & (c): Remote within 950ms budget
+                val resolvedRemote: Pair<File, Pair<AudioSourceKind, Long>>? = withTimeoutOrNull(950L) {
+                    withContext(Dispatchers.IO) {
+                        // Tier (b1): direct human recording URL (Free Dictionary API / cached Wiktionary URL)
+                        if (normalizedUrl != null && normalizedUrl !in failedAudioUrls) {
+                            val dlTarget = cacheFileFor(cleaned, effectiveAccent, normalizedUrl)
+                            val dl = downloadToCacheWithSize(normalizedUrl, dlTarget)
+                            if (dl != null) {
+                                return@withContext dl.first to (AudioSourceKind.HUMAN_RECORDING to dl.second)
+                            }
+                        }
+
+                        // Tier (b2): Wikimedia Commons live lookup for single words / concise phrases
+                        if (wikimediaCommonsApi != null && !cleaned.contains('\n') && cleaned.split(Regex("\\s+")).size <= 4) {
+                            val wikiUrl = lookupWikimediaUrl(cleaned, effectiveAccent)
+                            if (wikiUrl != null && wikiUrl !in failedAudioUrls) {
+                                val dlTarget = cacheFileFor(cleaned, effectiveAccent, wikiUrl)
+                                val dl = downloadToCacheWithSize(wikiUrl, dlTarget)
+                                if (dl != null) {
+                                    return@withContext dl.first to (AudioSourceKind.HUMAN_RECORDING to dl.second)
+                                }
+                            }
+                        }
+
+                        // Tier (c): Pre-generated Kokoro .opus gated strictly by local voice-index.json.gz manifest (no 404s!)
+                        if (effectiveAccent != Accent.AR) {
+                            val kokoroUrl = resolveKokoroUrlIfInManifest(cleaned, effectiveAccent)
+                            if (kokoroUrl != null && kokoroUrl !in failedAudioUrls) {
+                                val dlTarget = cacheFileFor(cleaned, effectiveAccent, kokoroUrl)
+                                val dl = downloadToCacheWithSize(kokoroUrl, dlTarget)
+                                if (dl != null) {
+                                    return@withContext dl.first to (AudioSourceKind.KOKORO_OPUS to dl.second)
+                                }
+                            }
+                        }
+
+                        null
+                    }
+                }
+
+                if (resolvedRemote != null) {
+                    val file = resolvedRemote.first
+                    val kind = resolvedRemote.second.first
+                    downloadedBytes = resolvedRemote.second.second
+                    recordAudioDebug(cleaned, effectiveAccent, kind, file.name, downloadedBytes)
+                    playLocalFile(
+                        file = file,
+                        onCodecOrPlayErrorFallback = {
+                            launchTtsFallback(cleaned, effectiveAccent, key, "Codec error -> TTS")
+                        }
+                    )
+                    return@launch
+                }
+
+                // Tier (d): Device Android TextToSpeech
+                playWordViaTts(cleaned, effectiveAccent, key)
             } catch (e: CancellationException) {
                 _playingKey.value = null
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Audio playback failed for $cleaned (${accent.code}), falling back to TTS", e)
-                playWordViaTts(cleaned, accent, key)
+                Log.e(TAG, "Audio playback failed for $cleaned (${effectiveAccent.code}), falling back to TTS", e)
+                playWordViaTts(cleaned, effectiveAccent, key)
             }
         }
     }
 
-    private fun launchTtsWordFallback(word: String, accent: Accent, key: String) {
+    private fun launchTtsFallback(word: String, accent: Accent, key: String, reason: String) {
+        Log.w(TAG, "$reason for '$word' (${accent.code})")
         playbackJob?.cancel()
         playbackJob = scope.launch {
             _playingKey.value = key
@@ -219,27 +306,29 @@ class AudioPlayerManager(
     private suspend fun playWordViaTts(word: String, accent: Accent, key: String) {
         val ready = ensureTtsInitialized()
         if (!ready) {
+            recordAudioDebug(word, accent, AudioSourceKind.NONE, "TTS engine unavailable", 0L)
             _playingKey.value = null
-            emitMessage(NO_ENGLISH_VOICE_MESSAGE)
+            emitMessage(if (accent == Accent.AR) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
             return
         }
-        val isArabicText = ArabicTextUtils.containsArabicLetters(word)
+        val isArabicText = accent == Accent.AR || ArabicTextUtils.containsArabicLetters(word)
         val available = withContext(Dispatchers.Default) {
             if (isArabicText) configureArabicTtsVoice() else configureBestEnglishVoice(accent)
         }
         if (!available) {
+            recordAudioDebug(word, accent, AudioSourceKind.NONE, "No voice installed", 0L)
             _playingKey.value = null
             emitMessage(if (isArabicText) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
             return
         }
+        recordAudioDebug(word, if (isArabicText) Accent.AR else accent, AudioSourceKind.DEVICE_TTS, "Android TTS", 0L)
         _playingKey.value = key
         speakSentenceChunks(word)
     }
 
     /**
      * Sentences/phrases/examples:
-     * 1) Human recording first if URL exists.
-     * 2) Otherwise Android TextToSpeech with requested US/UK accent (or user default).
+     * Uses the exact same chain: cache / explicit human URL / Android TTS (US, UK, or Arabic).
      */
     fun playSentenceAudio(
         sentence: String,
@@ -253,26 +342,29 @@ class AudioPlayerManager(
             return
         }
 
-        val targetAccent = accentOverride ?: settingsPreferences.sentenceAccent.value
+        val isArabic = ArabicTextUtils.containsArabicLetters(cleaned)
+        val targetAccent = if (isArabic) Accent.AR else (accentOverride ?: settingsPreferences.sentenceAccent.value)
         stopPlayback()
         playbackJob = scope.launch {
             _playingKey.value = key
             try {
                 val normalizedUrl = normalizeAudioUrl(audioUrl)
                 if (normalizedUrl != null) {
-                    val sentenceFile = sentenceCacheFileFor(normalizedUrl)
-                    val fileToPlay = withTimeoutOrNull(650L) {
+                    val fileAndBytes = withTimeoutOrNull(950L) {
                         withContext(Dispatchers.IO) {
+                            val sentenceFile = sentenceCacheFileFor(normalizedUrl)
                             if (sentenceFile.exists() && sentenceFile.length() > 0L) {
-                                sentenceFile
+                                sentenceFile to 0L
                             } else {
-                                downloadToCache(normalizedUrl, sentenceFile)
+                                downloadToCacheWithSize(normalizedUrl, sentenceFile)
                             }
                         }
                     }
-                    if (fileToPlay != null && fileToPlay.exists() && fileToPlay.length() > 0L) {
+                    if (fileAndBytes != null && fileAndBytes.first.exists() && fileAndBytes.first.length() > 0L) {
+                        val kind = if (fileAndBytes.second == 0L) AudioSourceKind.CACHE_OR_VOICE_PACK else AudioSourceKind.HUMAN_RECORDING
+                        recordAudioDebug(cleaned.take(40), targetAccent, kind, fileAndBytes.first.name, fileAndBytes.second)
                         playLocalFile(
-                            file = fileToPlay,
+                            file = fileAndBytes.first,
                             onCodecOrPlayErrorFallback = {
                                 scope.launch {
                                     _playingKey.value = key
@@ -282,7 +374,7 @@ class AudioPlayerManager(
                         )
                         return@launch
                     } else {
-                        Log.w(TAG, "Sentence human audio download failed ($normalizedUrl), falling back to TTS")
+                        Log.w(TAG, "Sentence human audio download unavailable ($normalizedUrl), falling back to TTS")
                     }
                 }
                 playSentenceViaTts(cleaned, targetAccent)
@@ -292,6 +384,7 @@ class AudioPlayerManager(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Sentence playback failed", e)
+                recordAudioDebug(cleaned.take(40), targetAccent, AudioSourceKind.NONE, e.message ?: "Error", 0L)
                 _playingKey.value = null
                 _ttsProgress.value = null
                 emitMessage(NO_AUDIO_MESSAGE)
@@ -303,33 +396,31 @@ class AudioPlayerManager(
         val ready = ensureTtsInitialized()
         if (!ready) {
             Log.e(TAG, "TextToSpeech engine unavailable for sentence playback")
+            recordAudioDebug(cleaned.take(40), targetAccent, AudioSourceKind.NONE, "TTS unavailable", 0L)
             _playingKey.value = null
             _ttsProgress.value = null
-            emitMessage(NO_ENGLISH_VOICE_MESSAGE)
+            emitMessage(if (targetAccent == Accent.AR) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
             return
         }
 
-        val isArabicText = ArabicTextUtils.containsArabicLetters(cleaned)
+        val isArabicText = targetAccent == Accent.AR || ArabicTextUtils.containsArabicLetters(cleaned)
         val available = withContext(Dispatchers.Default) {
             if (isArabicText) configureArabicTtsVoice() else configureBestEnglishVoice(targetAccent)
         }
         if (!available) {
             Log.e(TAG, "No supported TTS voice/language installed (isArabic=$isArabicText)")
+            recordAudioDebug(cleaned.take(40), targetAccent, AudioSourceKind.NONE, "No TTS voice", 0L)
             _playingKey.value = null
             _ttsProgress.value = null
             emitMessage(if (isArabicText) NO_ARABIC_VOICE_MESSAGE else NO_ENGLISH_VOICE_MESSAGE)
             return
         }
 
+        recordAudioDebug(cleaned.take(40), if (isArabicText) Accent.AR else targetAccent, AudioSourceKind.DEVICE_TTS, "Android TTS", 0L)
         val continuousSentence = cleaned.replace(Regex("\\s+"), " ").trim()
         speakSentenceChunks(continuousSentence, splitOnPunctuation = false)
     }
 
-    /**
-     * Long-text reader mode:
-     * Splits into sentences, highlights active sentence, supports Pause/Resume/Skip Next/Prev/Stop,
-     * accent switching, and background playback via LongTextReaderService.
-     */
     fun startLongReading(
         key: String,
         text: String,
@@ -348,8 +439,8 @@ class AudioPlayerManager(
             return
         }
 
-        val targetAccent = accentOverride ?: settingsPreferences.sentenceAccent.value
         val isArabic = ArabicTextUtils.containsArabicLetters(cleaned)
+        val targetAccent = if (isArabic) Accent.AR else (accentOverride ?: settingsPreferences.sentenceAccent.value)
 
         stopPlayback()
         val sessionId = System.nanoTime()
@@ -381,11 +472,7 @@ class AudioPlayerManager(
         }
         stopTtsOnly()
         _readerState.value = state.copy(isPaused = true)
-        if (!fromService) {
-            syncReaderService(startForeground = false)
-        } else {
-            syncReaderService(startForeground = true)
-        }
+        syncReaderService(startForeground = fromService)
     }
 
     fun resumeLongReading(fromService: Boolean = false) {
@@ -398,11 +485,7 @@ class AudioPlayerManager(
         _readerState.value = state.copy(isPaused = false)
         _playingKey.value = state.key
         speakReaderSentenceAt(state.currentIndex)
-        if (!fromService) {
-            syncReaderService(startForeground = false)
-        } else {
-            syncReaderService(startForeground = true)
-        }
+        syncReaderService(startForeground = fromService)
     }
 
     fun skipNext(fromService: Boolean = false) {
@@ -443,11 +526,7 @@ class AudioPlayerManager(
         } else {
             stopTtsOnly()
         }
-        if (!fromService) {
-            syncReaderService(startForeground = false)
-        } else {
-            syncReaderService(startForeground = true)
-        }
+        syncReaderService(startForeground = fromService)
     }
 
     private fun speakReaderSentenceAt(index: Int) {
@@ -475,7 +554,7 @@ class AudioPlayerManager(
                     return@launch
                 }
                 val voiceOk = withContext(Dispatchers.Default) {
-                    if (state.isArabic) {
+                    if (state.isArabic || state.accent == Accent.AR) {
                         configureArabicTtsVoice()
                     } else {
                         configureBestEnglishVoice(state.accent)
@@ -535,9 +614,6 @@ class AudioPlayerManager(
         }
     }
 
-    /**
-     * Non-blocking lazy check for English TTS voice availability.
-     */
     fun prepareTtsCheckIfNeeded() {
         scope.launch {
             val ready = ensureTtsInitialized()
@@ -752,9 +828,7 @@ class AudioPlayerManager(
             return true
         }
 
-        // Preferred regional voice is missing — flag helpful banner & fallback to any English voice
-        val missingLabel = if (preferredAccent == Accent.UK) "البريطاني (UK)" else "الأمريكي (US)"
-
+        val missingLabel = if (preferredAccent == Accent.UK) "UK" else "US"
         val fallbackVoice = pickBestEnglishVoice(installedEnVoices, preferredCountry)
         if (fallbackVoice != null) {
             val check = runCatching { engine.setLanguage(fallbackVoice.locale ?: Locale.ENGLISH) }
@@ -778,9 +852,6 @@ class AudioPlayerManager(
         val ok = fallbackEn >= TextToSpeech.LANG_AVAILABLE
         _ttsMissingEnglishVoice.value = true
         _ttsMissingAccentLabel.value = if (ok) missingLabel else null
-        if (!ok) {
-            Log.e(TAG, "No English TTS language/voice installed (status=$fallbackEn)")
-        }
         return ok
     }
 
@@ -880,34 +951,193 @@ class AudioPlayerManager(
         }
     }
 
-    fun prefetchWordAudio(word: String, usAudioUrl: String?, ukAudioUrl: String?) {
-        val usUrl = normalizeAudioUrl(usAudioUrl)?.takeIf { it !in failedAudioUrls }
-        val ukUrl = normalizeAudioUrl(ukAudioUrl)?.takeIf { it !in failedAudioUrls }
-        if (usUrl == null && ukUrl == null) return
+    fun hasAudioOrCache(word: String, accent: Accent, audioUrl: String?): Boolean {
+        val normalized = normalizeAudioUrl(audioUrl)
+        if (normalized != null && normalized !in failedAudioUrls) return true
+        return findExistingWordCacheFile(word, accent) != null ||
+            offlineVoicePackManager?.findClip(word, accent) != null
+    }
 
-        scope.launch(Dispatchers.IO) {
-            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
-            if (usUrl != null && usUrl !in failedAudioUrls) {
-                val usFile = cacheFileFor(word, Accent.US, usUrl)
-                if (!usFile.exists() || usFile.length() == 0L) {
-                    runCatching { downloadToCache(usUrl, usFile) }
+    /**
+     * Resolves expected audio source tier strictly offline/from manifest & metadata without making speculative 404 requests.
+     */
+    fun classifyAudioSource(
+        word: String,
+        accent: Accent,
+        knownHumanUrl: String? = null
+    ): AudioSourceKind {
+        val cleaned = word.trim()
+        if (cleaned.isEmpty()) return AudioSourceKind.NONE
+        val effectiveAccent = if (ArabicTextUtils.containsArabicLetters(cleaned)) Accent.AR else accent
+        if (findExistingWordCacheFile(cleaned, effectiveAccent) != null ||
+            offlineVoicePackManager?.findClip(cleaned, effectiveAccent) != null
+        ) {
+            return AudioSourceKind.CACHE_OR_VOICE_PACK
+        }
+        val normUrl = normalizeAudioUrl(knownHumanUrl)
+        if (normUrl != null && normUrl !in failedAudioUrls) {
+            return AudioSourceKind.HUMAN_RECORDING
+        }
+        if (effectiveAccent != Accent.AR && resolveKokoroUrlIfInManifest(cleaned, effectiveAccent) != null) {
+            return AudioSourceKind.KOKORO_OPUS
+        }
+        return AudioSourceKind.DEVICE_TTS
+    }
+
+    fun seedVoiceManifestForTest(usWords: Set<String>, ukWords: Set<String>) {
+        synchronized(manifestLock) {
+            manifestUsWords = usWords.map { it.lowercase(Locale.US) }.toSet()
+            manifestUkWords = ukWords.map { it.lowercase(Locale.US) }.toSet()
+            manifestLoaded = true
+        }
+    }
+
+    private suspend fun lookupWikimediaUrl(word: String, accent: Accent): String? {
+        val api = wikimediaCommonsApi ?: return null
+        val titles = WikimediaCommonsApi.buildCandidateTitles(word, accent)
+        if (titles.isNotBlank()) {
+            val fromTitles = runCatching {
+                val raw = api.getImageInfoByTitles(titles = titles).string()
+                WikimediaCommonsApi.parseImageInfoAudioUrl(raw)
+            }.getOrNull()
+            if (fromTitles != null) return fromTitles
+        }
+        val prefixes = WikimediaCommonsApi.buildAllImagesPrefixes(word, accent)
+        for (prefix in prefixes) {
+            val found = runCatching {
+                val raw = api.searchAudioFiles(prefix = prefix, limit = 4).string()
+                WikimediaCommonsApi.parseAllImagesAudioUrl(raw)
+            }.getOrNull()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun resolveKokoroUrlIfInManifest(word: String, accent: Accent): String? {
+        if (accent == Accent.AR) return null
+        val lower = word.trim().lowercase(Locale.US)
+        if (lower.isEmpty() || !lower.all { it in 'a'..'z' }) return null
+        ensureVoiceManifestLoaded()
+        val available = when (accent) {
+            Accent.US -> lower in manifestUsWords
+            Accent.UK -> lower in manifestUkWords
+            Accent.AR -> false
+        }
+        if (!available) return null
+        val pagesBase = deriveGitHubPagesBaseUrl() ?: return null
+        return "$pagesBase/clips/${accent.code}/$lower.opus"
+    }
+
+    private fun ensureVoiceManifestLoaded() {
+        if (manifestLoaded) return
+        synchronized(manifestLock) {
+            if (manifestLoaded) return
+            if (manifestCacheFile.exists() && manifestCacheFile.length() > 0L) {
+                runCatching {
+                    parseManifestGzipFile(manifestCacheFile)
+                }.onFailure {
+                    Log.w(TAG, "Failed reading cached voice-index.json.gz", it)
                 }
             }
-            if (ukUrl != null && ukUrl !in failedAudioUrls) {
-                val ukFile = cacheFileFor(word, Accent.UK, ukUrl)
-                if (!ukFile.exists() || ukFile.length() == 0L) {
-                    runCatching { downloadToCache(ukUrl, ukFile) }
-                }
+            manifestLoaded = true
+        }
+        val lastFetched = manifestPrefs.getLong("last_manifest_fetch_ms", 0L)
+        val now = System.currentTimeMillis()
+        if ((now - lastFetched) > MANIFEST_REFRESH_INTERVAL_MS && deriveGitHubPagesBaseUrl() != null) {
+            scope.launch(Dispatchers.IO) {
+                refreshManifestSilently()
             }
         }
     }
 
-    fun hasAudioOrCache(word: String, accent: Accent, audioUrl: String?): Boolean {
-        val normalized = normalizeAudioUrl(audioUrl)
-        if (normalized != null && normalized !in failedAudioUrls) return true
-        return findExistingWordCacheFile(word, accent) != null
+    private fun refreshManifestSilently() {
+        val baseUrl = deriveGitHubPagesBaseUrl() ?: return
+        val manifestUrl = "$baseUrl/voice-index.json.gz"
+        val tmp = File(appContext.cacheDir, "voice-index.json.gz.tmp")
+        runCatching {
+            val req = Request.Builder()
+                .url(manifestUrl)
+                .header("User-Agent", "Al-Makhzanji-Dictionary/1.0 (Android)")
+                .build()
+            okHttpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return
+                val body = resp.body ?: return
+                FileOutputStream(tmp).use { out ->
+                    body.byteStream().copyTo(out)
+                    out.flush()
+                }
+            }
+            if (tmp.exists() && tmp.length() > 0L) {
+                tmp.copyTo(manifestCacheFile, overwrite = true)
+                tmp.delete()
+                manifestPrefs.edit().putLong("last_manifest_fetch_ms", System.currentTimeMillis()).apply()
+                synchronized(manifestLock) {
+                    parseManifestGzipFile(manifestCacheFile)
+                }
+            }
+        }.onFailure {
+            tmp.delete()
+            Log.d(TAG, "Voice manifest not fetched (${it.message})")
+        }
     }
 
+    private fun parseManifestGzipFile(file: File) {
+        val raw = GZIPInputStream(FileInputStream(file)).bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val root = JSONObject(raw)
+        val usArr = root.optJSONArray("us")
+        val ukArr = root.optJSONArray("uk")
+        val usSet = HashSet<String>(usArr?.length() ?: 0)
+        val ukSet = HashSet<String>(ukArr?.length() ?: 0)
+        if (usArr != null) {
+            for (i in 0 until usArr.length()) {
+                val w = usArr.optString(i).trim().lowercase(Locale.US)
+                if (w.isNotEmpty()) usSet.add(w)
+            }
+        }
+        if (ukArr != null) {
+            for (i in 0 until ukArr.length()) {
+                val w = ukArr.optString(i).trim().lowercase(Locale.US)
+                if (w.isNotEmpty()) ukSet.add(w)
+            }
+        }
+        manifestUsWords = usSet
+        manifestUkWords = ukSet
+    }
+
+    private fun deriveGitHubPagesBaseUrl(): String? {
+        val repo = BuildConfig.GITHUB_REPO
+        if (repo.isBlank() || repo == "unknown/unknown" || !repo.contains("/")) return null
+        val parts = repo.split('/', limit = 2)
+        val owner = parts[0].trim()
+        val name = parts[1].trim()
+        if (owner.isEmpty() || name.isEmpty()) return null
+        return "https://$owner.github.io/$name"
+    }
+
+    private fun recordAudioDebug(
+        query: String,
+        accent: Accent,
+        sourceKind: AudioSourceKind,
+        detail: String,
+        bytes: Long
+    ) {
+        val entry = AudioDebugEntry(
+            timestampMs = System.currentTimeMillis(),
+            queryWord = query,
+            accent = accent,
+            sourceKind = sourceKind,
+            detail = detail,
+            networkBytes = bytes
+        )
+        _lastAudioNetworkBytes.value = bytes
+        if (bytes > 0L) {
+            _totalAudioNetworkBytes.value = _totalAudioNetworkBytes.value + bytes
+        }
+        val updated = (listOf(entry) + _audioDebugHistory.value).take(20)
+        _audioDebugHistory.value = updated
+    }
+
+    @OptIn(UnstableApi::class)
     private fun playLocalFile(
         file: File,
         onCodecOrPlayErrorFallback: (() -> Unit)? = null
@@ -922,58 +1152,52 @@ class AudioPlayerManager(
             }
             return
         }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Log.w(TAG, "ExoPlayer requires MainLooper; falling back")
+            onCodecOrPlayErrorFallback?.invoke() ?: run {
+                _playingKey.value = null
+                emitMessage(NO_AUDIO_MESSAGE)
+            }
+            return
+        }
         try {
-            stopMediaPlayerOnly()
+            stopExoPlayerOnly()
             val speed = settingsPreferences.audioSpeed.value
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
-                FileInputStream(file).use { fis ->
-                    setDataSource(fis.fd)
-                }
-                setOnPreparedListener { player ->
-                    try {
-                        player.start()
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && speed != 1.0f) {
-                            try {
-                                player.playbackParams = PlaybackParams().setSpeed(speed)
-                            } catch (e: Throwable) {
-                                Log.w(TAG, "PlaybackParams speed=$speed unsupported on codec, playing at 1.0x", e)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "MediaPlayer start failed for ${file.name}", e)
-                        if (onCodecOrPlayErrorFallback != null) {
-                            onCodecOrPlayErrorFallback()
-                        } else {
-                            _playingKey.value = null
-                            emitMessage(NO_AUDIO_MESSAGE)
-                        }
+            val player = ExoPlayer.Builder(appContext).build()
+            exoPlayer = player
+            val attrs = Media3AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                .setUsage(C.USAGE_MEDIA)
+                .build()
+            player.setAudioAttributes(attrs, true)
+            player.playbackParameters = PlaybackParameters(speed)
+            player.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) {
+                        _playingKey.value = null
                     }
                 }
-                setOnCompletionListener {
-                    _playingKey.value = null
-                }
-                setOnErrorListener { _, what, extra ->
-                    Log.e(TAG, "MediaPlayer OnError what=$what extra=$extra file=${file.name}")
-                    runCatching { file.delete() }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    Log.e(TAG, "ExoPlayer error (${error.errorCodeName}) for ${file.name}", error)
+                    runCatching {
+                        if (file.parentFile?.name == "audio_cache") file.delete()
+                    }
+                    stopExoPlayerOnly()
                     if (onCodecOrPlayErrorFallback != null) {
                         onCodecOrPlayErrorFallback()
                     } else {
                         _playingKey.value = null
                         emitMessage(NO_AUDIO_MESSAGE)
                     }
-                    true
                 }
-                prepareAsync()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "MediaPlayer setup failed for file ${file.name}", e)
-            runCatching { file.delete() }
+            })
+            player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            player.prepare()
+            player.play()
+        } catch (e: Throwable) {
+            Log.e(TAG, "ExoPlayer setup failed for file ${file.name}", e)
+            stopExoPlayerOnly()
             if (onCodecOrPlayErrorFallback != null) {
                 onCodecOrPlayErrorFallback()
             } else {
@@ -983,20 +1207,16 @@ class AudioPlayerManager(
         }
     }
 
-    private fun applySpeedToActiveMediaPlayer(speed: Float) {
-        val player = mediaPlayer ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                if (player.isPlaying) {
-                    player.playbackParams = PlaybackParams().setSpeed(speed)
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "Active MediaPlayer speed change ignored", e)
-            }
+    private fun applySpeedToActiveExoPlayer(speed: Float) {
+        val player = exoPlayer ?: return
+        runCatching {
+            player.playbackParameters = PlaybackParameters(speed)
+        }.onFailure {
+            Log.w(TAG, "Active ExoPlayer speed change ignored", it)
         }
     }
 
-    private fun downloadToCache(url: String, targetFile: File): File? {
+    private fun downloadToCacheWithSize(url: String, targetFile: File): Pair<File, Long>? {
         if (url in failedAudioUrls) return null
         val tempFile = File(audioCacheDir, "${targetFile.name}.tmp")
         if (tempFile.exists()) tempFile.delete()
@@ -1006,12 +1226,13 @@ class AudioPlayerManager(
                 .header("User-Agent", "Al-Makhzanji-Dictionary/1.0 (Android)")
                 .build()
 
+            var bytesCopied = 0L
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     if (response.code == 404 || response.code == 410) {
                         failedAudioUrls.add(url)
                     }
-                    Log.w(TAG, "HTTP ${response.code} downloading optional audio: $url")
+                    Log.w(TAG, "HTTP ${response.code} downloading audio: $url")
                     return null
                 }
                 val contentType = response.header("Content-Type")?.lowercase(Locale.US).orEmpty()
@@ -1022,7 +1243,7 @@ class AudioPlayerManager(
                 }
                 val body = response.body ?: return null
                 FileOutputStream(tempFile).use { out ->
-                    body.byteStream().copyTo(out)
+                    bytesCopied = body.byteStream().copyTo(out)
                     out.flush()
                 }
             }
@@ -1032,13 +1253,13 @@ class AudioPlayerManager(
                     tempFile.copyTo(targetFile, overwrite = true)
                     tempFile.delete()
                 }
-                targetFile
+                targetFile to bytesCopied
             } else {
                 tempFile.delete()
                 null
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Optional audio download skipped for $url: ${e.message}")
+            Log.w(TAG, "Audio download skipped for $url: ${e.message}")
             tempFile.delete()
             null
         }
@@ -1050,7 +1271,8 @@ class AudioPlayerManager(
         return when {
             trimmed.startsWith("//") -> "https:$trimmed"
             trimmed.startsWith("http://", ignoreCase = true) -> "https://" + trimmed.substring(7)
-            else -> trimmed
+            trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            else -> null
         }
     }
 
@@ -1085,6 +1307,7 @@ class AudioPlayerManager(
     private fun inferAudioExtension(url: String?): String {
         val path = url?.substringBefore('?')?.substringBefore('#')?.lowercase(Locale.US).orEmpty()
         return when {
+            path.endsWith(".opus") -> "opus"
             path.endsWith(".ogg") -> "ogg"
             path.endsWith(".oga") -> "oga"
             path.endsWith(".wav") -> "wav"
@@ -1101,10 +1324,10 @@ class AudioPlayerManager(
             .take(24)
     }
 
-    private fun stopMediaPlayerOnly() {
-        runCatching { mediaPlayer?.reset() }
-        runCatching { mediaPlayer?.release() }
-        mediaPlayer = null
+    private fun stopExoPlayerOnly() {
+        runCatching { exoPlayer?.stop() }
+        runCatching { exoPlayer?.release() }
+        exoPlayer = null
     }
 
     private fun stopTtsOnly() {
@@ -1119,7 +1342,7 @@ class AudioPlayerManager(
     }
 
     companion object {
-        private val SUPPORTED_CACHE_EXTENSIONS = listOf("mp3", "ogg", "oga", "wav", "flac", "m4a")
+        private val SUPPORTED_CACHE_EXTENSIONS = listOf("opus", "mp3", "ogg", "oga", "wav", "flac", "m4a")
 
         private fun formatUtteranceId(batchId: Long, index: Int): String = "utt_${batchId}_$index"
 

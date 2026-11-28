@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.core.ArabicTextUtils
+import com.example.core.ContextualTranslationAnalyzer
 import com.example.core.OfflinePackManager
 import com.example.core.OfflinePackState
 import com.example.core.TranslationManager
@@ -23,7 +24,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -62,6 +62,7 @@ class WordDetailViewModel(
     initialQuery: String,
     private val fallbackBaseWord: String? = null,
     private val initialHighlightChip: String? = null,
+    private val initialPreferredSense: String? = null,
     private val offlinePackManager: OfflinePackManager? = null
 ) : ViewModel() {
 
@@ -80,6 +81,9 @@ class WordDetailViewModel(
 
     private val _currentQuery = MutableStateFlow(initialQuery)
     val currentQuery: StateFlow<String> = _currentQuery.asStateFlow()
+
+    private val _preferredSense = MutableStateFlow(initialPreferredSense)
+    val preferredSense: StateFlow<String?> = _preferredSense.asStateFlow()
 
     private val _inlineQuery = MutableStateFlow(initialQuery)
     val inlineQuery: StateFlow<String> = _inlineQuery.asStateFlow()
@@ -114,7 +118,11 @@ class WordDetailViewModel(
     )
     val direction: StateFlow<LanguageDirection> = _direction.asStateFlow()
 
-    private val _uiState = MutableStateFlow<WordLoadState>(WordLoadState.Loading)
+    private val _uiState = MutableStateFlow<WordLoadState>(
+        repository.peekReadyEntry(initialQuery)?.let { cached ->
+            WordLoadState.Success(reorderEntryByPreferredSense(cached, initialPreferredSense), isUpdating = false)
+        } ?: WordLoadState.Loading
+    )
     val uiState: StateFlow<WordLoadState> = _uiState.asStateFlow()
 
     private val _usageFilter = MutableStateFlow(UsageFilterOption.ALL)
@@ -179,6 +187,7 @@ class WordDetailViewModel(
     private var chipMeaningsJob: Job? = null
     private var phrasalsJob: Job? = null
     private var chipTapJob: Job? = null
+    private var openWordJob: Job? = null
     private var confusableLoadedForWord: String? = null
     private var confusablePrefetchedForWord: String? = null
     private var chipMeaningsLoadedForWord: String? = null
@@ -195,15 +204,18 @@ class WordDetailViewModel(
                         _hasMoreInlineSuggestions.value = false
                         flowOf(Triple(trimmed, emptyList<SearchSuggestion>(), false))
                     } else {
-                        _isLoadingInline.value = true
                         repository.observeLiveSuggestions(
                             query = trimmed,
                             limit = QuickTranslateViewModel.INITIAL_PAGE_SIZE
                         ).onEach { page ->
-                            page.items.firstOrNull()?.word?.let { topWord ->
-                                if (!page.items.first().isIdiom) {
-                                    repository.prefetchWord(topWord)
-                                }
+                            val candidateWords = page.items
+                                .asSequence()
+                                .filter { !it.isIdiom }
+                                .take(QuickTranslateViewModel.INITIAL_PAGE_SIZE)
+                                .map { it.word }
+                                .toList()
+                            if (candidateWords.isNotEmpty()) {
+                                repository.prebuildLocalCandidates(candidateWords)
                             }
                             _isLoadingInline.value = false
                         }.catch { e ->
@@ -244,7 +256,8 @@ class WordDetailViewModel(
             query = initialQuery,
             forceRefresh = false,
             fallbackWord = fallbackBaseWord,
-            highlightChip = initialHighlightChip
+            highlightChip = initialHighlightChip,
+            preferredSense = initialPreferredSense
         )
     }
 
@@ -342,10 +355,12 @@ class WordDetailViewModel(
         query: String,
         forceRefresh: Boolean = false,
         fallbackWord: String? = null,
-        highlightChip: String? = null
+        highlightChip: String? = null,
+        preferredSense: String? = _preferredSense.value
     ) {
         val cleaned = query.trim()
         if (cleaned.isEmpty()) return
+        _preferredSense.value = preferredSense
         _isSearchingInline.value = false
         _inlineSuggestions.value = emptyList()
         _hasMoreInlineSuggestions.value = false
@@ -380,27 +395,26 @@ class WordDetailViewModel(
             repository.observeWordEntry(cleaned, forceRefresh = forceRefresh).collect { state ->
                 when (state) {
                     is WordLoadState.Loading -> {
-                        _uiState.value = WordLoadState.Loading
+                        // Hold screen silently without displaying a loading state
                     }
                     is WordLoadState.Success -> {
-                        _activeEntryWord.value = state.entry.displayWord
-                        _uiState.value = state
-                        populateChipMeanings(state.entry, fetchMissing = !state.isUpdating)
-                        if (!state.isUpdating) {
-                            if (state.entry.confusableCandidates.isNotEmpty() &&
-                                confusablePrefetchedForWord != state.entry.word
-                            ) {
-                                confusablePrefetchedForWord = state.entry.word
-                                prefetchFirstConfusablesPage(state.entry)
-                            }
-                            if ((state.entry.prepositionsAndPhrases.isNotEmpty() ||
-                                    state.entry.compoundExpressions.isNotEmpty() ||
-                                    state.entry.phrasalVerbsAndIdioms.isNotEmpty()) &&
-                                phrasalsLoadedForWord != state.entry.word
-                            ) {
-                                phrasalsLoadedForWord = state.entry.word
-                                loadPhrasalsForEntry(state.entry)
-                            }
+                        val orderedEntry = reorderEntryByPreferredSense(state.entry, preferredSense)
+                        _activeEntryWord.value = orderedEntry.displayWord
+                        _uiState.value = WordLoadState.Success(orderedEntry, isUpdating = false)
+                        populateChipMeanings(orderedEntry, fetchMissing = true)
+                        if (orderedEntry.confusableCandidates.isNotEmpty() &&
+                            confusablePrefetchedForWord != orderedEntry.word
+                        ) {
+                            confusablePrefetchedForWord = orderedEntry.word
+                            prefetchFirstConfusablesPage(orderedEntry)
+                        }
+                        if ((orderedEntry.prepositionsAndPhrases.isNotEmpty() ||
+                                orderedEntry.compoundExpressions.isNotEmpty() ||
+                                orderedEntry.phrasalVerbsAndIdioms.isNotEmpty()) &&
+                            phrasalsLoadedForWord != orderedEntry.word
+                        ) {
+                            phrasalsLoadedForWord = orderedEntry.word
+                            loadPhrasalsForEntry(orderedEntry)
                         }
                     }
                     is WordLoadState.Error -> {
@@ -411,20 +425,26 @@ class WordDetailViewModel(
                             _inlineQuery.value = fallbackWord
                             repository.observeWordEntry(fallbackWord, forceRefresh = false)
                                 .collect { fbState ->
-                                    if (fbState is WordLoadState.Success) {
-                                        _activeEntryWord.value = fbState.entry.displayWord
-                                        populateChipMeanings(fbState.entry, fetchMissing = !fbState.isUpdating)
-                                        if (!fbState.isUpdating &&
-                                            (fbState.entry.prepositionsAndPhrases.isNotEmpty() ||
-                                                fbState.entry.compoundExpressions.isNotEmpty() ||
-                                                fbState.entry.phrasalVerbsAndIdioms.isNotEmpty()) &&
-                                            phrasalsLoadedForWord != fbState.entry.word
-                                        ) {
-                                            phrasalsLoadedForWord = fbState.entry.word
-                                            loadPhrasalsForEntry(fbState.entry)
+                                    when (fbState) {
+                                        is WordLoadState.Loading -> Unit
+                                        is WordLoadState.Success -> {
+                                            val orderedFb = reorderEntryByPreferredSense(fbState.entry, preferredSense)
+                                            _activeEntryWord.value = orderedFb.displayWord
+                                            populateChipMeanings(orderedFb, fetchMissing = true)
+                                            if ((orderedFb.prepositionsAndPhrases.isNotEmpty() ||
+                                                    orderedFb.compoundExpressions.isNotEmpty() ||
+                                                    orderedFb.phrasalVerbsAndIdioms.isNotEmpty()) &&
+                                                phrasalsLoadedForWord != orderedFb.word
+                                            ) {
+                                                phrasalsLoadedForWord = orderedFb.word
+                                                loadPhrasalsForEntry(orderedFb)
+                                            }
+                                            _uiState.value = WordLoadState.Success(orderedFb, isUpdating = false)
+                                        }
+                                        is WordLoadState.Error -> {
+                                            _uiState.value = fbState
                                         }
                                     }
-                                    _uiState.value = fbState
                                 }
                         } else {
                             _uiState.value = state
@@ -433,6 +453,56 @@ class WordDetailViewModel(
                 }
             }
         }
+    }
+
+    fun openWordReady(word: String) {
+        val cleaned = word.trim()
+        if (cleaned.isEmpty()) return
+        openWordJob?.cancel()
+        openWordJob = viewModelScope.launch {
+            repository.ensureWordReadyForOpen(cleaned, timeoutMs = 1450L)
+            loadWord(cleaned)
+        }
+    }
+
+    private fun reorderEntryByPreferredSense(entry: WordEntry, preferredSense: String?): WordEntry {
+        val hint = preferredSense?.trim().orEmpty()
+        if (hint.isBlank()) return entry
+        val hintTokens = hint.lowercase(Locale.US)
+            .split(Regex("[^a-zA-Z\u0600-\u06FF]+"))
+            .filter { it.length >= 2 }
+            .toSet()
+
+        fun scoreSense(def: String, defAr: String?): Int {
+            var score = 0
+            val dLower = def.lowercase(Locale.US)
+            val aLower = defAr.orEmpty().lowercase(Locale.US)
+            val hintLower = hint.lowercase(Locale.US)
+            if (dLower.contains(hintLower) || aLower.contains(hintLower)) score += 10
+            if (hintTokens.isNotEmpty()) {
+                score += ContextualTranslationAnalyzer.scoreSenseInContext(
+                    definitionText = "$def ${defAr.orEmpty()}",
+                    contextTokens = hintTokens
+                )
+            }
+            return score
+        }
+
+        val reorderedGroups = entry.posGroups.map { group ->
+            val sortedSenses = group.senses
+                .withIndex()
+                .sortedWith(compareByDescending<IndexedValue<com.example.domain.model.SenseItem>> {
+                    scoreSense(it.value.definition, it.value.definitionArabic)
+                }.thenBy { it.index })
+                .map { it.value }
+            group.copy(senses = sortedSenses)
+        }.withIndex()
+            .sortedWith(compareByDescending<IndexedValue<com.example.domain.model.PosSenseGroup>> {
+                it.value.senses.maxOfOrNull { s -> scoreSense(s.definition, s.definitionArabic) } ?: 0
+            }.thenBy { it.index })
+            .map { it.value }
+
+        return entry.copy(posGroups = reorderedGroups)
     }
 
     private fun populateChipMeanings(entry: WordEntry, fetchMissing: Boolean) {
@@ -567,29 +637,19 @@ class WordDetailViewModel(
         clearHighlightedChip()
         chipTapJob?.cancel()
         chipTapJob = viewModelScope.launch {
-            var resolved = false
-            val loadingDelayJob = launch {
-                delay(140L)
-                if (!resolved && _phraseSheet.value == null) {
-                    _phraseSheet.value = PhraseSheetData(phrase = cleaned, isLoading = true)
-                }
-            }
             try {
+                // Hold screen silently (no spinner) while resolving chip/entry up to 1.45s
                 val (hasEntry, sheetData) = repository.inspectChipTap(cleaned)
-                resolved = true
-                loadingDelayJob.cancel()
                 if (hasEntry) {
+                    repository.ensureWordReadyForOpen(sheetData.phrase, timeoutMs = 1450L)
                     _phraseSheet.value = null
                     _openWordEvent.emit(sheetData.phrase)
                 } else {
                     _phraseSheet.value = sheetData
                 }
             } catch (e: CancellationException) {
-                loadingDelayJob.cancel()
                 throw e
             } catch (_: Exception) {
-                resolved = true
-                loadingDelayJob.cancel()
                 _phraseSheet.value = PhraseSheetData(phrase = cleaned, isLoading = false)
             }
         }
@@ -709,6 +769,7 @@ class WordDetailViewModel(
         private val initialQuery: String,
         private val fallbackBaseWord: String? = null,
         private val initialHighlightChip: String? = null,
+        private val initialPreferredSense: String? = null,
         private val offlinePackManager: OfflinePackManager? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -720,6 +781,7 @@ class WordDetailViewModel(
                 initialQuery = initialQuery,
                 fallbackBaseWord = fallbackBaseWord,
                 initialHighlightChip = initialHighlightChip,
+                initialPreferredSense = initialPreferredSense,
                 offlinePackManager = offlinePackManager
             ) as T
         }

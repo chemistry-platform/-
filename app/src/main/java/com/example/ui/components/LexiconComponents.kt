@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -89,11 +90,13 @@ import com.example.core.AudioSpeedOptions
 import com.example.core.LinguisticRanker
 import com.example.core.LocalAppLanguage
 import com.example.core.OfflinePackState
+import com.example.core.StaticLabels
 import com.example.core.tr
 import com.example.domain.model.InstantTranslationResult
 import com.example.domain.model.LanguageDirection
 import com.example.domain.model.PhraseSheetData
 import com.example.domain.model.SearchSuggestion
+import com.example.ui.theme.LocalSemanticColors
 import java.util.Locale
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -116,16 +119,11 @@ fun LanguageSwapBar(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
-    val sourceLabel = if (direction == LanguageDirection.EN_TO_AR) {
-        tr("English", "الإنجليزية")
-    } else {
-        tr("Arabic", "العربية")
-    }
-    val targetLabel = if (direction == LanguageDirection.EN_TO_AR) {
-        tr("Arabic", "العربية")
-    } else {
-        tr("English", "الإنجليزية")
-    }
+    val semantic = LocalSemanticColors.current
+    val sourceLabel = if (direction == LanguageDirection.EN_TO_AR) "English" else "Arabic"
+    val sourceAr = if (direction == LanguageDirection.EN_TO_AR) "الإنجليزية" else "العربية"
+    val targetLabel = if (direction == LanguageDirection.EN_TO_AR) "Arabic" else "English"
+    val targetAr = if (direction == LanguageDirection.EN_TO_AR) "العربية" else "الإنجليزية"
 
     Row(
         modifier = modifier
@@ -134,13 +132,23 @@ fun LanguageSwapBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = sourceLabel,
-            style = MaterialTheme.typography.labelLarge,
-            color = colors.onSurface,
+        Column(
             modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Center
-        )
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = sourceLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = colors.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = sourceAr,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = semantic.wordSubline,
+                textAlign = TextAlign.Center
+            )
+        }
 
         Box(
             modifier = Modifier
@@ -152,19 +160,29 @@ fun LanguageSwapBar(
         ) {
             Icon(
                 imageVector = AppIcons.SwapHoriz,
-                contentDescription = tr("Swap languages", "تبديل اللغات"),
+                contentDescription = "Swap languages",
                 tint = colors.secondary,
                 modifier = Modifier.size(22.dp)
             )
         }
 
-        Text(
-            text = targetLabel,
-            style = MaterialTheme.typography.labelLarge,
-            color = colors.onSurface,
+        Column(
             modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Center
-        )
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = targetLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = colors.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = targetAr,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = semantic.wordSubline,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -494,7 +512,7 @@ fun InteractiveWordChip(
                             text = subTrimmed,
                             fontSize = 10.sp,
                             lineHeight = 13.sp,
-                            color = colors.onSurfaceVariant,
+                            color = LocalSemanticColors.current.wordSubline,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -696,9 +714,8 @@ fun AlMakhzanjiBottomBar(
     onSelectTab: (BottomNavTab) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val lang = LocalAppLanguage.current
     Column(modifier = Modifier.background(colors.surface)) {
-        HorizontalDivider(color = colors.outline, thickness = 1.dp)
+        HorizontalDivider(color = LocalSemanticColors.current.divider, thickness = 1.dp)
         NavigationBar(
             containerColor = colors.surface,
             tonalElevation = 0.dp,
@@ -706,7 +723,7 @@ fun AlMakhzanjiBottomBar(
         ) {
             BottomNavTab.entries.forEach { tab ->
                 val selected = tab == currentTab
-                val tabLabel = tab.label(lang)
+                val tabLabel = tab.labelEn
                 val icon = when (tab) {
                     BottomNavTab.HOME -> if (selected) Icons.Rounded.Home else Icons.Outlined.Home
                     BottomNavTab.DISCOVER -> AppIcons.Explore
@@ -1248,8 +1265,12 @@ fun InstantTranslationCard(
     onOpenFull: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    if (result.isLoading) return
     val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
     val isSingleEnglishWord = !result.isArabicSource && !ArabicTextUtils.isMultiWordQuery(result.query)
+    val isSentence = ArabicTextUtils.isMultiWordQuery(result.query)
+    val transColor = if (isSentence) semantic.exampleTranslation else semantic.definitionTranslation
 
     Surface(
         modifier = modifier
@@ -1258,13 +1279,12 @@ fun InstantTranslationCard(
             .testTag("instant_translation_card"),
         color = colors.surface,
         shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.45f))
+        border = BorderStroke(1.dp, semantic.divider)
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Row holding query & speaker buttons (US/UK for English words or sentences; speaker for Arabic)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1352,26 +1372,9 @@ fun InstantTranslationCard(
                 }
             }
 
-            HorizontalDivider(color = colors.outline, thickness = 1.dp)
+            HorizontalDivider(color = semantic.divider, thickness = 1.dp)
 
-            // Live translation directly under the row holding the speaker buttons
-            if (result.isLoading) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        color = colors.secondary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = tr("Translating...", "جاري الترجمة الفورية..."),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
-                    )
-                }
-            } else if (!result.translation.isNullOrBlank()) {
+            if (!result.translation.isNullOrBlank()) {
                 if (result.isArabicSource) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1382,7 +1385,7 @@ fun InstantTranslationCard(
                             Text(
                                 text = result.translation,
                                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                                color = colors.primary,
+                                color = transColor,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("instant_translation_text")
@@ -1415,9 +1418,9 @@ fun InstantTranslationCard(
                     ArabicTranslatedText(
                         text = result.translation,
                         isMachineTranslated = result.isMachine,
-                        showMachineLabel = showMachineLabel,
+                        showMachineLabel = false,
                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = colors.primary,
+                        color = transColor,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("instant_translation_text")
@@ -1425,31 +1428,16 @@ fun InstantTranslationCard(
                 }
             } else if (result.noMeaningFound) {
                 Text(
-                    text = tr(
-                        "no idiom meaning found",
-                        "لم يُعثر على معنى للتعبير الاصطلاحي"
-                    ),
+                    text = "No idiom meaning found / لم يُعثر على معنى للتعبير",
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                     color = colors.onSurfaceVariant,
                     modifier = Modifier.testTag("instant_no_idiom_meaning")
                 )
             } else if (result.missingPack) {
                 Text(
-                    text = tr(
-                        "Download the Arabic & English packs to enable instant offline translation.",
-                        "حمّل حزمة العربية والإنجليزية لتفعيل الترجمة الفورية دون إنترنت."
-                    ),
+                    text = "Download the offline language packs to enable instant offline translation.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = colors.tertiary
-                )
-            } else {
-                Text(
-                    text = tr(
-                        "Unable to fetch an instant translation right now.",
-                        "تعذر الحصول على ترجمة فورية حالياً."
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant
+                    color = semantic.wordSubline
                 )
             }
         }
@@ -1565,28 +1553,9 @@ fun PhraseFallbackBottomSheet(
                 }
             }
 
-            if (sheetData.isLoading) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        color = colors.primary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = tr("Fetching meaning & example...", "جاري جلب المعنى والمثال..."),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
-                    )
-                }
-            } else if (sheetData.noMeaningFound) {
+            if (sheetData.noMeaningFound) {
                 Text(
-                    text = tr(
-                        "no idiom meaning found",
-                        "لم يُعثر على معنى للتعبير الاصطلاحي"
-                    ),
+                    text = "No idiom meaning found / لم يُعثر على معنى للتعبير",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
                     color = colors.onSurfaceVariant,
                     modifier = Modifier
@@ -1601,7 +1570,7 @@ fun PhraseFallbackBottomSheet(
                             Text(
                                 text = meaning,
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                color = colors.primary,
+                                color = LocalSemanticColors.current.definitionTranslation,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -1609,20 +1578,17 @@ fun PhraseFallbackBottomSheet(
                         ArabicTranslatedText(
                             text = meaning,
                             isMachineTranslated = sheetData.isArabicMachine,
-                            showMachineLabel = showMachineLabel,
+                            showMachineLabel = false,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = colors.primary,
+                            color = LocalSemanticColors.current.definitionTranslation,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
                 } else if (sheetData.missingArabicPack) {
                     Text(
-                        text = tr(
-                            "Download the Arabic language pack to view offline translations.",
-                            "حمّل حزمة اللغة العربية لعرض الترجمة دون إنترنت."
-                        ),
+                        text = "Download offline language pack for offline meanings.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = colors.tertiary
+                        color = LocalSemanticColors.current.wordSubline
                     )
                 }
 
@@ -1638,11 +1604,16 @@ fun PhraseFallbackBottomSheet(
                 }
 
                 if (sheetData.example.isNotBlank()) {
-                    HorizontalDivider(color = colors.outline)
+                    HorizontalDivider(color = LocalSemanticColors.current.divider)
                     Text(
-                        text = tr("Real Example", "مثال حقيقي"),
+                        text = "Example",
                         style = MaterialTheme.typography.labelMedium,
-                        color = colors.secondary
+                        color = colors.onSurface
+                    )
+                    Text(
+                        text = StaticLabels.arabicFor("Examples"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = LocalSemanticColors.current.wordSubline
                     )
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -1690,9 +1661,9 @@ fun PhraseFallbackBottomSheet(
                                 ArabicTranslatedText(
                                     text = sheetData.exampleArabic,
                                     isMachineTranslated = sheetData.exampleIsMachine,
-                                    showMachineLabel = showMachineLabel,
+                                    showMachineLabel = false,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = colors.onSurfaceVariant,
+                                    color = LocalSemanticColors.current.exampleTranslation,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -1953,6 +1924,51 @@ fun OfflineDictionaryPackBanner(
                 }
             }
         }
+        is OfflinePackState.Paused -> {
+            if (!isOnline) {
+                Surface(
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .testTag("offline_pack_paused_banner"),
+                    color = colors.secondaryContainer.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, colors.secondary.copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Pro Pack paused (${(packState.progress * 100).toInt()}%)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSecondaryContainer
+                            )
+                            Text(
+                                text = "الحزمة الاحترافية متوقفة مؤقتاً",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LocalSemanticColors.current.wordSubline
+                            )
+                        }
+                        Button(
+                            onClick = onDownloadClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.primary,
+                                contentColor = colors.onPrimary
+                            ),
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 48.dp)
+                                .testTag("offline_pack_resume_button")
+                        ) {
+                            Text("Resume", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+        }
         is OfflinePackState.Error -> {
             if (!isOnline && !packState.isInstalled) {
                 Surface(
@@ -1973,10 +1989,7 @@ fun OfflineDictionaryPackBanner(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = tr(
-                                    "Offline dictionary pack is not downloaded. Connect to internet and download it for offline lookups.",
-                                    "حزمة القاموس غير محمّلة. اتصل بالإنترنت وحمّلها للبحث دون اتصال."
-                                ),
+                                text = "Pro Pack is not downloaded. Connect to internet and tap Download for offline lookups.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onErrorContainer,
                                 modifier = Modifier.weight(1f)
@@ -1991,7 +2004,7 @@ fun OfflineDictionaryPackBanner(
                                     .defaultMinSize(minHeight = 48.dp)
                                     .testTag("offline_pack_download_button")
                             ) {
-                                Text(tr("Download", "تحميل"), style = MaterialTheme.typography.labelMedium)
+                                Text("Download", style = MaterialTheme.typography.labelMedium)
                             }
                         }
                         if (packState.message.isNotBlank()) {
@@ -2016,8 +2029,53 @@ private val SHARED_POS_LEADING_TAG_REGEX =
     Regex("^((?:v\\.|n\\.|adj\\.|adv\\.|prep\\.|conj\\.|pron\\.|interj\\.|det\\.|part\\.|num\\.|idiom|phr\\.|prov\\.)\\s*)(.*)$")
 
 /**
+ * Bilingual English section heading + Soft Amber (#F2B94B) Arabic translation directly underneath.
+ */
+@Composable
+fun SectionHeaderWithArabic(
+    englishTitle: String,
+    count: Int? = null,
+    titleColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+    arabicSublineOverride: String? = null,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
+    val arabicSub = (arabicSublineOverride ?: StaticLabels.arabicFor(englishTitle)).trim()
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = englishTitle,
+                style = MaterialTheme.typography.headlineSmall,
+                color = titleColor
+            )
+            if (count != null) {
+                Text(
+                    text = "($count)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
+        }
+        if (arabicSub.isNotEmpty()) {
+            Text(
+                text = arabicSub,
+                style = MaterialTheme.typography.labelSmall,
+                color = semantic.wordSubline
+            )
+        }
+    }
+}
+
+/**
  * Full-width "See more" / "See less" footer row with down/up arrow.
- * Always displays English labels ("See more", "See less") as required.
+ * Always displays English label + Soft Amber (#F2B94B) Arabic sub-line underneath.
  */
 @Composable
 fun FullWidthSeeMoreFooter(
@@ -2029,6 +2087,7 @@ fun FullWidthSeeMoreFooter(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
     val label = if (isExpanded) {
         "See less"
     } else if (remainingCount > 0) {
@@ -2036,6 +2095,7 @@ fun FullWidthSeeMoreFooter(
     } else {
         "See more"
     }
+    val subLabel = if (isExpanded) StaticLabels.arabicFor("See less") else StaticLabels.arabicFor("See more")
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Surface(
             modifier = modifier
@@ -2049,25 +2109,34 @@ fun FullWidthSeeMoreFooter(
                 .testTag(testTag),
             color = colors.surfaceVariant.copy(alpha = 0.72f),
             shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, colors.outline)
+            border = BorderStroke(1.dp, semantic.divider)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = colors.primary
-                )
-                Spacer(modifier = Modifier.width(6.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = semantic.wordSubline
+                    )
+                    if (subLabel.isNotEmpty()) {
+                        Text(
+                            text = subLabel,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = semantic.wordSubline.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 Icon(
                     imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                     contentDescription = label,
-                    tint = colors.primary,
+                    tint = semantic.wordSubline,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -2078,7 +2147,7 @@ fun FullWidthSeeMoreFooter(
 /**
  * Shared single-row live search item matching Reference Screenshot 1 + Requirement 2:
  * Shows word (bold), POS-grouped meanings capped at 5-6 items ("؛"-separated, truncated with "...")
- * on the SAME row, plus compact US/UK speaker buttons.
+ * on the SAME row, plus compact US/UK or AR speaker buttons.
  */
 @Composable
 fun LiveSearchSuggestionRow(
@@ -2089,6 +2158,7 @@ fun LiveSearchSuggestionRow(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
     val rawPreview = remember(suggestion.posPreview, suggestion.summaryDefinition, suggestion.isArabic) {
         if (suggestion.posPreview.isNotBlank()) {
             suggestion.posPreview
@@ -2113,7 +2183,7 @@ fun LiveSearchSuggestionRow(
     val hasArabicPreview = remember(cappedPreview) {
         ArabicTextUtils.containsArabicLetters(cappedPreview)
     }
-    val styledMeanings = remember(posSegments, cappedPreview, colors.primary) {
+    val styledMeanings = remember(posSegments, cappedPreview, semantic.wordSubline) {
         buildAnnotatedString {
             if (posSegments.isEmpty() && cappedPreview.isNotBlank()) {
                 append(cappedPreview)
@@ -2125,7 +2195,7 @@ fun LiveSearchSuggestionRow(
                         withStyle(
                             SpanStyle(
                                 fontWeight = FontWeight.Bold,
-                                color = colors.primary
+                                color = semantic.wordSubline
                             )
                         ) {
                             append(match.groupValues[1])
@@ -2216,11 +2286,218 @@ fun LiveSearchSuggestionRow(
                             key = arKey
                         )
                     },
-                    contentDescription = tr("Pronounce ${suggestion.word}", "نطق ${suggestion.word}"),
+                    contentDescription = "Pronounce ${suggestion.word}",
                     onDoubleClick = onDoubleTapCollapse
                 )
             }
         }
     }
 }
+
+/**
+ * First-launch modal shown ONCE (backed by FirstLaunchDataStore):
+ * Offers one-tap Pro Pack download with live progress + Pause/Resume + (X) close confirmation.
+ */
+@Composable
+fun FirstLaunchOfflinePackDialog(
+    packState: OfflinePackState,
+    onDownloadClick: () -> Unit,
+    onPauseClick: () -> Unit,
+    onConfirmClose: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val semantic = LocalSemanticColors.current
+    var showCloseConfirm by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { showCloseConfirm = true },
+        containerColor = colors.surface,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Pro Pack",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = colors.onSurface
+                    )
+                    Text(
+                        text = StaticLabels.arabicFor("Pro Pack"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = semantic.wordSubline
+                    )
+                }
+                IconButton(
+                    onClick = { showCloseConfirm = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("first_launch_close_x")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close",
+                        tint = colors.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Use the app without internet and get translations very fast. Tap Download.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurface
+                )
+                Text(
+                    text = "استخدم التطبيق بدون إنترنت واحصل على الترجمة بسرعة فائقة. اضغط تنزيل.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = semantic.wordSubline
+                )
+
+                when (packState) {
+                    is OfflinePackState.Downloading -> {
+                        Text(
+                            text = packState.statusText,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = semantic.exampleTranslation
+                        )
+                        if (packState.indeterminate) {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = colors.primary,
+                                trackColor = semantic.divider
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                progress = { packState.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = colors.primary,
+                                trackColor = semantic.divider
+                            )
+                        }
+                    }
+                    is OfflinePackState.Paused -> {
+                        Text(
+                            text = "Paused (${(packState.progress * 100).toInt()}%)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = semantic.wordSubline
+                        )
+                        LinearProgressIndicator(
+                            progress = { packState.progress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = semantic.wordSubline,
+                            trackColor = semantic.divider
+                        )
+                    }
+                    is OfflinePackState.Error -> {
+                        Text(
+                            text = packState.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.error
+                        )
+                    }
+                    is OfflinePackState.Ready -> {
+                        if (packState.isInstalled) {
+                            Text(
+                                text = "Installed (${packState.wordCount} words)",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = semantic.exampleTranslation
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (packState) {
+                is OfflinePackState.Downloading -> {
+                    OutlinedButton(
+                        onClick = onPauseClick,
+                        border = BorderStroke(1.dp, semantic.divider),
+                        modifier = Modifier.testTag("first_launch_pause_button")
+                    ) {
+                        Text("Pause", color = colors.onSurface)
+                    }
+                }
+                is OfflinePackState.Paused -> {
+                    Button(
+                        onClick = onDownloadClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                        modifier = Modifier.testTag("first_launch_resume_button")
+                    ) {
+                        Text("Resume")
+                    }
+                }
+                is OfflinePackState.Ready -> {
+                    if (packState.isInstalled) {
+                        Button(
+                            onClick = onConfirmClose,
+                            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                            modifier = Modifier.testTag("first_launch_done_button")
+                        ) {
+                            Text("Done")
+                        }
+                    } else {
+                        Button(
+                            onClick = onDownloadClick,
+                            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                            modifier = Modifier.testTag("first_launch_download_button")
+                        ) {
+                            Text("Download")
+                        }
+                    }
+                }
+                is OfflinePackState.Error -> {
+                    Button(
+                        onClick = onDownloadClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                        modifier = Modifier.testTag("first_launch_retry_button")
+                    ) {
+                        Text("Retry")
+                    }
+                }
+            }
+        }
+    )
+
+    if (showCloseConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCloseConfirm = false },
+            containerColor = colors.surface,
+            title = {
+                Column {
+                    Text("Are you sure you want to close?", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        text = "هل أنت متأكد من الإغلاق؟",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = semantic.wordSubline
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showCloseConfirm = false
+                        onConfirmClose()
+                    },
+                    modifier = Modifier.testTag("first_launch_confirm_close")
+                ) {
+                    Text("Close", color = colors.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showCloseConfirm = false },
+                    modifier = Modifier.testTag("first_launch_cancel_close")
+                ) {
+                    Text("Cancel", color = colors.onSurfaceVariant)
+                }
+            }
+        )
+    }
+}
+
 

@@ -111,6 +111,10 @@ class AppContainer(context: Context) {
         UserSettingsPreferences(appContext)
     }
 
+    val firstLaunchDataStore: com.example.core.FirstLaunchDataStore by lazy {
+        com.example.core.FirstLaunchDataStore(appContext)
+    }
+
     val networkMonitor: NetworkMonitor by lazy {
         NetworkMonitor(appContext)
     }
@@ -123,11 +127,21 @@ class AppContainer(context: Context) {
         )
     }
 
+    val offlineVoicePackManager: com.example.core.OfflineVoicePackManager by lazy {
+        com.example.core.OfflineVoicePackManager(
+            context = appContext,
+            okHttpClient = okHttpClient,
+            networkMonitor = networkMonitor
+        )
+    }
+
     val audioPlayerManager: AudioPlayerManager by lazy {
         AudioPlayerManager(
             context = appContext,
             okHttpClient = okHttpClient,
-            settingsPreferences = userSettingsPreferences
+            settingsPreferences = userSettingsPreferences,
+            wikimediaCommonsApi = wikimediaCommonsApi,
+            offlineVoicePackManager = offlineVoicePackManager
         )
     }
 

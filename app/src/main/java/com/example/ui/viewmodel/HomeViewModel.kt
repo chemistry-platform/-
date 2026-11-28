@@ -7,14 +7,19 @@ import com.example.core.OfflinePackManager
 import com.example.core.OfflinePackState
 import com.example.data.repository.LexiconRepository
 import com.example.domain.model.LanguageDirection
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 class HomeViewModel(
-    repository: LexiconRepository,
+    private val repository: LexiconRepository,
     private val offlinePackManager: OfflinePackManager? = null
 ) : ViewModel() {
 
@@ -30,6 +35,11 @@ class HomeViewModel(
             initialValue = true
         )
 
+    private val _openWordEvent = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val openWordEvent: SharedFlow<String> = _openWordEvent.asSharedFlow()
+
+    private var openWordJob: Job? = null
+
     fun swapLanguages() {
         _languageDirection.value = when (_languageDirection.value) {
             LanguageDirection.EN_TO_AR -> LanguageDirection.AR_TO_EN
@@ -39,6 +49,16 @@ class HomeViewModel(
 
     fun requestOfflinePackDownload() {
         offlinePackManager?.startDownload()
+    }
+
+    fun openWordReady(word: String) {
+        val cleaned = word.trim()
+        if (cleaned.isEmpty()) return
+        openWordJob?.cancel()
+        openWordJob = viewModelScope.launch {
+            repository.ensureWordReadyForOpen(cleaned, timeoutMs = 1450L)
+            _openWordEvent.emit(cleaned)
+        }
     }
 
     class Factory(

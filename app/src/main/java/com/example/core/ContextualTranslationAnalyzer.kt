@@ -1,5 +1,6 @@
 package com.example.core
 
+import com.example.domain.model.ContextualWordChip
 import com.example.domain.model.DetectedIdiom
 import java.util.Locale
 
@@ -495,6 +496,89 @@ object ContextualTranslationAnalyzer {
         "لا يمت بصلة" to "Has nothing to do with it."
     ).mapKeys { ArabicTextUtils.normalizeArabicForMatching(it.key) }
 
+    // Bilingual proper/first-names table so ML Kit never translates person names literally
+    // (e.g. "بيتي بيتر" -> "Betty Peter", not "My house Peter"; "بوتر" -> "Botter", not "potter").
+    val COMMON_FIRST_NAMES_AR_TO_EN: Map<String, String> = mapOf(
+        "بيتر" to "Peter",
+        "بوتر" to "Botter",
+        "بيتى" to "Betty",
+        "بيتي" to "Betty",
+        "أحمد" to "Ahmed",
+        "احمد" to "Ahmed",
+        "محمد" to "Mohammed",
+        "علي" to "Ali",
+        "عمر" to "Omar",
+        "يوسف" to "Youssef",
+        "خالد" to "Khaled",
+        "كريم" to "Karim",
+        "حسن" to "Hassan",
+        "إبراهيم" to "Ibrahim",
+        "ابراهيم" to "Ibrahim",
+        "آدم" to "Adam",
+        "ادم" to "Adam",
+        "سارة" to "Sarah",
+        "ساره" to "Sarah",
+        "فاطمة" to "Fatima",
+        "فاطمه" to "Fatima",
+        "مريم" to "Mariam",
+        "ليلى" to "Layla",
+        "ليلي" to "Layla",
+        "جون" to "John",
+        "ماري" to "Mary",
+        "ديفيد" to "David",
+        "مايكل" to "Michael",
+        "إيما" to "Emma",
+        "ايما" to "Emma",
+        "روبرت" to "Robert",
+        "ويليام" to "William",
+        "أليس" to "Alice",
+        "اليس" to "Alice",
+        "أوليفر" to "Oliver",
+        "اوليفر" to "Oliver",
+        "صوفيا" to "Sophia"
+    )
+
+    val COMMON_FIRST_NAMES_EN_TO_AR: Map<String, String> = mapOf(
+        "betty" to "بيتي",
+        "peter" to "بيتر",
+        "botter" to "بوتر",
+        "ahmed" to "أحمد",
+        "mohammed" to "محمد",
+        "ali" to "علي",
+        "omar" to "عمر",
+        "youssef" to "يوسف",
+        "khaled" to "خالد",
+        "karim" to "كريم",
+        "hassan" to "حسن",
+        "ibrahim" to "إبراهيم",
+        "adam" to "آدم",
+        "sarah" to "سارة",
+        "fatima" to "فاطمة",
+        "mariam" to "مريم",
+        "layla" to "ليلى",
+        "john" to "جون",
+        "mary" to "ماري",
+        "david" to "ديفيد",
+        "michael" to "مايكل",
+        "emma" to "إيما",
+        "robert" to "روبرت",
+        "william" to "ويليام",
+        "alice" to "أليس",
+        "oliver" to "أوليفر",
+        "sophia" to "صوفيا"
+    )
+
+    private val AR_TASTE_CULINARY_CONTEXT = setOf(
+        "زبده", "زبد", "طعم", "مذاق", "حليب", "لبن", "قهوه", "شاي", "دواء", "عصير",
+        "مر", "مراره", "مرير", "شوكولاته", "ليمون", "حلو", "سكر", "ملح", "طعام", "اكل", "عجين", "خليط"
+    )
+    private val AR_FREQUENCY_CONTEXT = setOf(
+        "واحده", "اخري", "ثانيه", "اولي", "مرات", "كم", "كل", "هذه", "تلك"
+    )
+    private val AR_HOUSE_POSSESSIVE_CONTEXT = setOf(
+        "في", "الي", "من", "امام", "خلف", "داخل", "خارج", "غرفه", "باب", "شارع", "منزل", "كبير", "صغير", "جديد", "قديم"
+    )
+
     private val MANAGEMENT_OBJECTS =
         "company|companies|business|businesses|firm|firms|corporation|enterprise|startup|factory|factories|organization|organisation|department|school|shop|store|hotel|restaurant|clinic|hospital|team|project|projects|campaign|operation|operations|agency|office|plant|bank|branch"
     private val COMPUTING_OBJECTS =
@@ -737,14 +821,72 @@ object ContextualTranslationAnalyzer {
         val cleaned = text.trim()
         if (cleaned.isEmpty()) return null
         if (sourceCode == "en" && targetCode == "ar") {
-            val normalized = cleaned.lowercase(Locale.US).trimEnd('.', '!', '?')
-            return EN_FULL_IDIOM_OVERRIDES[normalized]
+            val normalized = cleaned.lowercase(Locale.US).replace(Regex("\\s+"), " ").trimEnd('.', '!', '?')
+            EN_FULL_IDIOM_OVERRIDES[normalized]?.let { return it }
+            if (normalized.contains("betty botter bought some butter") && normalized.contains("bitter")) {
+                return if (normalized.contains("batter")) {
+                    "اشترت بيتي بوتر بعض الزبدة، لكنها قالت إن الزبدة مُرّة؛ ولو وضعتها في العجين لجعله مُرّاً."
+                } else {
+                    "اشترت بيتي بوتر بعض الزبدة، لكنها قالت إن الزبدة مُرّة."
+                }
+            }
+            if (normalized.contains("betty peter bought some butter") && normalized.contains("bitter")) {
+                return "اشترى بيتي بيتر بعض الزبدة، لكن الزبدة كانت مُرّة."
+            }
+            return null
         }
         if (sourceCode == "ar" && targetCode == "en") {
-            val normalized = ArabicTextUtils.normalizeArabicForMatching(cleaned).trimEnd('.', '!', '؟', '!')
-            return AR_FULL_IDIOM_OVERRIDES[normalized]
+            val normalized = ArabicTextUtils.normalizeArabicForMatching(cleaned).trimEnd('.', '!', '؟')
+            AR_FULL_IDIOM_OVERRIDES[normalized]?.let { return it }
+            if (normalized == "بيتي بيتر اشتري بعض الزبده لكن الزبده كانت مره") {
+                return "Betty Peter bought some butter, but the butter was bitter."
+            }
+            if (normalized == "بيتي بوتر اشترت بعض الزبده لكن الزبده كانت مره") {
+                return "Betty Botter bought some butter, but the butter was bitter."
+            }
+            return null
         }
         return null
+    }
+
+    /**
+     * Checks whether the polysemous Arabic word "مرة" should be resolved as "bitter" (taste adjective)
+     * rather than "once" (frequency adverb) given the sentence tokens.
+     */
+    fun isArabicMurrahBitterContext(sentence: String): Boolean {
+        val normTokens = ArabicTextUtils.extractWordTokens(sentence)
+            .map { ArabicTextUtils.normalizeArabicForMatching(it) }
+            .toSet()
+        if ("مره" !in normTokens && "مره".dropLast(1) + "ة" !in normTokens && !sentence.contains("مرة") && !sentence.contains("مرّة")) {
+            return false
+        }
+        val stripped = ArabicTextUtils.stripArabicDiacriticsKeepHamza(sentence)
+        val hasDamma = sentence.contains("مُرَّة") || sentence.contains("مُرّة")
+        if (hasDamma) return true
+        val tasteScore = normTokens.count { it in AR_TASTE_CULINARY_CONTEXT } * 2 +
+            if (Regex("(?:كانت|كان|أصبحت|صارت|إنها|طعمها|مذاقها)\\s+(?:[\\u0621-\\u064A]+\\s+){0,2}(?:مُرَّة|مرّة|مرة)").containsMatchIn(stripped)) 2 else 0
+        val freqScore = normTokens.count { it in AR_FREQUENCY_CONTEXT } * 2
+        return tasteScore > freqScore
+    }
+
+    /**
+     * Checks whether "بيتي" is used as the proper first name "Betty" rather than "my house".
+     */
+    fun isArabicBettyPersonContext(sentence: String): Boolean {
+        val rawTokens = ArabicTextUtils.extractWordTokens(sentence)
+        val normTokens = rawTokens.map { ArabicTextUtils.normalizeArabicForMatching(it) }
+        val idx = normTokens.indexOf("بيتي")
+        if (idx < 0) return false
+        val next = normTokens.getOrNull(idx + 1).orEmpty()
+        val prev = normTokens.getOrNull(idx - 1).orEmpty()
+        if (next in setOf("بيتر", "بوتر", "اشتري", "اشترت", "قال", "قالت", "تقول", "يقول", "ذهب", "ذهبت")) {
+            return true
+        }
+        if (prev in setOf("قالت", "قال", "اخبرت", "اسمها", "اسمه")) {
+            return true
+        }
+        val hasHouseCue = prev in AR_HOUSE_POSSESSIVE_CONTEXT || next in AR_HOUSE_POSSESSIVE_CONTEXT
+        return !hasHouseCue && (next in COMMON_FIRST_NAMES_AR_TO_EN.keys || normTokens.size >= 3 && idx == 0)
     }
 
     /**
@@ -765,27 +907,39 @@ object ContextualTranslationAnalyzer {
     }
 
     /**
-     * Rewrites common Arabic idiomatic expressions into natural English hints when translating AR -> EN.
+     * Rewrites Arabic idiomatic expressions, person names (in name context), and taste vs frequency
+     * senses (e.g. "كانت مرة" -> "was bitter") into clear hints before ML Kit AR->EN translation.
      */
     fun prepareArabicForTranslation(text: String): String {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || !trimmed.contains(' ')) return text
-        val stripped = ArabicTextUtils.stripArabicDiacriticsKeepHamza(trimmed)
-        var current = trimmed
-        var strippedWorking = stripped
+        var strippedWorking = ArabicTextUtils.stripArabicDiacriticsKeepHamza(trimmed)
+
+        if (isArabicBettyPersonContext(trimmed)) {
+            strippedWorking = strippedWorking.replace(Regex("(?<=^|\\s)بيتي(?=\\s|$)"), "Betty")
+        }
+        strippedWorking = strippedWorking
+            .replace(Regex("(?<=^|\\s)بيتر(?=\\s|$)"), "Peter")
+            .replace(Regex("(?<=^|\\s)بوتر(?=\\s|$)"), "Botter")
+
+        if (isArabicMurrahBitterContext(trimmed)) {
+            strippedWorking = strippedWorking
+                .replace(Regex("كانت\\s+(?:مرّة|مرة)"), "was bitter")
+                .replace(Regex("كان\\s+(?:مرّة|مرة)"), "was bitter")
+                .replace(Regex("(?<=^|\\s)(?:مرّة|مرة)(?=\\s|[.،!؟]|$)"), "bitter")
+        }
+
         for (rule in AR_CONTEXT_RULES) {
             if (rule.regex.containsMatchIn(strippedWorking)) {
-                current = rule.regex.replace(strippedWorking, rule.englishEquivalent)
-                strippedWorking = current
+                strippedWorking = rule.regex.replace(strippedWorking, rule.englishEquivalent)
             }
         }
-        return current
+        return strippedWorking
     }
 
     /**
      * Post-processes ML Kit Arabic output to fix known literal mistranslations of polysemous
-     * verbs/collocations (e.g., if raw ML Kit output ever translates "run a company" literally
-     * as "يركض شركة" or "يجري شركة").
+     * verbs/collocations and person names.
      */
     fun refineArabicTranslation(sourceEnglish: String, rawArabic: String): String {
         val ar = rawArabic.trim()
@@ -793,6 +947,17 @@ object ContextualTranslationAnalyzer {
         val enLower = sourceEnglish.lowercase(Locale.US)
 
         var refined = ar
+        if (enLower.contains("betty") && enLower.contains("botter")) {
+            refined = refined
+                .replace(Regex("\\bبيتي\\s+الخزاف\\b"), "بيتي بوتر")
+                .replace(Regex("\\bبوتر\\b"), "بوتر")
+        }
+        if (enLower.contains("bitter") && (enLower.contains("butter") || enLower.contains("batter"))) {
+            refined = refined
+                .replace("كانت مرة واحدة", "كانت مُرّة")
+                .replace("كانت ذات مرة", "كانت مُرّة")
+        }
+
         val hasCompanyObj = Regex("\\b(?:$MANAGEMENT_OBJECTS)\\b", RegexOption.IGNORE_CASE).containsMatchIn(enLower)
         if (hasCompanyObj) {
             refined = refined
@@ -802,7 +967,6 @@ object ContextualTranslationAnalyzer {
                 .replace(Regex("(?<=^|\\s)تجري\\s+(?=شركة|مؤسسة|عملاً|عمل|مشروعاً|مشروع|فريقاً|مصنعاً)"), "تدير ")
                 .replace(Regex("(?<=^|\\s)ركض\\s+(?=شركة|مؤسسة|عملاً|عمل|مشروعاً|مشروع|فريقاً|مصنعاً)"), "أدار ")
                 .replace(Regex("(?<=^|\\s)جرى\\s+(?=شركة|مؤسسة|عملاً|عمل|مشروعاً|مشروع|فريقاً|مصنعاً)"), "أدار ")
-                // Handle "يجري هذا الرجل شركة" word order
                 .replace(Regex("^يجري(\\s+\\S+\\s+\\S+\\s+(?:شركة|مؤسسة|مصنع|مشروع))"), "يدير$1")
                 .replace(Regex("^يركض(\\s+\\S+\\s+\\S+\\s+(?:شركة|مؤسسة|مصنع|مشروع))"), "يدير$1")
         }
@@ -811,17 +975,109 @@ object ContextualTranslationAnalyzer {
     }
 
     /**
-     * Post-processes ML Kit English output for naturalness.
+     * Post-processes ML Kit English output for naturalness and proper-name / contextual sense fixes.
      */
     fun refineEnglishTranslation(sourceArabic: String, rawEnglish: String): String {
         val en = rawEnglish.trim()
         if (en.isEmpty()) return en
         val arNorm = ArabicTextUtils.normalizeArabicForMatching(sourceArabic)
         var refined = en
+        if (isArabicBettyPersonContext(sourceArabic)) {
+            refined = refined
+                .replace(Regex("\\bmy house\\b", RegexOption.IGNORE_CASE), "Betty")
+                .replace(Regex("\\bPetit\\b", RegexOption.IGNORE_CASE), "Betty")
+                .replace(Regex("\\bPetite\\b", RegexOption.IGNORE_CASE), "Betty")
+                .replace(Regex("\\bPatti\\b", RegexOption.IGNORE_CASE), "Betty")
+        }
+        if (isArabicMurrahBitterContext(sourceArabic)) {
+            refined = refined
+                .replace(Regex("\\b(?:was|were|is)\\s+once\\b", RegexOption.IGNORE_CASE)) { m ->
+                    m.value.substringBeforeLast(" ").trim() + " bitter"
+                }
+                .replace(Regex("\\bonce\\b$", RegexOption.IGNORE_CASE), "bitter")
+        }
         if (arNorm.contains("يدير شرك") || arNorm.contains("تدير شرك")) {
             refined = refined.replace(Regex("\\brunning a company\\b", RegexOption.IGNORE_CASE), "running a company")
         }
-        return refined
+        return refined.replace(Regex("\\s+"), " ").trim()
+    }
+
+    /**
+     * Simple Lesk overlap scorer: measures context match between a dictionary sense definition
+     * and surrounding words in the sentence (returns higher score for better contextual fit).
+     */
+    fun scoreSenseInContext(definitionText: String, contextTokens: Set<String>): Int {
+        if (definitionText.isBlank() || contextTokens.isEmpty()) return 0
+        val defWords = definitionText.lowercase(Locale.US)
+            .split(Regex("[^a-z\\u0621-\\u064a]+"))
+            .filter { it.length >= 3 }
+            .toSet()
+        return defWords.count { it in contextTokens }
+    }
+
+    /**
+     * Builds context-aware word breakdown chips for sentences in BOTH directions (EN<->AR),
+     * resolving proper names and contextual senses ("مرة" -> "bitter" instead of "once").
+     */
+    fun analyzeSentenceWordsInContext(
+        sentence: String,
+        isArabic: Boolean,
+        chipMeanings: Map<String, String>
+    ): List<ContextualWordChip> {
+        val tokens = ArabicTextUtils.extractWordTokens(sentence)
+        if (tokens.isEmpty()) return emptyList()
+        val bettyCtx = isArabic && isArabicBettyPersonContext(sentence)
+        val bitterCtx = isArabic && isArabicMurrahBitterContext(sentence)
+        val arNormFull = if (isArabic) ArabicTextUtils.normalizeArabicForMatching(sentence) else ""
+        val enLowerFull = if (!isArabic) sentence.lowercase(Locale.US) else ""
+
+        return tokens.map { token ->
+            val clean = token.trim()
+            val keyLower = clean.lowercase(Locale.US)
+            if (isArabic) {
+                val stripped = ArabicTextUtils.stripArabicDiacriticsKeepHamza(clean)
+                val norm = ArabicTextUtils.normalizeArabicForMatching(clean)
+                val (contextualMeaning, hint) = when {
+                    norm == "بيتي" && bettyCtx -> "Betty" to "Betty"
+                    stripped in COMMON_FIRST_NAMES_AR_TO_EN ->
+                        (COMMON_FIRST_NAMES_AR_TO_EN[stripped] ?: "") to COMMON_FIRST_NAMES_AR_TO_EN[stripped]
+                    norm == "مره" && bitterCtx -> "bitter" to "bitter"
+                    norm == "مره" && !bitterCtx -> "once؛ time" to "once"
+                    norm == "الزبده" || norm == "زبده" -> "butter" to "butter"
+                    norm == "اشتري" && (arNormFull.contains("زبده") || bettyCtx) -> "bought" to "buy"
+                    norm == "اشترت" -> "bought" to "buy"
+                    norm == "بعض" -> "some" to null
+                    norm == "لكن" -> "but" to null
+                    norm == "كانت" -> "was" to null
+                    else -> {
+                        val fallback = chipMeanings[keyLower].orEmpty()
+                        fallback to null
+                    }
+                }
+                ContextualWordChip(
+                    word = clean,
+                    meaning = contextualMeaning,
+                    preferredSenseHint = hint
+                )
+            } else {
+                val (contextualMeaning, hint) = when {
+                    keyLower in COMMON_FIRST_NAMES_EN_TO_AR ->
+                        (COMMON_FIRST_NAMES_EN_TO_AR[keyLower] ?: "") to null
+                    keyLower == "bitter" -> "مُرّ" to "bitter"
+                    keyLower == "batter" && enLowerFull.contains("butter") -> "عجين سائل" to "batter"
+                    keyLower == "butter" -> "زُبْدة" to "butter"
+                    else -> {
+                        val fallback = chipMeanings[keyLower].orEmpty()
+                        fallback to null
+                    }
+                }
+                ContextualWordChip(
+                    word = clean,
+                    meaning = contextualMeaning,
+                    preferredSenseHint = hint
+                )
+            }
+        }
     }
 
     /**

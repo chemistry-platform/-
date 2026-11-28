@@ -24,11 +24,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -41,15 +40,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import com.example.core.AppLanguage
 import com.example.core.CrashReporter
 import com.example.core.LocalAppLanguage
+import com.example.core.OfflinePackState
 import com.example.core.UpdateUiState
 import com.example.di.AppContainer
 import com.example.domain.model.LanguageDirection
 import com.example.ui.components.AlMakhzanjiBottomBar
 import com.example.ui.components.AppUpdateDialogs
 import com.example.ui.components.BottomNavTab
+import com.example.ui.components.FirstLaunchOfflinePackDialog
+import kotlinx.coroutines.launch
 import com.example.ui.navigation.DiscoverRoute
 import com.example.ui.navigation.ExamInfoRoute
 import com.example.ui.navigation.FavoritesRoute
@@ -103,11 +104,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             val themeMode by appContainer.themePreferences.themeMode.collectAsStateWithLifecycle()
             val appLanguage by appContainer.userSettingsPreferences.appLanguage.collectAsStateWithLifecycle()
-            val layoutDirection = if (appLanguage == AppLanguage.ARABIC) {
-                LayoutDirection.Rtl
-            } else {
-                LayoutDirection.Ltr
-            }
             val isDark = when (themeMode) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
@@ -130,8 +126,7 @@ class MainActivity : ComponentActivity() {
 
             AlMakhzanjiTheme(themeMode = themeMode) {
                 CompositionLocalProvider(
-                    LocalAppLanguage provides appLanguage,
-                    LocalLayoutDirection provides layoutDirection
+                    LocalAppLanguage provides appLanguage
                 ) {
                     var pendingCrashReport by remember {
                         mutableStateOf(CrashReporter.readLastCrash(this@MainActivity))
@@ -164,6 +159,9 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     val updateManager = appContainer.appUpdateManager
     val updateUiState by updateManager.uiState.collectAsStateWithLifecycle()
     val offlinePackState by appContainer.offlinePackManager.state.collectAsStateWithLifecycle()
+    val firstLaunchHandled by appContainer.firstLaunchDataStore.firstLaunchHandled
+        .collectAsStateWithLifecycle(initialValue = null)
+    val coroutineScope = rememberCoroutineScope()
 
     val unknownSourcesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -202,9 +200,15 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
     LaunchedEffect(Unit) {
         appContainer.translationManager.ensureLanguagesLoaded()
         appContainer.offlinePackManager.ensureInitialized()
-        appContainer.offlinePackManager.startDownloadIfFirstRun()
         appContainer.audioPlayerManager.prepareTtsCheckIfNeeded()
         updateManager.checkForUpdate(force = false)
+    }
+
+    LaunchedEffect(offlinePackState) {
+        val ready = offlinePackState as? OfflinePackState.Ready
+        if (ready?.isInstalled == true && firstLaunchHandled == false) {
+            appContainer.firstLaunchDataStore.markFirstLaunchHandled()
+        }
     }
 
     LaunchedEffect(backStackEntry) {
@@ -340,6 +344,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                         repository = appContainer.repository,
                         updateManager = appContainer.appUpdateManager,
                         offlinePackManager = appContainer.offlinePackManager,
+                        offlineVoicePackManager = appContainer.offlineVoicePackManager,
                         themePreferences = appContainer.themePreferences,
                         settingsPreferences = appContainer.userSettingsPreferences,
                         audioPlayerManager = appContainer.audioPlayerManager
@@ -443,7 +448,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
             composable<WordDetailRoute> { entry ->
                 val args = entry.toRoute<WordDetailRoute>()
                 val wordViewModel: WordDetailViewModel = viewModel(
-                    key = "word_${args.query}_${args.fallbackBaseWord.orEmpty()}",
+                    key = "word_${args.query}_${args.fallbackBaseWord.orEmpty()}_${args.preferredSense.orEmpty()}",
                     factory = WordDetailViewModel.Factory(
                         repository = appContainer.repository,
                         translationManager = appContainer.translationManager,
@@ -451,6 +456,7 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                         initialQuery = args.query,
                         fallbackBaseWord = args.fallbackBaseWord,
                         initialHighlightChip = args.highlightChip,
+                        initialPreferredSense = args.preferredSense,
                         offlinePackManager = appContainer.offlinePackManager
                     )
                 )
@@ -489,8 +495,13 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                     viewModel = sentenceViewModel,
                     audioManager = appContainer.audioPlayerManager,
                     onBack = { navController.popBackStack() },
-                    onOpenWord = { word ->
-                        navController.navigate(WordDetailRoute(query = word))
+                    onOpenWord = { word, preferredSense ->
+                        navController.navigate(
+                            WordDetailRoute(
+                                query = word,
+                                preferredSense = preferredSense
+                            )
+                        )
                     },
                     onOpenDirectPhrase = { phrase ->
                         navController.navigate(WordDetailRoute(query = phrase)) {
@@ -501,6 +512,19 @@ private fun AlMakhzanjiApp(appContainer: AppContainer) {
                 )
             }
         }
+    }
+
+    if (firstLaunchHandled == false) {
+        FirstLaunchOfflinePackDialog(
+            packState = offlinePackState,
+            onDownloadClick = { appContainer.offlinePackManager.startDownload() },
+            onPauseClick = { appContainer.offlinePackManager.pauseDownload() },
+            onConfirmClose = {
+                coroutineScope.launch {
+                    appContainer.firstLaunchDataStore.markFirstLaunchHandled()
+                }
+            }
+        )
     }
 
     AppUpdateDialogs(

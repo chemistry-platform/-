@@ -240,12 +240,21 @@ data class AwlWordItem(
 )
 
 @Immutable
+@Serializable
+data class ContextualWordChip(
+    val word: String,
+    val meaning: String = "",
+    val preferredSenseHint: String? = null
+)
+
+@Immutable
 data class SentenceLookupResult(
     val originalText: String,
     val isArabicInput: Boolean,
     val machineTranslation: String? = null,
     val missingTranslationPack: Boolean = false,
     val wordChips: List<String> = emptyList(),
+    val contextualWordChips: List<ContextualWordChip> = emptyList(),
     val detectedIdioms: List<DetectedIdiom> = emptyList(),
     val tatoebaSentences: List<TatoebaSentence> = emptyList(),
     val isUpdating: Boolean = false,

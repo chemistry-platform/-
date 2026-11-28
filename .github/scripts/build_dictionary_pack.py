@@ -97,6 +97,26 @@ CURATED_CORE_IDIOMS = {
     },
 }
 
+COMMON_FIRST_NAMES = [
+    ("betty", "بيتي", "English feminine given name (proper noun)."),
+    ("peter", "بيتر", "English masculine given name (proper noun)."),
+    ("botter", "بوتر", "English surname (proper noun)."),
+    ("john", "جون", "English masculine given name (proper noun)."),
+    ("mary", "ماري", "English feminine given name (proper noun)."),
+    ("david", "ديفيد", "English masculine given name (proper noun)."),
+    ("sarah", "سارة", "Given name (proper noun)."),
+    ("michael", "مايكل", "English masculine given name (proper noun)."),
+    ("james", "جيمس", "English masculine given name (proper noun)."),
+    ("anna", "آنا", "Feminine given name (proper noun)."),
+    ("emma", "إيما", "Feminine given name (proper noun)."),
+    ("ali", "علي", "Arabic masculine given name (proper noun)."),
+    ("omar", "عمر", "Arabic masculine given name (proper noun)."),
+    ("ahmed", "أحمد", "Arabic masculine given name (proper noun)."),
+    ("fatima", "فاطمة", "Arabic feminine given name (proper noun)."),
+    ("layla", "ليلى", "Arabic feminine given name (proper noun)."),
+    ("youssef", "يوسف", "Arabic masculine given name (proper noun)."),
+]
+
 
 def has_arabic(text: str) -> bool:
     return bool(ARABIC_CHAR_RE.search(text))
@@ -875,6 +895,30 @@ def apply_curated_idioms(idioms_map: dict):
             existing["rank"] = min(existing.get("rank", 999999), 500)
 
 
+def apply_common_names(words_map: dict, reverse_ar: dict):
+    for en_name, ar_name, definition in COMMON_FIRST_NAMES:
+        norm_ar = normalize_arabic_key(ar_name)
+        if norm_ar:
+            bucket = reverse_ar[(norm_ar, ar_name)]
+            bucket.setdefault(
+                en_name,
+                {
+                    "en": en_name,
+                    "pos": "noun",
+                    "def": definition,
+                    "rank": 400,
+                    "src": "names",
+                },
+            )
+        if en_name not in words_map:
+            words_map[en_name] = {
+                "word": en_name,
+                "lang": "en",
+                "rank": 400,
+                "senses": [{"pos": "noun", "def": definition, "ar": ar_name}],
+            }
+
+
 def serialize_pack(words_list: list, idioms_list: list, reverse_list: list, out_path: str):
     payload = {
         "version": 2,
@@ -940,6 +984,7 @@ def main():
         reverse_ar=reverse_ar,
     )
     apply_curated_idioms(idioms_map)
+    apply_common_names(words_map, reverse_ar)
 
     if len(idioms_map) < MIN_IDIOMS_TARGET:
         print(

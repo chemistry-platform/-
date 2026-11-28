@@ -38,7 +38,8 @@ import kotlin.coroutines.coroutineContext
 private const val TAG = "OfflinePackManager"
 private const val PREFS_NAME = "offline_pack_prefs"
 private const val KEY_PACK_DISK_BYTES = "pack_disk_bytes"
-private const val KEY_FIRST_RUN_AUTO_TRIGGERED = "first_run_auto_triggered"
+private const val KEY_PACK_ETAG = "pack_etag"
+private const val KEY_PACK_TOTAL_BYTES = "pack_total_bytes"
 
 sealed interface OfflinePackState {
     data class Ready(
@@ -46,13 +47,23 @@ sealed interface OfflinePackState {
         val wordCount: Int,
         val diskSizeBytes: Long,
         val idiomCount: Int = 0,
-        val reverseCount: Int = 0
+        val reverseCount: Int = 0,
+        val updateAvailable: Boolean = false,
+        val updateCheckedMessage: String? = null
     ) : OfflinePackState
 
     data class Downloading(
         val progress: Float,
         val indeterminate: Boolean,
-        val statusText: String
+        val statusText: String,
+        val downloadedBytes: Long = 0L,
+        val totalBytes: Long = 0L
+    ) : OfflinePackState
+
+    data class Paused(
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+        val progress: Float
     ) : OfflinePackState
 
     data class Error(
@@ -88,14 +99,28 @@ class OfflinePackManager(
     val packDownloadUrl: String
         get() = "https://github.com/${BuildConfig.GITHUB_REPO}/releases/download/dictionary-pack/dictionary-pack.json.gz"
 
+    private val partFile: File
+        get() = File(appContext.cacheDir, "dictionary-pack.json.gz.part")
+
     suspend fun ensureInitialized() {
         if (initialized) return
         initialized = true
         refreshStatus()
     }
 
-    suspend fun refreshStatus() {
+    suspend fun refreshStatus(updateAvailable: Boolean = false, updateMsg: String? = null) {
         try {
+            if (partFile.exists() && partFile.length() > 0L && downloadJob?.isActive != true) {
+                val downloaded = partFile.length()
+                val total = prefs.getLong(KEY_PACK_TOTAL_BYTES, 75_000_000L).coerceAtLeast(1L)
+                val frac = (downloaded.toFloat() / total.toFloat()).coerceIn(0.01f, 0.99f)
+                _state.value = OfflinePackState.Paused(
+                    downloadedBytes = downloaded,
+                    totalBytes = total,
+                    progress = frac
+                )
+                return
+            }
             val (wordCount, idiomCount, reverseCount) = withContext(Dispatchers.IO) {
                 Triple(
                     dao.getOfflinePackCount(),
@@ -110,37 +135,44 @@ class OfflinePackManager(
                 wordCount = wordCount,
                 diskSizeBytes = diskBytes,
                 idiomCount = idiomCount,
-                reverseCount = reverseCount
+                reverseCount = reverseCount,
+                updateAvailable = updateAvailable,
+                updateCheckedMessage = updateMsg
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Failed refreshing offline pack status", e)
+            Log.w(TAG, "Failed refreshing Pro Pack status", e)
         }
     }
 
-    /**
-     * Automatically triggers the one-time offline pack download on first run when
-     * GitHub repository metadata is configured and device is online.
-     * Safely no-ops on local/dev builds ("unknown/unknown") or offline launches.
-     */
-    fun startDownloadIfFirstRun() {
+    fun checkForUpdates() {
         if (downloadJob?.isActive == true) return
-        if (prefs.getBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, false)) return
-        if (BuildConfig.GITHUB_REPO == "unknown/unknown" || !BuildConfig.GITHUB_REPO.contains("/")) return
-        if (!networkMonitor.isOnline()) return
-
+        if (BuildConfig.GITHUB_REPO == "unknown/unknown" || !BuildConfig.GITHUB_REPO.contains("/") || !networkMonitor.isOnline()) {
+            scope.launch { refreshStatus(updateAvailable = false, updateMsg = "Up to date") }
+            return
+        }
         scope.launch {
-            ensureInitialized()
-            val alreadyHasData = withContext(Dispatchers.IO) {
-                dao.getOfflinePackCount() > 0 || dao.getPackIdiomCount() > 0
+            val (hasUpdate, msg) = withContext(Dispatchers.IO) {
+                runCatching {
+                    val req = Request.Builder()
+                        .url(packDownloadUrl)
+                        .head()
+                        .header("User-Agent", "Al-Makhzanji-Dictionary/1.0 (Android)")
+                        .build()
+                    okHttpClient.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) return@use false to "Up to date"
+                        val remoteEtag = resp.header("ETag").orEmpty().trim()
+                        val remoteLen = resp.header("Content-Length")?.toLongOrNull() ?: 0L
+                        val localEtag = prefs.getString(KEY_PACK_ETAG, "").orEmpty()
+                        val localLen = prefs.getLong(KEY_PACK_TOTAL_BYTES, 0L)
+                        val changed = (remoteEtag.isNotBlank() && localEtag.isNotBlank() && remoteEtag != localEtag) ||
+                            (remoteLen > 0L && localLen > 0L && remoteLen != localLen)
+                        if (changed) true to "Update available" else false to "Up to date"
+                    }
+                }.getOrDefault(false to "Up to date")
             }
-            if (alreadyHasData) {
-                prefs.edit().putBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, true).apply()
-                return@launch
-            }
-            prefs.edit().putBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, true).apply()
-            startDownload()
+            refreshStatus(updateAvailable = hasUpdate, updateMsg = msg)
         }
     }
 
@@ -154,7 +186,7 @@ class OfflinePackManager(
                 val installed = wordCount > 0 || idiomCount > 0
                 val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
                 _state.value = OfflinePackState.Error(
-                    message = "الحزمة غير متاحة حالياً",
+                    message = "Pro Pack is unavailable right now",
                     isInstalled = installed,
                     wordCount = wordCount,
                     diskSizeBytes = diskBytes,
@@ -172,7 +204,7 @@ class OfflinePackManager(
                 val installed = wordCount > 0 || idiomCount > 0
                 val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
                 _state.value = OfflinePackState.Error(
-                    message = "الحزمة غير متاحة حالياً",
+                    message = "No internet connection",
                     isInstalled = installed,
                     wordCount = wordCount,
                     diskSizeBytes = diskBytes,
@@ -184,55 +216,78 @@ class OfflinePackManager(
         }
 
         downloadJob = scope.launch {
-            val tempFile = File(appContext.cacheDir, "dictionary-pack.json.gz.tmp")
+            val tempFile = partFile
             try {
+                val existingBytes = withContext(Dispatchers.IO) {
+                    if (tempFile.exists()) tempFile.length() else 0L
+                }
+                val savedTotal = prefs.getLong(KEY_PACK_TOTAL_BYTES, 0L)
                 _state.value = OfflinePackState.Downloading(
-                    progress = 0f,
-                    indeterminate = true,
-                    statusText = "Downloading dictionary pack..."
+                    progress = if (savedTotal > 0L) (existingBytes.toFloat() / savedTotal.toFloat()).coerceIn(0f, 0.7f) else 0f,
+                    indeterminate = existingBytes == 0L,
+                    statusText = "Downloading Pro Pack...",
+                    downloadedBytes = existingBytes,
+                    totalBytes = savedTotal
                 )
 
                 val downloadedBytes = withContext(Dispatchers.IO) {
-                    if (tempFile.exists()) tempFile.delete()
-                    val request = Request.Builder()
+                    var resumeOffset = if (tempFile.exists()) tempFile.length() else 0L
+                    val reqBuilder = Request.Builder()
                         .url(packDownloadUrl)
                         .header("User-Agent", "Al-Makhzanji-Dictionary/1.0 (Android)")
-                        .build()
+                    if (resumeOffset > 0L) {
+                        reqBuilder.header("Range", "bytes=$resumeOffset-")
+                    }
 
-                    okHttpClient.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) {
+                    var etagHeader = ""
+                    okHttpClient.newCall(reqBuilder.build()).execute().use { response ->
+                        if (response.code == 416) {
+                            // Partial file already complete
+                        } else if (!response.isSuccessful && response.code != 206) {
                             throw PackUnavailableException("HTTP ${response.code}")
-                        }
-                        val body = response.body ?: throw PackUnavailableException("Empty body")
-                        val total = body.contentLength()
-                        FileOutputStream(tempFile).use { out ->
-                            val buf = ByteArray(16 * 1024)
-                            var copied = 0L
-                            var lastPct = -1
-                            var lastEmitMs = 0L
-                            val input = body.byteStream()
-                            while (true) {
-                                coroutineContext.ensureActive()
-                                val read = input.read(buf)
-                                if (read == -1) break
-                                out.write(buf, 0, read)
-                                copied += read
-                                if (total > 0L) {
-                                    val fraction = (copied.toFloat() / total.toFloat()).coerceIn(0f, 0.7f)
-                                    val pct = (copied * 100 / total).toInt()
-                                    val nowMs = SystemClock.elapsedRealtime()
-                                    if (pct != lastPct && (pct == 100 || (nowMs - lastEmitMs) >= 350L)) {
-                                        lastPct = pct
-                                        lastEmitMs = nowMs
-                                        _state.value = OfflinePackState.Downloading(
-                                            progress = fraction,
-                                            indeterminate = false,
-                                            statusText = "Downloading dictionary pack ($pct%)..."
-                                        )
+                        } else {
+                            val isPartial = response.code == 206
+                            if (!isPartial) {
+                                resumeOffset = 0L
+                            }
+                            etagHeader = response.header("ETag").orEmpty().trim()
+                            val body = response.body ?: throw PackUnavailableException("Empty body")
+                            val contentLen = body.contentLength()
+                            val total = if (contentLen > 0L) resumeOffset + contentLen else -1L
+                            if (total > 0L) {
+                                prefs.edit().putLong(KEY_PACK_TOTAL_BYTES, total).apply()
+                            }
+                            FileOutputStream(tempFile, isPartial).use { out ->
+                                val buf = ByteArray(16 * 1024)
+                                var copied = resumeOffset
+                                var lastPct = -1
+                                var lastEmitMs = 0L
+                                val input = body.byteStream()
+                                while (true) {
+                                    coroutineContext.ensureActive()
+                                    val read = input.read(buf)
+                                    if (read == -1) break
+                                    out.write(buf, 0, read)
+                                    copied += read
+                                    if (total > 0L) {
+                                        val fraction = (copied.toFloat() / total.toFloat()).coerceIn(0f, 0.7f)
+                                        val pct = (copied * 100 / total).toInt().coerceIn(0, 100)
+                                        val nowMs = SystemClock.elapsedRealtime()
+                                        if (pct != lastPct && (pct == 100 || (nowMs - lastEmitMs) >= 350L)) {
+                                            lastPct = pct
+                                            lastEmitMs = nowMs
+                                            _state.value = OfflinePackState.Downloading(
+                                                progress = fraction,
+                                                indeterminate = false,
+                                                statusText = "Downloading Pro Pack ($pct%)...",
+                                                downloadedBytes = copied,
+                                                totalBytes = total
+                                            )
+                                        }
                                     }
                                 }
+                                out.flush()
                             }
-                            out.flush()
                         }
                     }
 
@@ -240,7 +295,9 @@ class OfflinePackManager(
                     _state.value = OfflinePackState.Downloading(
                         progress = 0.75f,
                         indeterminate = true,
-                        statusText = "Indexing words, idioms & Arabic reverse index..."
+                        statusText = "Indexing words, idioms & Arabic index...",
+                        downloadedBytes = gzSize,
+                        totalBytes = gzSize
                     )
 
                     val importedJsonBytes = GZIPInputStream(BufferedInputStream(FileInputStream(tempFile), 32 * 1024)).use { gzStream ->
@@ -249,39 +306,41 @@ class OfflinePackManager(
                             _state.value = OfflinePackState.Downloading(
                                 progress = frac,
                                 indeterminate = false,
-                                statusText = "Indexing offline dictionary ($indexedCount entries)..."
+                                statusText = "Indexing Pro Pack ($indexedCount entries)...",
+                                downloadedBytes = gzSize,
+                                totalBytes = gzSize
                             )
                         }
                     }
-
+                    if (etagHeader.isNotBlank()) {
+                        prefs.edit().putString(KEY_PACK_ETAG, etagHeader).apply()
+                    }
+                    tempFile.delete()
                     maxOf(importedJsonBytes, gzSize)
                 }
 
                 prefs.edit()
                     .putLong(KEY_PACK_DISK_BYTES, downloadedBytes)
-                    .putBoolean(KEY_FIRST_RUN_AUTO_TRIGGERED, true)
                     .apply()
                 refreshStatus()
             } catch (e: CancellationException) {
                 refreshStatus()
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Offline dictionary pack download failed", e)
+                Log.w(TAG, "Pro Pack download failed", e)
                 val (wordCount, idiomCount, reverseCount) = withContext(Dispatchers.IO) {
                     Triple(dao.getOfflinePackCount(), dao.getPackIdiomCount(), dao.getReverseArabicCount())
                 }
                 val installed = wordCount > 0 || idiomCount > 0
                 val diskBytes = if (installed) prefs.getLong(KEY_PACK_DISK_BYTES, 0L) else 0L
                 _state.value = OfflinePackState.Error(
-                    message = "الحزمة غير متاحة حالياً",
+                    message = "Pro Pack is unavailable right now",
                     isInstalled = installed,
                     wordCount = wordCount,
                     diskSizeBytes = diskBytes,
                     idiomCount = idiomCount,
                     reverseCount = reverseCount
                 )
-            } finally {
-                runCatching { if (tempFile.exists()) tempFile.delete() }
             }
         }
     }
@@ -483,9 +542,22 @@ class OfflinePackManager(
         totalJsonBytes
     }
 
+    fun pauseDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        scope.launch { refreshStatus() }
+    }
+
     fun cancelDownload() {
         downloadJob?.cancel()
         downloadJob = null
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                if (partFile.exists()) partFile.delete()
+                prefs.edit().remove(KEY_PACK_TOTAL_BYTES).apply()
+            }
+            refreshStatus()
+        }
     }
 
     fun deletePack() {
@@ -493,8 +565,13 @@ class OfflinePackManager(
         downloadJob = null
         scope.launch {
             withContext(Dispatchers.IO) {
+                if (partFile.exists()) partFile.delete()
                 dao.clearAllOfflinePackData()
-                prefs.edit().remove(KEY_PACK_DISK_BYTES).apply()
+                prefs.edit()
+                    .remove(KEY_PACK_DISK_BYTES)
+                    .remove(KEY_PACK_TOTAL_BYTES)
+                    .remove(KEY_PACK_ETAG)
+                    .apply()
             }
             refreshStatus()
         }
