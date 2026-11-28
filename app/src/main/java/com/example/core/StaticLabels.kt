@@ -134,7 +134,22 @@ object StaticLabels {
         "masdar" to "المصدر",
         "active participle" to "اسم الفاعل",
         "passive participle" to "اسم المفعول",
-        "root" to "الجذر"
+        "root" to "الجذر",
+
+        // Categories & Colloquial sections (Item 2 & 4 & 5)
+        "compound adjective" to "صفة مركبة",
+        "compound noun" to "اسم مركب",
+        "compound verb" to "فعل مركب",
+        "proverb" to "مثل شعبي",
+        "prefix" to "سابقة",
+        "suffix" to "لاحقة",
+        "abbreviation" to "اختصار",
+        "slang" to "عامية",
+        "informal" to "غير رسمي",
+        "colloquial arabic" to "العامية المصرية والعربية",
+        "informal / slang" to "عامية وغير رسمي",
+        "other translations" to "ترجمات أخرى",
+        "sentence words" to "كلمات الجملة"
     )
 
     fun arabicFor(englishLabel: String): String {
